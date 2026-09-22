@@ -1,0 +1,25 @@
+# Copy to rules.toml (git-ignored) and edit.
+# kind = "deny"      -> SeeNot DENY: intervene when the open content is this
+# kind = "time_cap"  -> SeeNot TIME_CAP: count screen time toward a limit
+# description_en is optional; `--lang en` sends it instead, to test whether
+# Kev (trained on English) does better with English rule text.
+# exceptions are the desktop version of SeeNot's repair rules.
+
+[[rules]]
+id = "shortvideo"
+kind = "deny"
+description = "短视频和直播，比如抖音、B站推荐视频、YouTube Shorts"
+description_en = "short videos and livestreams, such as Douyin, Bilibili recommended videos, YouTube Shorts"
+
+[[rules]]
+id = "stocks"
+kind = "deny"
+description = "股票行情、K线和炒股讨论"
+description_en = "stock quotes, candlestick charts and stock-trading discussion"
+exceptions = ["公司财报原文不算"]
+
+[[rules]]
+id = "social"
+kind = "time_cap"
+description = "刷社交媒体：小红书、微博、X/Twitter、即刻"
+description_en = "browsing social media: Xiaohongshu, Weibo, X/Twitter, Jike"

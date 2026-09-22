@@ -1,0 +1,21 @@
+[project]
+name = "seenot-desktop"
+version = "0.1.0"
+description = "SeeNot on macOS, decided by a Jev-style typed decision model (local Kev or hosted Jev)"
+readme = "README.md"
+authors = [
+    { name = "Tianrun Qiu", email = "scrisqiu@hotmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pyobjc-framework-applicationservices>=12.2.2",
+    "pyobjc-framework-cocoa>=12.2.2",
+    "typesafe-sdk>=0.7.1",
+]
+
+[project.scripts]
+seenot-desktop = "seenot_desktop:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
