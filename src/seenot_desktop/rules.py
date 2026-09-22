@@ -8,6 +8,7 @@ combines them lives in `decide.py`, not in the prompt.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,9 @@ Kind = Literal["deny", "time_cap"]
 DENY_OPTIONS = ("violates", "safe", "unknown")
 TIME_CAP_OPTIONS = ("in_scope", "out_of_scope", "unknown")
 PAGE_KINDS = ("feed", "single_item", "search", "work", "other")
+# "rule" asks whether the screen breaks the user's rule; "direct" asks what
+# the screen is. See rule_question().
+QUESTION_STYLE = os.environ.get("SEENOT_QUESTION_STYLE", "rule")
 
 
 @dataclass
@@ -74,6 +78,29 @@ def rule_question(rule: Rule, lang: str = "zh") -> Choice:
     exceptions = ""
     if rule.exceptions:
         exceptions = " Exceptions the user has confirmed are fine: " + "; ".join(rule.exceptions) + "."
+    if QUESTION_STYLE == "direct":
+        # Ask what the screen is, not whether it breaks a prohibition: the
+        # "do not show me X -> violates/safe" framing is a double negative.
+        # Same answer keys, so Gate is unchanged.
+        what = rule.text(lang)
+        if rule.kind == "deny":
+            return Choice(
+                instructions=f"Is the content currently open {what}?{exceptions} "
+                "Judge only the content currently open, not candidates listed in a feed.",
+                criteria={
+                    "violates": f"Yes: the open content is {what}",
+                    "safe": "No: the open content is something else",
+                    "unknown": "The screen does not show enough to tell",
+                },
+            )
+        return Choice(
+            instructions=f"Is the user currently {what}?{exceptions}",
+            criteria={
+                "in_scope": f"Yes: the current screen is {what}",
+                "out_of_scope": "No: the current screen is something else",
+                "unknown": "The screen does not show enough to tell",
+            },
+        )
     if rule.kind == "deny":
         return Choice(
             instructions=f"The user set this rule: do not show me {rule.text(lang)}.{exceptions} "

@@ -150,14 +150,22 @@ def cmd_eval(args) -> None:
         sys.exit(f"no records in {path}")
     client = make_client()
     lat, page_hits, sens_hits = [], 0, 0
-    thresholds = (0.5, 0.7, 0.85, 0.95)
-    tally = {t: [0, 0, 0] for t in thresholds}  # true pos, predicted pos, actual pos
+    thresholds = (0.3, 0.5, 0.7, 0.85, 0.95)
+    # [true pos, predicted pos, actual pos] per threshold, for all rules ("*") and per rule
+    tally = {k: {t: [0, 0, 0] for t in thresholds} for k in ["*", *by_id]}
+    dump = Path(args.dump).open("w", encoding="utf-8") if args.dump else None
     for rec in records:
         state = ScreenState(**rec["screen"]).to_state(args.budget)
         reading = ask(client, state, rules, args.lang)
         lat.append(reading.latency_ms)
         page_hits += reading.page_kind == rec["labels"]["page_kind"]
         sens_hits += (reading.sensitive >= 0.5) == rec["labels"]["sensitive"]
+        if dump:
+            dump.write(json.dumps({
+                "note": rec.get("note", ""), "labels": rec["labels"], "sensitive": reading.sensitive,
+                "page_kind": reading.page_kind, "p_hit": {v.rule_id: v.p_hit for v in reading.rules},
+                "input_tokens": reading.input_tokens,
+            }, ensure_ascii=False) + "\n")
         for v in reading.rules:
             gold = rec["labels"]["rules"].get(v.rule_id)
             if gold is None or gold == "unknown":
@@ -165,19 +173,45 @@ def cmd_eval(args) -> None:
             positive = gold == ("violates" if by_id[v.rule_id].kind == "deny" else "in_scope")
             for t in thresholds:
                 pred = v.p_hit >= t
-                tally[t][0] += pred and positive
-                tally[t][1] += pred
-                tally[t][2] += positive
+                for k in ("*", v.rule_id):
+                    tally[k][t][0] += pred and positive
+                    tally[k][t][1] += pred
+                    tally[k][t][2] += positive
     n = len(records)
     lat.sort()
     print(f"records={n}  lang={args.lang}  budget={args.budget} chars")
     print(f"latency p50={statistics.median(lat):.0f} ms  p95={lat[math.ceil(0.95 * n) - 1]:.0f} ms")
     print(f"page_kind accuracy={page_hits / n:.2f}  sensitive accuracy={sens_hits / n:.2f}")
     print("rule hits (unknown labels excluded):")
-    for t, (tp, pp, ap) in tally.items():
-        prec = f"{tp / pp:.2f}" if pp else "-"
-        rec_ = f"{tp / ap:.2f}" if ap else "-"
-        print(f"  p_hit>={t:.2f}  precision={prec} ({tp}/{pp})  recall={rec_} ({tp}/{ap})")
+    for k, rows in tally.items():
+        print(f"  {'all rules' if k == '*' else k}")
+        for t, (tp, pp, ap) in rows.items():
+            prec = f"{tp / pp:.2f}" if pp else "-"
+            rec_ = f"{tp / ap:.2f}" if ap else "-"
+            print(f"    p_hit>={t:.2f}  precision={prec} ({tp}/{pp})  recall={rec_} ({tp}/{ap})")
+
+
+def cmd_export(args) -> None:
+    """Labels -> Kev's training JSONL ({"state", "questions": {name: {type, instructions, criteria, label}}}),
+    asking exactly the questions `ask` sends, so a fine-tune learns the live prompt."""
+    from .rules import build_questions
+    from .state import ScreenState
+
+    rules = _rules(args.rules)
+    questions = {k: q.model_dump(mode="json", exclude_none=True) for k, q in build_questions(rules, args.lang).items()}
+    n = 0
+    with Path(args.labels).open(encoding="utf-8") as src, Path(args.out).open("w", encoding="utf-8") as out:
+        for line in src:
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            gold = {"sensitive": rec["labels"]["sensitive"], "page_kind": rec["labels"]["page_kind"]}
+            gold |= {f"rule_{k}": v for k, v in rec["labels"]["rules"].items()}
+            qs = {k: {**q, "label": gold[k]} for k, q in questions.items() if k in gold}
+            state = ScreenState(**rec["screen"]).to_state(args.budget)
+            out.write(json.dumps({"state": state, "questions": qs}, ensure_ascii=False) + "\n")
+            n += 1
+    print(f"{n} records -> {args.out}")
 
 
 def main() -> None:
@@ -216,6 +250,11 @@ def main() -> None:
 
     sp = add("eval", cmd_eval)
     sp.add_argument("--labels", default=DEFAULT_LABELS)
+    sp.add_argument("--dump", help="write every reading to this JSONL, for error analysis")
+
+    sp = add("export", cmd_export)
+    sp.add_argument("--labels", default=DEFAULT_LABELS)
+    sp.add_argument("--out", default="data/train.jsonl")
 
     args = p.parse_args()
     try:

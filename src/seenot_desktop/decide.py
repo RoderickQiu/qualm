@@ -29,6 +29,9 @@ def make_client() -> TypeSafeClient:
         api_key=os.environ.get("KEV_API_KEY", "local"),
         base_url=os.environ.get("KEV_URL", "http://127.0.0.1:8009"),
         model=os.environ.get("SEENOT_MODEL", "kev-latest"),
+        # Kev-4B's first call on MLX takes ~25 s; the SDK default of 10 s times
+        # out and retries, queueing duplicate work on a one-request-at-a-time server.
+        timeout=float(os.environ.get("KEV_TIMEOUT", "30")),
     )
 
 
