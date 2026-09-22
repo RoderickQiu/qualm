@@ -17,6 +17,9 @@
 #   exceptions        things that look like a hit but are fine; "Not this one" adds more
 
 [settings]
+# false while testing: every rule hit pops up at once, time caps included.
+# Set true to count minutes and visits and only step in over budget.
+budgets = false
 # Kev was trained on English; in the trials English rule text was as good or
 # better (social: recall 0.90 vs 0.50 at precision 0.9). "zh" sends `description`.
 lang = "en"

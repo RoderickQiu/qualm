@@ -143,3 +143,18 @@ def test_entertainment_feed_hits_a_feed_rule_on_any_site(policy):
 
 def test_scrolling_a_feed_counts_toward_a_time_cap(policy):
     assert ("count", "social") in see(policy, "https://weibo.com/", reading(page="feed", social=0.5))
+
+
+def test_budgets_off_makes_time_caps_step_in_at_once(tmp_path):
+    p = Policy(Settings(budgets=False), RULES, tmp_path)
+    assert see(p, "https://weibo.com/1", reading(social=0.5)) == [("intervene", "social")]
+
+
+def test_every_judgement_is_logged_but_private_ones_without_content(policy, tmp_path):
+    screen = {"app": "Safari", "bundle_id": "com.apple.Safari", "window_title": "t", "url": "https://a.com", "text": ["x"]}
+    r = reading(shortvideo=0.9)
+    policy.log_judgement(screen, r, policy.decide(screen, r))
+    policy.log_judgement(screen, r, policy.decide(screen, reading(sensitive=0.9)))
+    logged = [json.loads(line) for line in (tmp_path / "judgements.jsonl").open()]
+    assert logged[0]["screen"]["text"] == ["x"] and logged[0]["p_hit"]["shortvideo"] == 0.9
+    assert "text" not in logged[1]["screen"] and "p_hit" not in logged[1]

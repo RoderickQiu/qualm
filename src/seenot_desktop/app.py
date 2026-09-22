@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+from datetime import datetime
 from pathlib import Path
 
 import objc
@@ -36,7 +37,7 @@ from Foundation import NSObject
 from PyObjCTools import AppHelper
 
 from .policy import Decision, Policy
-from .watcher import Event, Watcher, go_back
+from .watcher import Event, Watcher, describe, go_back
 
 SNOOZE_MINUTES = 10
 
@@ -196,10 +197,15 @@ def run_app(policy: Policy, rules_path: str, budget: int, demo: bool = False) ->
     ctrl = Controller.alloc().init().setup(policy, str(Path(rules_path).resolve()), demo)
 
     def on_event(ev: Event):
+        print(f"[{datetime.now():%H:%M:%S}] {describe(ev)}", flush=True)
         AppHelper.callAfter(ctrl.handle, ev)
 
     def on_status(text: str):
+        print(f"  [{text}]", flush=True)
         AppHelper.callAfter(ctrl.set_status, text)
+
+    mode = "budgets on: time caps count first" if policy.settings.budgets else "budgets off: every hit pops up"
+    print(f"SeeNot watching ({mode}). Ctrl-C to stop.", flush=True)
 
     if demo:
         from .state import ScreenState

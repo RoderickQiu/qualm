@@ -31,6 +31,19 @@ class Event:
     state: dict
     reading: Reading | None
     decisions: list[Decision]
+    id: str = ""  # the line in data/judgements.jsonl; `review --fix <id>` refers to it
+
+
+def describe(ev: Event) -> str:
+    """One line per judgement, for logs."""
+    r = ev.reading
+    seen = f"page={r.page_kind} purpose={r.purpose} {r.latency_ms:.0f} ms" if r else "no model call"
+    acts = "; ".join(f"{d.action} {d.rule} ({d.reason})".replace(" ()", "") for d in ev.decisions) or "nothing"
+    hits = ""
+    if r:
+        top = sorted(r.rules, key=lambda v: -v.p_hit)[:3]
+        hits = "  [" + " ".join(f"{v.rule_id}={v.p_hit:.2f}" for v in top) + "]"
+    return f"#{ev.id} {ev.screen.app} | {ev.screen.window_title[:50]} | {ev.screen.url[:60]}\n    {seen} -> {acts}{hits}"
 
 
 class Watcher:
@@ -75,7 +88,9 @@ class Watcher:
         state = s.to_state(self.budget)
         pre = self.policy.precheck(s.bundle_id, s.url)
         if pre is not None:
-            self.on_event(Event(s, state, None, [pre]))
+            ev = Event(s, state, None, [pre])
+            ev.id = self.policy.log_judgement(s.as_record(), None, [pre])
+            self.on_event(ev)
             return
         try:
             reading = ask(client, state, self.policy.rules, self.policy.settings.lang)
@@ -88,7 +103,9 @@ class Watcher:
         for d in decisions:
             if d.action == "intervene":
                 self.policy.log_intervention(d, s.as_record(), reading)
-        self.on_event(Event(s, state, reading, decisions))
+        ev = Event(s, state, reading, decisions)
+        ev.id = self.policy.log_judgement(s.as_record(), reading, decisions)
+        self.on_event(ev)
 
 
 def go_back(bundle_id: str) -> None:

@@ -87,6 +87,8 @@ uv run seenot-desktop eval --lang en
 uv run seenot-desktop app                # the MVP: menu bar + intervention panel
 uv run seenot-desktop app --demo         # show the panel once, learn nothing
 uv run seenot-desktop watch              # the same loop in the terminal, every judgement printed
+uv run seenot-desktop review             # every judgement, p_hit vs threshold; newest last
+uv run seenot-desktop review --fix <id> stocks=no   # a wrong one -> a label
 uv run seenot-desktop harvest            # your answers to the panel -> data/labels.jsonl
 uv run seenot-desktop eval --suggest     # thresholds from your labels, for rules.toml
 uv run seenot-desktop export --lang en   # labels -> Kev training JSONL (data/train.jsonl)
@@ -116,9 +118,13 @@ fallback may trigger an **Automation** prompt per browser the first time.
 | `experiments/` | Trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |
 
 `rules.toml` and `data/` are git-ignored: they contain what you read on screen.
-In `data/`, the app keeps `usage.json` (today's budgets), `exceptions.jsonl`
-("Not this one") and `decisions.jsonl` (interventions with the screen that
-triggered them, and your answers). Nothing else you look at is stored.
+In `data/`, the app keeps `judgements.jsonl` (every judgement with its capture,
+for `review`; sensitive pages and unmonitored apps without content),
+`decisions.jsonl` (interventions and your answers), `exceptions.jsonl` ("Not
+this one") and `usage.json` (today's budgets).
+
+Testing mode: `[settings] budgets = false` (the current default) makes every
+rule hit pop up at once, time caps included. Set it to true for real budgets.
 
 ## Design decisions, and why
 

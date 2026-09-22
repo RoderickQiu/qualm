@@ -68,6 +68,9 @@ class Settings:
     lang: str = "en"  # which rule description the model reads
     no_monitor: tuple[str, ...] = ()  # bundle ids that are never read at all
     allow_urls: tuple[str, ...] = ()  # URL regexes that are never judged
+    # False: a time_cap hit steps in at once, like a deny rule, instead of
+    # counting minutes and visits. Clearer while testing.
+    budgets: bool = True
 
 
 RULE_FIELDS = set(Rule.__dataclass_fields__)
@@ -80,6 +83,7 @@ def load_config(path: str | Path) -> tuple[Settings, list[Rule]]:
         lang=s.get("lang", "en"),
         no_monitor=tuple(s.get("no_monitor", ())),
         allow_urls=tuple(s.get("allow_urls", ())),
+        budgets=bool(s.get("budgets", True)),
     )
     rules = []
     for r in data["rules"]:

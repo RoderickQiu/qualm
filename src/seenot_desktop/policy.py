@@ -177,7 +177,7 @@ class Policy:
                     out.append(Decision("allow", rule.id, "learning material"))
                 elif rule.allow_intentional and self._cur["intentional"]:
                     out.append(Decision("allow", rule.id, "opened on purpose"))
-                elif rule.kind == "deny":
+                elif rule.kind == "deny" or not self.settings.budgets:
                     out.append(Decision("intervene", rule.id, why, uuid.uuid4().hex[:12]))
                 else:
                     counted.add(rule.id)
@@ -250,6 +250,30 @@ class Policy:
             return " · ".join(parts)
 
     # -- the log that becomes labels -----------------------------------------
+
+    def log_judgement(self, screen: dict, reading: Reading | None, decisions: list[Decision]) -> str:
+        """Every judgement, to data/judgements.jsonl, for `seenot-desktop review`.
+        Sensitive pages and unmonitored apps are logged without their content."""
+        private = any(d.reason in ("sensitive page", "app not monitored") for d in decisions)
+        event = {
+            "id": uuid.uuid4().hex[:8],
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "screen": {"app": screen.get("app", ""), "bundle_id": screen.get("bundle_id", "")} if private else screen,
+            "decisions": [{"action": d.action, "rule": d.rule, "reason": d.reason} for d in decisions],
+        }
+        if reading is not None and not private:
+            event |= {
+                "page_kind": reading.page_kind, "purpose": reading.purpose,
+                "page_probs": {k: round(v, 3) for k, v in reading.page_probs.items()},
+                "purpose_probs": {k: round(v, 3) for k, v in reading.purpose_probs.items()},
+                "sensitive": round(reading.sensitive, 3),
+                "p_hit": {v.rule_id: round(v.p_hit, 3) for v in reading.rules},
+                "latency_ms": round(reading.latency_ms),
+            }
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        with (self.data_dir / "judgements.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        return event["id"]
 
     def log_intervention(self, d: Decision, screen: dict, reading: Reading) -> None:
         """Only interventions are logged with screen content: they are the
