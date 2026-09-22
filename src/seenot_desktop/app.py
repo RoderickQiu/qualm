@@ -64,6 +64,11 @@ class Controller(NSObject):
     @objc.python_method
     def _build_menu(self):
         self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
+        # A stable identity across launches, so macOS and menu bar managers
+        # (Thaw, Bartender) remember where you put it instead of treating each
+        # launch as a new item.
+        self.status_item.setAutosaveName_("SeeNot")
+        self.status_item.setVisible_(True)
         self._set_icon(paused=False)
         menu = NSMenu.alloc().init()
         menu.setAutoenablesItems_(False)
