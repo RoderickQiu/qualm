@@ -6,7 +6,6 @@ import argparse
 import json
 import math
 import statistics
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -14,30 +13,33 @@ from pathlib import Path
 
 DEFAULT_RULES = "rules.toml"
 DEFAULT_LABELS = "data/labels.jsonl"
+DEFAULT_DATA = "data"
+THRESHOLDS = (0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 0.85)
 
 
-def _rules(path: str):
-    from .rules import load_rules
+def _config(args):
+    """(settings, rules), with --lang overriding [settings] lang."""
+    from .rules import load_config
 
-    p = Path(path)
+    p = Path(args.rules)
     if not p.exists():
-        sys.exit(f"{path} not found. Copy rules.example.toml to rules.toml and edit it.")
-    return load_rules(p)
+        sys.exit(f"{args.rules} not found. Copy rules.example.toml to rules.toml and edit it.")
+    settings, rules = load_config(p)
+    if getattr(args, "lang", None):
+        settings.lang = args.lang
+    return settings, rules
 
 
 def _print_reading(reading) -> None:
     print(
         f"  {reading.latency_ms:6.0f} ms  tokens={reading.input_tokens}  "
         f"sensitive={reading.sensitive:.2f}  page={reading.page_kind} "
-        f"({reading.page_probs.get(reading.page_kind, 0):.2f})"
+        f"({reading.page_probs.get(reading.page_kind, 0):.2f})  purpose={reading.purpose} "
+        f"({reading.purpose_probs.get(reading.purpose, 0):.2f})",
+        flush=True,
     )
     for v in reading.rules:
-        print(f"    rule {v.rule_id:<12} {v.choice:<12} p_hit={v.p_hit:.2f}")
-
-
-def _notify(title: str, body: str) -> None:
-    body = body.replace('"', "'")
-    subprocess.run(["osascript", "-e", f'display notification "{body}" with title "{title}"'], check=False)
+        print(f"    rule {v.rule_id:<12} {v.choice:<12} p_hit={v.p_hit:.2f}", flush=True)
 
 
 def cmd_probe(args) -> None:
@@ -60,39 +62,42 @@ def cmd_ask(args) -> None:
     from .decide import ask, make_client
     from .state import capture
 
-    rules = _rules(args.rules)
+    settings, rules = _config(args)
     time.sleep(args.delay)
-    state = capture().to_state(args.budget)
+    state = capture(skip=settings.no_monitor).to_state(args.budget)
     print(json.dumps(state, ensure_ascii=False))
-    _print_reading(ask(make_client(), state, rules, args.lang))
+    _print_reading(ask(make_client(), state, rules, settings.lang))
 
 
 def cmd_watch(args) -> None:
-    from .decide import Gate, ask, make_client
-    from .state import capture
+    """The live loop in the terminal: every judgement, no panel."""
+    from .policy import Policy
+    from .watcher import Watcher
 
-    rules = _rules(args.rules)
-    client, gate = make_client(), Gate(args.high, args.low)
-    last_sig, changed_at, last_asked = None, 0.0, float("-inf")
-    while True:
-        s = capture()
-        now = time.monotonic()
-        if s.signature() != last_sig:
-            last_sig, changed_at = s.signature(), now
-        # Ask once the screen has been stable for the debounce window, or on
-        # the heartbeat if nothing changed (a long video, a long read).
-        settled = now - changed_at >= args.debounce and changed_at > last_asked
-        if settled or now - last_asked >= args.heartbeat:
-            last_asked = now
-            state = s.to_state(args.budget)
-            reading = ask(client, state, rules, args.lang)
-            print(f"[{datetime.now():%H:%M:%S}] {state.get('app')} | {state.get('window_title', '')[:60]}", flush=True)
-            _print_reading(reading)
-            for action, what in gate.actions(reading, rules):
-                print(f"    -> {action} {what}", flush=True)
-                if action in ("intervene", "nudge"):
-                    _notify("SeeNot", f"{action}: rule {what}")
-        time.sleep(args.interval)
+    settings, rules = _config(args)
+    policy = Policy(settings, rules, args.data)
+
+    def on_event(ev):
+        print(f"[{datetime.now():%H:%M:%S}] {ev.screen.app} | {ev.screen.window_title[:60]}", flush=True)
+        if ev.reading:
+            _print_reading(ev.reading)
+        for d in ev.decisions:
+            print(f"    -> {d.action} {d.rule} ({d.reason})", flush=True)
+
+    Watcher(policy, on_event, lambda s: print(f"  [{s}]", flush=True), budget=args.budget,
+            heartbeat=args.heartbeat).run()
+
+
+def cmd_app(args) -> None:
+    import tempfile
+
+    from .app import run_app
+    from .policy import Policy
+
+    settings, rules = _config(args)
+    # The demo must not teach your real rules anything.
+    data = tempfile.mkdtemp(prefix="seenot-demo-") if args.demo else args.data
+    run_app(Policy(settings, rules, data), args.rules, args.budget, demo=args.demo)
 
 
 def _pick(prompt: str, options: tuple[str, ...]) -> str:
@@ -105,20 +110,29 @@ def _pick(prompt: str, options: tuple[str, ...]) -> str:
             return ans
 
 
+def _save_label(path: str, record: dict) -> int:
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return sum(1 for _ in out.open(encoding="utf-8"))
+
+
 def cmd_label(args) -> None:
-    from .rules import DENY_OPTIONS, PAGE_KINDS, TIME_CAP_OPTIONS
+    from .rules import DENY_OPTIONS, PAGE_KINDS, PURPOSES, TIME_CAP_OPTIONS
     from .state import capture
 
-    rules = _rules(args.rules)
+    settings, rules = _config(args)
     print(f"Switch to the window to label. Capturing in {args.delay:.0f}s...")
     time.sleep(args.delay)
-    s = capture()
+    s = capture(skip=settings.no_monitor)
     print(json.dumps(s.to_state(args.budget), ensure_ascii=False, indent=2))
     labels = {
         "sensitive": _pick("sensitive page?", ("no", "yes")) == "yes",
         "page_kind": _pick("page kind", PAGE_KINDS),
+        "purpose": _pick("what is it for", PURPOSES),
         "rules": {
-            r.id: _pick(f"rule {r.id} ({r.description})", DENY_OPTIONS if r.kind == "deny" else TIME_CAP_OPTIONS)
+            r.id: _pick(f"rule {r.id} ({r.text(settings.lang)})", DENY_OPTIONS if r.kind == "deny" else TIME_CAP_OPTIONS)
             for r in rules
         },
     }
@@ -130,65 +144,119 @@ def cmd_label(args) -> None:
         "labels": labels,
         "note": input("note (optional): ").strip(),
     }
-    out = Path(args.labels)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    n = sum(1 for _ in out.open(encoding="utf-8"))
-    print(f"saved -> {out} ({n} records)")
+    print(f"saved -> {args.labels} ({_save_label(args.labels, record)} records)")
+
+
+def cmd_harvest(args) -> None:
+    """Interventions you answered -> label records. "Take me back" and "I need
+    it" confirm the hit; "Not this one" says it was wrong. Other questions
+    stay unlabelled, and eval skips them."""
+    from .rules import load_config
+
+    _, rules = load_config(args.rules)
+    kinds = {r.id: r.kind for r in rules}
+    path = Path(args.data) / "decisions.jsonl"
+    if not path.exists():
+        sys.exit(f"{path} not found: run `seenot-desktop app` first.")
+    events = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
+    shown = {e["id"]: e for e in events if e["type"] == "intervention"}
+    have = set()
+    if Path(args.labels).exists():
+        have = {json.loads(line).get("decision_id") for line in Path(args.labels).open(encoding="utf-8")}
+    n = 0
+    for e in events:
+        if e["type"] != "response" or e["id"] not in shown or e["id"] in have:
+            continue
+        iv = shown[e["id"]]
+        hit = e["response"] in ("back", "snooze")
+        if kinds.get(iv["rule"]) == "deny":
+            label = "violates" if hit else "safe"
+        else:
+            label = "in_scope" if hit else "out_of_scope"
+        _save_label(args.labels, {
+            "captured_at": iv["at"], "screen": iv["screen"], "labels": {"rules": {iv["rule"]: label}},
+            "note": f"harvest: {e['response']}", "decision_id": e["id"],
+        })
+        n += 1
+    print(f"{n} new labels -> {args.labels}")
+
+
+def _suggest(rule_id: str, pts: list[tuple[float, bool]], target: float) -> str:
+    """The threshold with the best recall at precision >= target."""
+    pos = sum(y for _, y in pts)
+    best = None
+    for t in sorted({p for p, _ in pts}):
+        tp = sum(p >= t and y for p, y in pts)
+        pp = sum(p >= t for p, _ in pts)
+        if pp and tp / pp >= target and (best is None or tp > best[1]):
+            best = (t, tp, pp)
+    if best is None or not pos:
+        return f"  {rule_id:<12} no threshold reaches precision {target} (positives: {pos})"
+    t, tp, pp = best
+    # Halfway to the highest negative below it, so the number isn't fitted to
+    # the exact p_hit of one example.
+    below = [p for p, y in pts if p < t and not y]
+    t = (t + max(below)) / 2 if below else t
+    return f"  {rule_id:<12} threshold = {t:.3f}   # recall {tp / pos:.2f}, precision {tp / pp:.2f}"
 
 
 def cmd_eval(args) -> None:
     from .decide import ask, make_client
+    from .rules import HIT_LABELS
     from .state import ScreenState
 
-    rules = _rules(args.rules)
-    by_id = {r.id: r for r in rules}
+    settings, rules = _config(args)
     path = Path(args.labels)
     records = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
     if not records:
         sys.exit(f"no records in {path}")
     client = make_client()
-    lat, page_hits, sens_hits = [], 0, 0
-    thresholds = (0.3, 0.5, 0.7, 0.85, 0.95)
-    # [true pos, predicted pos, actual pos] per threshold, for all rules ("*") and per rule
-    tally = {k: {t: [0, 0, 0] for t in thresholds} for k in ["*", *by_id]}
+    lat = []
+    acc = {"page_kind": [0, 0], "purpose": [0, 0], "sensitive": [0, 0]}  # right, labelled
+    points: dict[str, list[tuple[float, bool]]] = {r.id: [] for r in rules}
     dump = Path(args.dump).open("w", encoding="utf-8") if args.dump else None
     for rec in records:
         state = ScreenState(**rec["screen"]).to_state(args.budget)
-        reading = ask(client, state, rules, args.lang)
+        reading = ask(client, state, rules, settings.lang)
         lat.append(reading.latency_ms)
-        page_hits += reading.page_kind == rec["labels"]["page_kind"]
-        sens_hits += (reading.sensitive >= 0.5) == rec["labels"]["sensitive"]
+        gold = rec["labels"]
+        for key, got in (("page_kind", reading.page_kind), ("purpose", reading.purpose),
+                         ("sensitive", reading.sensitive >= 0.5)):
+            if gold.get(key) is not None:
+                acc[key][0] += got == gold[key]
+                acc[key][1] += 1
         if dump:
             dump.write(json.dumps({
-                "note": rec.get("note", ""), "labels": rec["labels"], "sensitive": reading.sensitive,
-                "page_kind": reading.page_kind, "p_hit": {v.rule_id: v.p_hit for v in reading.rules},
-                "input_tokens": reading.input_tokens,
+                "note": rec.get("note", ""), "labels": gold, "sensitive": reading.sensitive,
+                "page_kind": reading.page_kind, "purpose": reading.purpose,
+                "page_probs": reading.page_probs, "purpose_probs": reading.purpose_probs, "url": state.get("url", ""),
+                "p_hit": {v.rule_id: v.p_hit for v in reading.rules}, "input_tokens": reading.input_tokens,
             }, ensure_ascii=False) + "\n")
         for v in reading.rules:
-            gold = rec["labels"]["rules"].get(v.rule_id)
-            if gold is None or gold == "unknown":
-                continue
-            positive = gold == ("violates" if by_id[v.rule_id].kind == "deny" else "in_scope")
-            for t in thresholds:
-                pred = v.p_hit >= t
-                for k in ("*", v.rule_id):
-                    tally[k][t][0] += pred and positive
-                    tally[k][t][1] += pred
-                    tally[k][t][2] += positive
+            label = gold.get("rules", {}).get(v.rule_id)
+            if label not in (None, "unknown"):
+                points[v.rule_id].append((v.p_hit, label in HIT_LABELS))
     n = len(records)
     lat.sort()
-    print(f"records={n}  lang={args.lang}  budget={args.budget} chars")
+    print(f"records={n}  lang={settings.lang}  budget={args.budget} chars")
     print(f"latency p50={statistics.median(lat):.0f} ms  p95={lat[math.ceil(0.95 * n) - 1]:.0f} ms")
-    print(f"page_kind accuracy={page_hits / n:.2f}  sensitive accuracy={sens_hits / n:.2f}")
+    print("  ".join(f"{k} accuracy={r / t:.2f} (n={t})" for k, (r, t) in acc.items() if t))
     print("rule hits (unknown labels excluded):")
-    for k, rows in tally.items():
-        print(f"  {'all rules' if k == '*' else k}")
-        for t, (tp, pp, ap) in rows.items():
+    for rule in rules:
+        pts = points[rule.id]
+        print(f"  {rule.id} (threshold in rules: {rule.threshold})")
+        for t in sorted({*THRESHOLDS, rule.threshold}):
+            tp = sum(p >= t and y for p, y in pts)
+            pp = sum(p >= t for p, _ in pts)
+            ap = sum(y for _, y in pts)
             prec = f"{tp / pp:.2f}" if pp else "-"
             rec_ = f"{tp / ap:.2f}" if ap else "-"
-            print(f"    p_hit>={t:.2f}  precision={prec} ({tp}/{pp})  recall={rec_} ({tp}/{ap})")
+            mark = " <- current" if t == rule.threshold else ""
+            print(f"    p_hit>={t:.2f}  precision={prec} ({tp}/{pp})  recall={rec_} ({tp}/{ap}){mark}")
+    if args.suggest:
+        print(f"suggested thresholds (best recall at precision >= {args.precision}), for rules.toml:")
+        for rule in rules:
+            print(_suggest(rule.id, points[rule.id], args.precision))
 
 
 def cmd_export(args) -> None:
@@ -197,17 +265,19 @@ def cmd_export(args) -> None:
     from .rules import build_questions
     from .state import ScreenState
 
-    rules = _rules(args.rules)
-    questions = {k: q.model_dump(mode="json", exclude_none=True) for k, q in build_questions(rules, args.lang).items()}
+    settings, rules = _config(args)
+    questions = {k: q.model_dump(mode="json", exclude_none=True) for k, q in build_questions(rules, settings.lang).items()}
     n = 0
     with Path(args.labels).open(encoding="utf-8") as src, Path(args.out).open("w", encoding="utf-8") as out:
         for line in src:
             if not line.strip():
                 continue
             rec = json.loads(line)
-            gold = {"sensitive": rec["labels"]["sensitive"], "page_kind": rec["labels"]["page_kind"]}
-            gold |= {f"rule_{k}": v for k, v in rec["labels"]["rules"].items()}
-            qs = {k: {**q, "label": gold[k]} for k, q in questions.items() if k in gold}
+            gold = {k: rec["labels"].get(k) for k in ("sensitive", "page_kind", "purpose")}
+            gold |= {f"rule_{k}": v for k, v in rec["labels"].get("rules", {}).items()}
+            qs = {k: {**q, "label": gold[k]} for k, q in questions.items() if gold.get(k) not in (None, "unknown")}
+            if not qs:
+                continue
             state = ScreenState(**rec["screen"]).to_state(args.budget)
             out.write(json.dumps({"state": state, "questions": qs}, ensure_ascii=False) + "\n")
             n += 1
@@ -226,7 +296,7 @@ def main() -> None:
         sp.add_argument("--budget", type=int, default=DEFAULT_CHAR_BUDGET, help="state size in characters")
         if model:
             sp.add_argument("--rules", default=DEFAULT_RULES)
-            sp.add_argument("--lang", choices=("zh", "en"), default="zh", help="which rule description to send")
+            sp.add_argument("--lang", choices=("zh", "en"), help="rule text to send; default: [settings] lang")
         sp.set_defaults(fn=fn)
         return sp
 
@@ -238,19 +308,26 @@ def main() -> None:
     sp.add_argument("--delay", type=float, default=0.0, help="seconds to switch windows first")
 
     sp = add("watch", cmd_watch)
-    sp.add_argument("--interval", type=float, default=0.5)
-    sp.add_argument("--debounce", type=float, default=0.5)
     sp.add_argument("--heartbeat", type=float, default=30.0)
-    sp.add_argument("--high", type=float, default=0.85)
-    sp.add_argument("--low", type=float, default=0.5)
+    sp.add_argument("--data", default=DEFAULT_DATA)
+
+    sp = add("app", cmd_app)
+    sp.add_argument("--data", default=DEFAULT_DATA)
+    sp.add_argument("--demo", action="store_true", help="show the panel once with a made-up hit; no watching")
 
     sp = add("label", cmd_label)
     sp.add_argument("--delay", type=float, default=5.0)
     sp.add_argument("--labels", default=DEFAULT_LABELS)
 
+    sp = add("harvest", cmd_harvest)
+    sp.add_argument("--data", default=DEFAULT_DATA)
+    sp.add_argument("--labels", default=DEFAULT_LABELS)
+
     sp = add("eval", cmd_eval)
     sp.add_argument("--labels", default=DEFAULT_LABELS)
     sp.add_argument("--dump", help="write every reading to this JSONL, for error analysis")
+    sp.add_argument("--suggest", action="store_true", help="print per-rule thresholds for rules.toml")
+    sp.add_argument("--precision", type=float, default=0.9, help="precision --suggest aims for")
 
     sp = add("export", cmd_export)
     sp.add_argument("--labels", default=DEFAULT_LABELS)

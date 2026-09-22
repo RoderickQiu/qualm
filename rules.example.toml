@@ -1,25 +1,120 @@
-# Copy to rules.toml (git-ignored) and edit.
-# kind = "deny"      -> SeeNot DENY: intervene when the open content is this
-# kind = "time_cap"  -> SeeNot TIME_CAP: count screen time toward a limit
-# description_en is optional; `--lang en` sends it instead, to test whether
-# Kev (trained on English) does better with English rule text.
-# exceptions are the desktop version of SeeNot's repair rules.
+# Copy to rules.toml (git-ignored) and make it yours. docs/POLICY.md explains
+# the defaults: block the mechanism (endless short video, feeds, live rooms,
+# compulsive checking), not the site.
+#
+# Per rule:
+#   kind              "deny" (intervene) or "time_cap" (count, intervene over budget)
+#   description       what the rule is about, in your words; the model reads this
+#   description_en    optional English version; used when [settings] lang = "en"
+#   threshold         p_hit that counts as a hit; tune with `eval --suggest`
+#   feed_hit          any page the model reads as an entertainment feed hits (page rules)
+#   target            "content" (the opened item; feeds never hit) or "page" (feeds can hit)
+#   patterns          URL regexes that hit without the model; for sites it misses
+#   allow_learning    lectures, tutorials and docs never hit this rule
+#   allow_intentional one item opened from search, a work app or a link in chat is exempt
+#   minutes_per_day   time_cap budget
+#   visits_per_day    time_cap: separate visits allowed per day (0 = no limit)
+#   exceptions        things that look like a hit but are fine; "Not this one" adds more
+
+[settings]
+# Kev was trained on English; in the trials English rule text was as good or
+# better (social: recall 0.90 vs 0.50 at precision 0.9). "zh" sends `description`.
+lang = "en"
+# Never read at all: password managers, banking. Add chat apps if you'd rather
+# they're never read either.
+no_monitor = [
+    "com.apple.keychainaccess",
+    "com.1password.1password",
+    "com.agilebits.onepassword7",
+    "com.bitwarden.desktop",
+]
+# Never judged. Clicking a link from these counts as opening it on purpose.
+allow_urls = [
+    "^https?://(docs|developer|devdocs)\\.",
+    "^https?://github\\.com/",
+    "^https?://([a-z]+\\.)?wikipedia\\.org/",
+    "^https?://arxiv\\.org/",
+    "^https?://stackoverflow\\.com/",
+    "^https?://www\\.sec\\.gov/",
+]
 
 [[rules]]
 id = "shortvideo"
 kind = "deny"
-description = "短视频和直播，比如抖音、B站推荐视频、YouTube Shorts"
-description_en = "short videos and livestreams, such as Douyin, Bilibili recommended videos, YouTube Shorts"
+description = "短视频：抖音、快手、TikTok、YouTube Shorts、Reels 这类竖屏连刷的视频"
+description_en = "short videos made for endless swiping, such as Douyin, Kuaishou, TikTok, YouTube Shorts, Instagram Reels"
+threshold = 0.15  # trials: precision 0.93, recall 1.00; held-out sites 1.00 / 1.00
+patterns = [
+    "youtube\\.com/shorts/",
+    "douyin\\.com",
+    "tiktok\\.com",
+    "kuaishou\\.com",
+    "instagram\\.com/reels?/",
+]
+# A video someone sent you is fine; the next one in the scroll is not.
+allow_intentional = true
 
 [[rules]]
-id = "stocks"
+id = "feeds"
 kind = "deny"
-description = "股票行情、K线和炒股讨论"
-description_en = "stock quotes, candlestick charts and stock-trading discussion"
-exceptions = ["公司财报原文不算"]
+target = "page"
+description = "推荐流、时间线和热榜：B站或YouTube首页推荐、微博热搜、小红书发现页、X的For You、Reddit r/popular"
+description_en = "algorithmic recommendation feeds, timelines and trending lists, such as the YouTube or Bilibili home page, Weibo hot search, Xiaohongshu explore, X For You, Reddit r/popular"
+threshold = 0.3  # trials: precision 1.00, recall 0.47 alone; feed_hit adds more
+patterns = [
+    "^https://www\\.(youtube|bilibili)\\.com/?$",
+    "s\\.weibo\\.com/top",
+    "xiaohongshu\\.com/explore",
+    "^https://(x|twitter)\\.com/home",
+    "reddit\\.com/r/popular",
+]
+# Any page the model reads as an entertainment feed counts, on any site.
+feed_hit = true
+
+[[rules]]
+id = "livestream"
+kind = "deny"
+description = "娱乐直播：游戏直播、主播直播间、带货直播，比如B站直播、斗鱼、虎牙、Twitch"
+description_en = "entertainment livestreams: game streams, streamer channels, live shopping, such as Bilibili Live, Douyu, Huya, Twitch"
+threshold = 0.5  # trials: 1.00 / 1.00, but only 8 live rooms on 2 sites
+# Twitch pages carry no "live" text in the Accessibility tree; the model misses them.
+patterns = [
+    "live\\.bilibili\\.com/\\d+",
+    "douyu\\.com/\\d+",
+    "huya\\.com/\\w+",
+    "twitch\\.tv/(?!directory|search|settings)[A-Za-z0-9_]+/?$",
+]
+# A lecture or launch event streamed live is fine.
+allow_learning = true
+
+[[rules]]
+id = "videos"
+kind = "time_cap"
+description = "看娱乐视频：B站、YouTube上的搞笑、游戏、综艺、影视剪辑"
+description_en = "watching entertainment videos on Bilibili or YouTube: comedy, gaming, variety shows, film clips"
+threshold = 0.25  # trials: 1.00 / 1.00, but only 6 clips, all Bilibili: weak evidence
+minutes_per_day = 45
+# Courses, lectures, tutorials and talks never count.
+allow_learning = true
 
 [[rules]]
 id = "social"
 kind = "time_cap"
-description = "刷社交媒体：小红书、微博、X/Twitter、即刻"
-description_en = "browsing social media: Xiaohongshu, Weibo, X/Twitter, Jike"
+description = "刷社交媒体：小红书、微博、X/Twitter、即刻、Reddit"
+description_en = "browsing social media, such as Xiaohongshu, Weibo, X/Twitter, Jike, Reddit"
+threshold = 0.3  # trials: precision 0.90, recall 0.95; held-out sites 0.90 / 0.90
+minutes_per_day = 20
+# The Reddit thread Google found for your error message doesn't count.
+allow_intentional = true
+
+[[rules]]
+id = "stocks"
+kind = "time_cap"
+description = "看股票行情、K线和股吧讨论"
+description_en = "stock quotes, candlestick charts and stock-trading discussion"
+threshold = 0.13  # trials: precision 0.92, recall 0.92; held-out sites 0.88 / 0.92
+minutes_per_day = 10
+# One check can be a decision; the twelfth is a habit.
+visits_per_day = 3
+exceptions = ["company filings, annual reports and earnings reports"]
+# allow_learning stays off: "learning about trading" is how this habit dresses up.

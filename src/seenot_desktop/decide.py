@@ -1,4 +1,4 @@
-"""Ask the model, then combine the typed answers into an action.
+"""Ask the model. What to do about the answers is `policy.py`'s job.
 
 The backend is anything that speaks TypeSafe's System One API: a local Kev
 server by default, or TypeSafe's hosted Jev when TYPESAFE_API_KEY is set and
@@ -14,11 +14,6 @@ from dataclasses import dataclass, field
 from typesafe_sdk import TypeSafeClient
 
 from .rules import Rule, build_questions
-
-# Act only when the model is sure; below LOW, ignore; in between, wait for a
-# second agreeing reading. Tune these from `seenot-desktop eval`, not by feel.
-HIGH = 0.85
-LOW = 0.5
 
 
 def make_client() -> TypeSafeClient:
@@ -48,10 +43,15 @@ class Reading:
     sensitive: float
     page_kind: str
     page_probs: dict[str, float]
+    purpose: str
+    purpose_probs: dict[str, float]
     rules: list[RuleVerdict]
     latency_ms: float
     input_tokens: int | None = None
     raw: dict = field(default_factory=dict)
+
+    def verdict(self, rule_id: str) -> RuleVerdict | None:
+        return next((v for v in self.rules if v.rule_id == rule_id), None)
 
 
 def ask(client: TypeSafeClient, state: dict, rules: list[Rule], lang: str = "zh") -> Reading:
@@ -70,37 +70,10 @@ def ask(client: TypeSafeClient, state: dict, rules: list[Rule], lang: str = "zh"
         sensitive=float(a["sensitive"].noul),
         page_kind=a["page_kind"].choice,
         page_probs=dict(a["page_kind"].probabilities),
+        purpose=a["purpose"].choice,
+        purpose_probs=dict(a["purpose"].probabilities),
         rules=verdicts,
         latency_ms=latency,
         input_tokens=getattr(resp.usage, "input_tokens", None),
         raw=resp.model_dump(mode="json"),
     )
-
-
-class Gate:
-    """Turns readings into actions. Keeps the last reading per rule so the
-    grey zone needs two agreeing readings in a row before it nudges."""
-
-    def __init__(self, high: float = HIGH, low: float = LOW):
-        self.high, self.low = high, low
-        self._last: dict[str, float] = {}
-
-    def actions(self, reading: Reading, rules: list[Rule]) -> list[tuple[str, str]]:
-        if reading.sensitive >= 0.5:
-            self._last.clear()
-            return [("skip", "sensitive page")]
-        out = []
-        by_id = {r.id: r for r in rules}
-        for v in reading.rules:
-            rule = by_id[v.rule_id]
-            prev = self._last.get(v.rule_id, 0.0)
-            self._last[v.rule_id] = v.p_hit
-            # A feed full of candidates is not a violation of a content rule;
-            # the Android prompt spent a page of prose saying this.
-            if rule.kind == "deny" and reading.page_kind == "feed":
-                continue
-            if v.p_hit >= self.high:
-                out.append(("intervene", rule.id))
-            elif v.p_hit >= self.low and prev >= self.low:
-                out.append(("nudge", rule.id))
-        return out

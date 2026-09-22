@@ -136,13 +136,17 @@ def _browser_url(bundle_id: str) -> str:
         return ""
 
 
-def capture() -> ScreenState:
+def capture(skip: tuple[str, ...] = ()) -> ScreenState:
+    """The front window. Apps in `skip` (settings.no_monitor) are named but
+    never read: no title, no URL, no text."""
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
     state = ScreenState(
         app=str(app.localizedName() or ""),
         bundle_id=str(app.bundleIdentifier() or ""),
         ax_trusted=bool(AXIsProcessTrusted()),
     )
+    if state.bundle_id in skip:
+        return state
     if state.ax_trusted:
         root = AXUIElementCreateApplication(app.processIdentifier())
         # Chromium and Electron apps build their web accessibility tree only

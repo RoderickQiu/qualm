@@ -1,6 +1,7 @@
 # Handoff: seenot-desktop
 
-Written 2026-09-22, updated the same day after the trial session. This is the working
+Written 2026-09-22; updated the same day after the trials, and again after
+the MVP was built. This is the working
 document: update the Status and Measured sections as you go.
 
 ## What this is
@@ -35,14 +36,33 @@ Trials run 2026-09-22 (second session). Short version:
 | Fine-tune on this Mac (MPS)? | **No.** 0.8B training used 20 GB and produced no step in 15 min (Qwen3.5 linear-attention kernels fall back to reference PyTorch). Use CUDA / Modal. |
 | Is the label set real? | **No, it is a stand-in.** 119 pages opened by script and labelled by what was opened, not a day of your own use. See "Trial data". |
 
-Verified working on this Mac (M5 Pro, 24 GB, macOS 27): `probe`, `ask`, `eval`, `export`.
-Still not exercised: `label` (interactive), `watch` with tuned thresholds.
+### MVP (built after the trials)
+
+`seenot-desktop app` is a menu bar app (Python + PyObjC) that watches the
+front window, and a floating panel that steps in with three answers: **Take me
+back**, **I need it: 10 min** (asks why), and **Not this one** (teaches the rule an
+exception). The policy follows docs/POLICY.md: block the mechanism (short
+video, feeds, live rooms, compulsive checking), not the site; exempt learning,
+work tools, search, sensitive pages and anything opened on purpose.
+
+- Verified: the policy (18 unit tests, no model); `watch` live on this Mac
+  (an O'Reilly chapter reads as learn 0.97, nothing flagged); the panel
+  renders (`app --demo`); a replayed browsing sequence behaves as designed
+  (`experiments/scenario.py`, see Measured).
+- Not verified: the app over a real day; "Take me back" (Cmd-[ via System
+  Events) in each browser; whether the menu bar item shows on this Mac. The
+  "SeeNot" item wasn't visible in a screenshot with a full menu bar and Thaw
+  running.
+
+Verified working on this Mac (M5 Pro, 24 GB, macOS 27): `probe`, `ask`, `watch`,
+`eval`, `export`, `app --demo`. Not exercised: `label` and `harvest` (they need you).
 
 Not built:
 - OCR fallback for apps whose text isn't in the Accessibility tree (video
   players, canvases).
 - Event-driven triggers (currently a 0.5 s poll on the window signature).
-- The Swift menu bar app.
+- Idle detection: time caps keep counting while you're away from the keyboard.
+- A signed .app bundle or launch at login (it runs from the terminal).
 
 ## Run it
 
@@ -64,7 +84,11 @@ uv run seenot-desktop ask --delay 3      # switch windows within 3 s, get one re
 uv run seenot-desktop label              # capture + label one moment -> data/labels.jsonl
 uv run seenot-desktop eval --lang zh     # precision/recall per threshold, latency
 uv run seenot-desktop eval --lang en
-uv run seenot-desktop watch              # the live loop, with macOS notifications
+uv run seenot-desktop app                # the MVP: menu bar + intervention panel
+uv run seenot-desktop app --demo         # show the panel once, learn nothing
+uv run seenot-desktop watch              # the same loop in the terminal, every judgement printed
+uv run seenot-desktop harvest            # your answers to the panel -> data/labels.jsonl
+uv run seenot-desktop eval --suggest     # thresholds from your labels, for rules.toml
 uv run seenot-desktop export --lang en   # labels -> Kev training JSONL (data/train.jsonl)
 ```
 
@@ -81,12 +105,20 @@ fallback may trigger an **Automation** prompt per browser the first time.
 |---|---|
 | `src/seenot_desktop/state.py` | Front window → `ScreenState` → compact `state` dict, cut to a character budget |
 | `src/seenot_desktop/rules.py` | Rules from `rules.toml`; builds the typed questions |
-| `src/seenot_desktop/decide.py` | TypeSafe SDK client (Kev or Jev), `ask()`, and the `Gate` that turns answers into actions |
-| `src/seenot_desktop/cli.py` | `probe` / `ask` / `watch` / `label` / `eval` |
-| `rules.example.toml` | Three sample rules, each in Chinese and English |
+| `src/seenot_desktop/decide.py` | TypeSafe SDK client (Kev or Jev) and `ask()` |
+| `src/seenot_desktop/policy.py` | Reading -> skip / allow / count / intervene: thresholds, URL patterns, exemptions, "opened on purpose", budgets, snoozes, user exceptions, the decision log |
+| `src/seenot_desktop/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
+| `src/seenot_desktop/app.py` | Menu bar item and intervention panel (PyObjC) |
+| `src/seenot_desktop/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export` |
+| `rules.example.toml` | Six default rules, each in Chinese and English, with measured thresholds |
+| `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
+| `tests/test_policy.py` | The policy with made-up readings |
 | `experiments/` | Trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |
 
 `rules.toml` and `data/` are git-ignored: they contain what you read on screen.
+In `data/`, the app keeps `usage.json` (today's budgets), `exceptions.jsonl`
+("Not this one") and `decisions.jsonl` (interventions with the screen that
+triggered them, and your answers). Nothing else you look at is stored.
 
 ## Design decisions, and why
 
@@ -109,16 +141,13 @@ fallback may trigger an **Automation** prompt per browser the first time.
    The logic that combines them is plain code in `Gate`. For example, a
    content rule never fires on a feed page; the Android prompt needed a page of
    prose rules to say that.
-4. **Act on probabilities, not on the chosen answer.**
-   - `p_hit` ≥ 0.85: intervene.
-   - 0.5 ≤ `p_hit` < 0.85 on two readings in a row: nudge.
-   - A sensitive page: skip that reading, and forget the previous one so a
-     pending nudge doesn't carry over.
-
-   The thresholds are placeholders until `eval` gives real numbers.
+4. **Act on probabilities, with a threshold per rule.** Kev-4B ranks well but
+   its `p_hit` runs low, so each rule has its own `threshold` from `eval
+   --suggest` (0.13-0.5 today). The first design's global 0.85 / 0.5 Gate and
+   its two-reading nudge were dropped: at 0.85, stocks recall was 0.
 5. **Repair rules become `exceptions`** in each rule's question text. That's
    the desktop version of SeeNot's false-positive → repair-rule loop
-   (`FalsePositiveRuleGenerator.kt`). Not yet generated automatically.
+   (`FalsePositiveRuleGenerator.kt`). The panel's "Not this one" adds them.
 6. **Local by default.** A hosted model would receive whatever is on your
    screen every few seconds. Jev is a switch, not the default.
 
@@ -181,6 +210,62 @@ instead of "the user forbids X: violates/safe?". It rescues 0.8B (stocks 0.12
 - **The feed rule in Gate** drops r/wallstreetbets and the Guba list pages,
   which are stock discussion in their entirety.
 
+### MVP policy (six rules, `rules.example.toml`, Kev-4B, English)
+
+Relabelled trial set `data/auto_labels_v2.jsonl` (`experiments/relabel.py`).
+Same caveats as the trial data, plus: livestream has 8 positives on 2 sites and
+videos 6 on 1 site, so their numbers are weak.
+
+Model alone (`eval --suggest`, then `experiments/analyze.py`), where "held-out"
+means the threshold was picked with that site's pages removed:
+
+| Rule | AUC | Precision / recall, all sites | Held-out sites |
+|---|---|---|---|
+| shortvideo | 1.00 | 0.93 / 1.00 | 1.00 / 1.00 |
+| feeds | 0.85 | 1.00 / 0.47 | 1.00 / 0.33 |
+| livestream | 1.00 | 1.00 / 1.00 | 1.00 / 0.50 |
+| videos | 1.00 | 1.00 / 1.00 | - |
+| social | 1.00 | 0.90 / 0.95 | 0.90 / 0.90 |
+| stocks | 0.99 | 0.92 / 0.92 | 0.88 / 0.92 |
+
+Generic questions: purpose accuracy 0.92, page_kind 0.82, sensitive 0.98.
+Latency with 9 questions: p50 1.2 s, p95 1.5 s.
+
+The whole policy (`experiments/simulate.py`: thresholds, patterns, feed_hit,
+exemptions, allow_urls; each page judged cold). Without URL patterns is what a
+site nobody listed gets:
+
+| Rule | With patterns: P / R | Without patterns: P / R |
+|---|---|---|
+| shortvideo | 1.00 / 1.00 | 1.00 / 0.77 |
+| feeds | 1.00 / 0.60 | 1.00 / 0.60 |
+| livestream | 1.00 / 1.00 | 1.00 / 1.00 |
+| videos | 1.00 / 0.83 | 1.00 / 0.83 |
+| social | 0.88 / 0.70 | 0.88 / 0.70 |
+| stocks | 0.96 / 0.92 | 0.96 / 0.92 |
+
+- `feed_hit` (page_kind = feed and purpose = entertain) lifts feeds from 0.40
+  to 0.67 recall on the model's readings, with no false positives.
+- Most social misses are logged-out login walls, which are sensitive and so
+  skipped by design. The genuine misses: X profiles and Guba lists read as
+  single items, not feeds.
+- The simulation found a bug, since fixed: feeds were skipped for time caps
+  too, so scrolling Weibo didn't count toward the social budget.
+
+`experiments/scenario.py` replays a sequence through the watcher with its
+history:
+
+| Screen | Result |
+|---|---|
+| Google search -> Reddit thread from it | thread allowed: opened on purpose |
+| -> r/popular | intervene (feeds); social counted |
+| Bilibili calculus course | nothing |
+| Bilibili comedy clip | counted toward the video budget |
+| Bilibili home | intervene (feeds) |
+| YouTube Short, then the next | intervene, both |
+| Yahoo NVDA quote | stocks visit 1 of 3 |
+| Apple 10-K on sec.gov | allowed without a model call |
+
 ### State size (Kev tokenizer, state only)
 
 | `--budget` | p50 | p95 | max | over 384 |
@@ -199,32 +284,27 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 
 ## Next steps, in order
 
-1. **Recalibrate before `watch` is usable.** Pick one:
-   - Per-rule thresholds in `rules.toml` (e.g. `threshold = 0.15`), read
-     from `eval`. Cheapest; do this first.
-   - Or score `p_hit / (p_hit + p_safe)`, which ignores `unknown` mass.
-   - Or fine-tune (step 4), which fixes calibration properly.
-2. **Label real moments with `seenot-desktop label`** (about 100 across a
-   normal, logged-in day) and re-run `eval --lang en` on 4B. The trial set is
-   logged-out and URL-obvious; real screens will be harder. If precision >= 0.9
-   still holds with per-rule thresholds, keep the setup.
-3. **Livestream signal:** add "live" cues to the state (the AX tree often has a
-   LIVE badge or viewer count), or add an exception/example to the rule text,
-   then re-test the Twitch pages.
-4. **Fine-tune only on a CUDA box or Modal**, not this Mac:
+1. **Use the app for a few days.** Run `seenot-desktop app` (Kev-4B server up
+   first). Answer the panel honestly; every answer is a label.
+2. **Re-tune from your own answers:** `seenot-desktop harvest`, then
+   `seenot-desktop eval --suggest`, and copy the thresholds into `rules.toml`.
+   Add `label` sessions for the pages the panel never sees (misses).
+3. **Fix what the trials showed is weak:**
+   - Feeds on sites that look like single items (X profiles, Guba lists).
+   - Idle detection, so a Weibo tab left open overnight doesn't eat the budget.
+4. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
+   your own labels:
    `seenot-desktop export --lang en --labels data/labels.jsonl --out train.jsonl`, then
    `uv run python -m kev.train --data train.jsonl --init_from jaredpalmer/kev-4b --base Qwen/Qwen3.5-4B-Base --epochs 2 --lr 2e-5 --batch 1 --accum 8 --dtype bf16 --device cuda`.
    `--base` is required with `--init_from`; the default base is Qwen3-0.6B.
-   `export` output loads with `kev.data.load_records` (checked); 2 of 119
-   records exceed the training context and get dropped.
 5. **Make the watcher cheaper and wider:**
    - Replace polling with an `AXObserver` (focused-window and title-changed
      notifications) plus `NSWorkspace.didActivateApplicationNotification`.
    - Add a Vision OCR fallback (`VNRecognizeTextRequest`, zh-Hans) when the
      Accessibility tree yields no text.
-6. **The app:** a Swift `MenuBarExtra` with a floating `NSPanel` for
-   interventions, talking to the local Kev server. Port SeeNot's session
-   intents and the three constraint types.
+6. **Ship it:** a Swift `MenuBarExtra` app (or py2app) that launches at login and
+   starts the Kev server itself. Port SeeNot's session intents: "I'm here to do
+   X for 20 minutes" before a session, in place of the per-rule snooze.
 
 ## Known problems and gotchas
 
@@ -248,6 +328,12 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
   "Apple Account / Continue with Touch ID / <your name>" stayed in the window's
   AX tree for the next 11 pages, which makes ordinary pages look like login
   pages. Stripped from the trial data; `capture()` doesn't filter it yet.
+- **Background Safari windows in Stage Manager have no web AX tree.** Only
+  matters for `experiments/collect.py`, which needs the Safari window visible
+  (not parked in the Stage Manager strip). The watcher reads the front window,
+  which is always rendered.
+- **Harvested labels cover one rule each** (the rule that fired), and only hits
+  the panel showed. Misses need `label`.
 
 ## Background and sources
 

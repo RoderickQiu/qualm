@@ -106,3 +106,55 @@ PAGES = (
        L("app:com.apple.finder", "other"), L("app:com.apple.systempreferences", "other"),
        L("app:com.apple.Notes", "work"), L("app:com.apple.iWork.Numbers", "work")]
 )
+
+
+# Labels for the rule set in the current rules.example.toml (feeds, livestream,
+# videos, purpose; stocks became a time cap). Derived from the target so the
+# 119 captures don't need re-collecting. "unknown" = genuinely ambiguous, not scored.
+import re as _re
+
+U = "unknown"
+_FEEDS_HIT = [r"youtube\.com/$", r"www\.bilibili\.com/$", r"twitch\.tv/directory", r"live\.bilibili\.com/$",
+              r"guba\.eastmoney", r"r/wallstreetbets/$", r"x\.com/(elonmusk|NASA)$", r"weibo\.com/$",
+              r"s\.weibo\.com", r"m\.weibo\.cn", r"xiaohongshu", r"r/popular", r"r/programming/$"]
+_FEEDS_UNKNOWN = [r"/shorts/", r"douyin", r"kuaishou", r"tiktok", r"x\.com/explore", r"okjike", r"threads\.com",
+                  r"bsky", r"instagram", r"facebook", r"ycombinator", r"bbc\.com", r"36kr", r"sspai"]
+_LIVE_HIT = [r"live\.bilibili\.com/\d+", r"twitch\.tv/(?!directory)\w+$"]
+_LIVE_UNKNOWN = [r"twitch\.tv/directory", r"live\.bilibili\.com/$"]
+_VIDEOS_HIT = [rf"video/{b}/" for b in BILI_FUN]
+_VIDEOS_UNKNOWN = [r"/shorts/", r"live\.bilibili", r"twitch", r"douyin", r"kuaishou", r"tiktok",
+                   r"youtube\.com/$", r"www\.bilibili\.com/$"]
+_LEARN = [rf"video/{b}/" for b in BILI_COURSE] + [r"docs\.python", r"developer\.apple", r"developer\.mozilla",
+                                                   r"wikipedia", r"arxiv", r"stackoverflow"]
+_TASK = [r"search\?", r"/s\?wd=", r"results\?search_query", r"login|signin|sign-in|signup|auth", r"bankofamerica",
+         r"amazon\.com/dp", r"apple\.com/shop", r"investor\.apple", r"federalreserve", r"xe\.com", r"github\.com",
+         r"translate\.google", r"google\.com/maps", r"weather\.com", r"mail\.google", r"^app:", r"notion\.so",
+         r"figma\.com", r"overleaf", r"facebook\.com/$", r"x\.com/i/flow"]
+_ENTERTAIN = [r"/shorts/", r"douyin", r"kuaishou", r"tiktok", r"twitch", r"live\.bilibili", r"youtube\.com/$",
+              r"www\.bilibili\.com/$", r"r/popular", r"weibo", r"xiaohongshu"] + [rf"video/{b}/" for b in BILI_FUN]
+
+
+def _any(pats, target):
+    return any(_re.search(p, target) for p in pats)
+
+
+def labels_v2(target, old):
+    """Current-rule labels for one page, from its target and the first-round labels."""
+    def pick(hit, unknown, yes, no):
+        return yes if _any(hit, target) else U if _any(unknown, target) else no
+
+    purpose = next((p for p, pats in (("learn", _LEARN), ("entertain", _ENTERTAIN), ("task", _TASK))
+                    if _any(pats, target)), None)
+    return {
+        "sensitive": old["sensitive"], "page_kind": old["page_kind"], "purpose": purpose,
+        "rules": {
+            # Live rooms were short video in the first round; now they're livestream's.
+            # Bilibili clips are ordinary videos (the videos budget), not endless swiping: ambiguous here.
+            "shortvideo": "safe" if _any(_LIVE_HIT, target) else U if _any(_VIDEOS_HIT, target) else old["rules"]["shortvideo"],
+            "feeds": pick(_FEEDS_HIT, _FEEDS_UNKNOWN, "violates", "safe"),
+            "livestream": pick(_LIVE_HIT, _LIVE_UNKNOWN, "violates", "safe"),
+            "videos": pick(_VIDEOS_HIT, _VIDEOS_UNKNOWN, "in_scope", "out_of_scope"),
+            "social": old["rules"]["social"],
+            "stocks": {"violates": "in_scope", "safe": "out_of_scope"}.get(old["rules"]["stocks"], U),
+        },
+    }

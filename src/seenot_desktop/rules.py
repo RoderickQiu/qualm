@@ -3,12 +3,14 @@
 The Android ScreenAnalyzer prompt asks one model call for everything in
 prose: page type, sensitivity, a decision per constraint, and a 0-100
 confidence. Here each of those is its own typed question, and the logic that
-combines them lives in `decide.py`, not in the prompt.
+combines them lives in `policy.py`, not in the prompt. docs/POLICY.md says
+what the rules are for.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,15 +18,20 @@ from typing import Literal
 
 from typesafe_sdk import Choice, Noul
 
-# Mirrors ConstraintType in seenot-variant: DENY and TIME_CAP. NO_MONITOR
-# needs no question -- it just skips the app.
+# Mirrors ConstraintType in seenot-variant: DENY and TIME_CAP. NO_MONITOR is
+# [settings] no_monitor: those apps are never read.
 Kind = Literal["deny", "time_cap"]
+# "content": judge the opened item; a feed of candidates never hits.
+# "page": judge the page itself, so feeds and hot lists can hit.
+Target = Literal["content", "page"]
 
 DENY_OPTIONS = ("violates", "safe", "unknown")
 TIME_CAP_OPTIONS = ("in_scope", "out_of_scope", "unknown")
+HIT_LABELS = ("violates", "in_scope")
 PAGE_KINDS = ("feed", "single_item", "search", "work", "other")
+PURPOSES = ("learn", "task", "entertain")
 # "rule" asks whether the screen breaks the user's rule; "direct" asks what
-# the screen is. See rule_question().
+# the screen is. See rule_question(). Trials: "rule" is better on Kev-4B.
 QUESTION_STYLE = os.environ.get("SEENOT_QUESTION_STYLE", "rule")
 
 
@@ -33,25 +40,61 @@ class Rule:
     id: str
     kind: Kind
     description: str  # as the user wrote it, usually Chinese
-    description_en: str = ""  # optional English version, for the language test
-    exceptions: tuple[str, ...] = ()  # repair rules from false positives
+    description_en: str = ""  # optional English version; `lang = "en"` sends it
+    exceptions: tuple[str, ...] = ()  # repair rules: typed, or added by "Not this one"
+    # p_hit at or above this is a hit. Set it from `eval --suggest`: Kev-4B
+    # ranks well but its p_hit runs low (0.06-0.20 in the trials).
+    threshold: float = 0.5
+    target: Target = "content"
+    patterns: tuple[str, ...] = ()  # URL regexes that hit without the model's say
+    allow_learning: bool = False  # lectures, tutorials, docs never hit this rule
+    allow_intentional: bool = False  # one item opened from search or a work app is exempt
+    # Any page the model reads as a feed for entertainment hits this rule too,
+    # on sites the rule never names. In the trials it lifted feed recall from
+    # 0.40 to 0.67 with no false positives.
+    feed_hit: bool = False
+    minutes_per_day: float = 0  # time_cap: daily budget
+    visits_per_day: int = 0  # time_cap: 0 = no visit limit
 
     def text(self, lang: str) -> str:
         return self.description_en if lang == "en" and self.description_en else self.description
 
+    def matches_url(self, url: str) -> bool:
+        return bool(url) and any(re.search(p, url) for p in self.patterns)
+
+
+@dataclass
+class Settings:
+    lang: str = "en"  # which rule description the model reads
+    no_monitor: tuple[str, ...] = ()  # bundle ids that are never read at all
+    allow_urls: tuple[str, ...] = ()  # URL regexes that are never judged
+
+
+RULE_FIELDS = set(Rule.__dataclass_fields__)
+
+
+def load_config(path: str | Path) -> tuple[Settings, list[Rule]]:
+    data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    s = data.get("settings", {})
+    settings = Settings(
+        lang=s.get("lang", "en"),
+        no_monitor=tuple(s.get("no_monitor", ())),
+        allow_urls=tuple(s.get("allow_urls", ())),
+    )
+    rules = []
+    for r in data["rules"]:
+        unknown = set(r) - RULE_FIELDS
+        if unknown:
+            raise ValueError(f"rule {r.get('id')!r}: unknown keys {sorted(unknown)}")
+        r = {**r, "id": str(r["id"])}
+        for key in ("exceptions", "patterns"):
+            r[key] = tuple(r.get(key, ()))
+        rules.append(Rule(**r))
+    return settings, rules
+
 
 def load_rules(path: str | Path) -> list[Rule]:
-    data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
-    return [
-        Rule(
-            id=str(r["id"]),
-            kind=r["kind"],
-            description=r["description"],
-            description_en=r.get("description_en", ""),
-            exceptions=tuple(r.get("exceptions", ())),
-        )
-        for r in data["rules"]
-    ]
+    return load_config(path)[1]
 
 
 SENSITIVE = Noul(
@@ -73,20 +116,33 @@ PAGE_KIND = Choice(
     },
 )
 
+PURPOSE = Choice(
+    instructions="What is the content on screen for?",
+    criteria={
+        "learn": "Learning: a lecture, course, tutorial, documentation, paper, how-to or explainer",
+        "task": "Getting something specific done: work, looking something up, shopping, booking, "
+        "a message to or from a specific person, news the user went looking for",
+        "entertain": "Entertainment or passing time: comedy, clips, memes, gossip, games, streams, trending lists, feeds",
+    },
+)
+
 
 def rule_question(rule: Rule, lang: str = "zh") -> Choice:
     exceptions = ""
     if rule.exceptions:
         exceptions = " Exceptions the user has confirmed are fine: " + "; ".join(rule.exceptions) + "."
+    judge = (
+        "Judge the page as a whole, including feeds and lists."
+        if rule.target == "page"
+        else "Judge only the content currently open, not candidates listed in a feed."
+    )
+    what = rule.text(lang)
     if QUESTION_STYLE == "direct":
-        # Ask what the screen is, not whether it breaks a prohibition: the
-        # "do not show me X -> violates/safe" framing is a double negative.
-        # Same answer keys, so Gate is unchanged.
-        what = rule.text(lang)
+        # Ask what the screen is, not whether it breaks a prohibition.
+        # Same answer keys, so the policy is unchanged.
         if rule.kind == "deny":
             return Choice(
-                instructions=f"Is the content currently open {what}?{exceptions} "
-                "Judge only the content currently open, not candidates listed in a feed.",
+                instructions=f"Is the content currently open {what}?{exceptions} {judge}",
                 criteria={
                     "violates": f"Yes: the open content is {what}",
                     "safe": "No: the open content is something else",
@@ -103,8 +159,7 @@ def rule_question(rule: Rule, lang: str = "zh") -> Choice:
         )
     if rule.kind == "deny":
         return Choice(
-            instructions=f"The user set this rule: do not show me {rule.text(lang)}.{exceptions} "
-            "Judge only the content currently open, not candidates listed in a feed.",
+            instructions=f"The user set this rule: do not show me {what}.{exceptions} {judge}",
             criteria={
                 "violates": "The open content is what the rule forbids",
                 "safe": "The open content is not what the rule forbids",
@@ -112,7 +167,7 @@ def rule_question(rule: Rule, lang: str = "zh") -> Choice:
             },
         )
     return Choice(
-        instructions=f"The user set a time limit on: {rule.text(lang)}.{exceptions} "
+        instructions=f"The user set a time limit on: {what}.{exceptions} "
         "Does the current screen count toward that limit?",
         criteria={
             "in_scope": "The current screen is the limited activity",
@@ -123,7 +178,7 @@ def rule_question(rule: Rule, lang: str = "zh") -> Choice:
 
 
 def build_questions(rules: list[Rule], lang: str = "zh") -> dict:
-    questions = {"sensitive": SENSITIVE, "page_kind": PAGE_KIND}
+    questions = {"sensitive": SENSITIVE, "page_kind": PAGE_KIND, "purpose": PURPOSE}
     for rule in rules:
         questions[f"rule_{rule.id}"] = rule_question(rule, lang)
     return questions
