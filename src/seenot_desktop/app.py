@@ -19,6 +19,7 @@ from AppKit import (
     NSBackingStoreBuffered,
     NSButton,
     NSFont,
+    NSImage,
     NSMakeRect,
     NSMenu,
     NSMenuItem,
@@ -63,7 +64,7 @@ class Controller(NSObject):
     @objc.python_method
     def _build_menu(self):
         self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
-        self.status_item.button().setTitle_("SeeNot")
+        self._set_icon(paused=False)
         menu = NSMenu.alloc().init()
         menu.setAutoenablesItems_(False)
         self.status_line = self._item("starting…")
@@ -76,6 +77,17 @@ class Controller(NSObject):
         self.status_item.setMenu_(menu)
 
     @objc.python_method
+    def _set_icon(self, paused: bool):
+        # An SF Symbol, so menu bar managers (Thaw, Bartender) can show it;
+        # they list the item as "python3" because it isn't an app bundle.
+        name = "pause.circle" if paused else "eye"
+        image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, "SeeNot")
+        image.setTemplate_(True)
+        button = self.status_item.button()
+        button.setImage_(image)
+        button.setToolTip_("SeeNot" + (" (paused)" if paused else ""))
+
+    @objc.python_method
     def set_status(self, text):
         self.status_line.setTitle_(text[:80])
 
@@ -83,7 +95,7 @@ class Controller(NSObject):
         paused = self.pause_item.title().startswith("Resume")
         self.policy.pause(0 if paused else 30)
         self.pause_item.setTitle_("Pause 30 min" if paused else "Resume")
-        self.status_item.button().setTitle_("SeeNot" if paused else "SeeNot ‖")
+        self._set_icon(paused=not paused)
 
     def openRules_(self, sender):
         subprocess.run(["open", "-t", self.rules_path], check=False)
