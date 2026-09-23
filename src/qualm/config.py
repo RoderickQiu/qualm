@@ -359,6 +359,42 @@ class Config:
             blocks[i] += "\n"
         self._write("".join(blocks))
 
+    def migrate(self) -> list[str]:
+        """Daily budgets -> check-ins: time_cap rules become check_in, and
+        minutes_per_day, visits_per_day and [settings] budgets go, with the
+        comments right above them. Returns what changed; saved like any edit."""
+        changed = []
+        blocks = _blocks(self.text())
+        for i, b in enumerate(blocks):
+            data = tomllib.loads(b) if _header(b) in ("rules", "settings") else {}
+            if _header(b) == "settings":
+                if "budgets" in data.get("settings", {}):
+                    blocks[i] = _drop_keys(b, ["budgets"])
+                    changed.append("settings: budgets removed")
+                continue
+            entry = (data.get("rules") or [{}])[0]
+            old = [k for k in ("minutes_per_day", "visits_per_day") if k in entry]
+            if old or entry.get("kind") == "time_cap":
+                blocks[i] = _edit_block(_drop_keys(b, old), {"kind": "check_in"}, [])
+                changed.append(f"{entry['id']}: kind check_in" + "".join(f", {k} removed" for k in old))
+        if changed:
+            self._write("".join(blocks))
+        return changed
+
+
+def _drop_keys(block: str, keys: list[str]) -> str:
+    """Remove keys and the comment lines right above each."""
+    lines = block.splitlines(keepends=True)
+    for key in keys:
+        span = _key_span(lines, key)
+        if span:
+            start = span[0]
+            while start and lines[start - 1].lstrip().startswith("#"):
+                start -= 1
+            del lines[start:span[1]]
+    return "".join(lines)
+
+
 
 def starter_blocks() -> dict[str, tuple[str, str]]:
     """The shipped rules and allow classes: id -> (table, block text, comments included)."""

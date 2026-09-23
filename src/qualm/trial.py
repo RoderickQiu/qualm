@@ -91,7 +91,7 @@ def run(client, data_dir: Path, rule: Rule, settings: Settings, last: int = 100,
             reading = _reading(j)
             g = None if reading.sensitive >= 0.5 else gate(rule, p, j["state"], reading, settings, j.get("opened_on_purpose", False))
             action, why = g or ("none", "")
-            does = {"hit": "pops up" if rule.kind == "deny" or not settings.budgets else "counts", "none": "nothing"}.get(action, action)
+            does = {"hit": "pops up" if rule.kind == "deny" else "checks in", "none": "nothing"}.get(action, action)
             answer = rule_answers(j, reviews[j["id"]]).get(rule.id) if j["id"] in reviews else None
             s = j["screen"]
             rows.append({

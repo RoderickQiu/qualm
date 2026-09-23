@@ -13,8 +13,7 @@ RULES = [
     Rule("shortvideo", "deny", "short videos", threshold=0.15, patterns=(r"youtube\.com/shorts/",), allow_intentional=True),
     Rule("feeds", "deny", "feeds", threshold=0.5, target="page", feed_hit=True),
     Rule("livestream", "deny", "live", threshold=0.5, allow_learning=True),
-    Rule("social", "time_cap", "social", threshold=0.2, minutes_per_day=20, allow_intentional=True),
-    Rule("stocks", "time_cap", "stocks", threshold=0.1, minutes_per_day=10, visits_per_day=2),
+    Rule("social", "check_in", "social", threshold=0.2, allow_intentional=True),
 ]
 SETTINGS = Settings(no_monitor=("com.1password.1password",), allow_urls=(r"^https://docs\.",))
 
@@ -90,14 +89,15 @@ def test_precheck_skips_unmonitored_apps_and_pause(policy):
     assert policy.precheck("com.apple.Safari", "https://a.com").reason == "paused"
 
 
-def test_a_focus_session_makes_time_caps_step_in_and_is_logged(policy, tmp_path):
+def test_a_focus_session_makes_check_ins_step_in_and_is_logged(policy, tmp_path):
     from qualm.policy import end_focus, start_focus
 
-    assert see(policy, "https://weibo.com/1", reading(social=0.5)) == [("count", "social")]
+    assert policy.decide({"url": "https://weibo.com/1"}, reading(social=0.5))[0].panel == "check_in"
     start_focus(tmp_path, "write the report", 50)
     policy.reload_session()
     assert policy.focusing()["intent"] == "write the report"
-    assert see(policy, "https://weibo.com/2", reading(social=0.5)) == [("intervene", "social")]
+    d = policy.decide({"url": "https://weibo.com/2"}, reading(social=0.5))
+    assert actions(d) == [("intervene", "social")] and d[0].panel == ""
     jid = policy.log_judgement({"app": "Safari"}, None, [])
     logged = [json.loads(line) for line in (tmp_path / "judgements.jsonl").open()]
     assert logged[-1]["id"] == jid and logged[-1]["focus"] == "write the report"
@@ -124,21 +124,93 @@ def test_focus_needs_words_and_a_sane_length(tmp_path):
         start_focus(tmp_path, "read", 0)
 
 
-def test_time_cap_counts_then_intervenes_over_budget(policy):
-    assert see(policy, "https://weibo.com/1", reading(social=0.5)) == [("count", "social")]
-    policy.tick(0.0)
-    for t in range(1, 20 * 60 // 5 + 2):
-        policy.tick(t * 5.0)  # 5 s per tick: MAX_TICK_S caps longer gaps
-    assert see(policy, "https://weibo.com/2", reading(social=0.5)) == [("intervene", "social")]
+def decide(policy, url, r):
+    return policy.decide({"url": url, "app": "Safari"}, r, "com.apple.Safari")
 
 
-def test_visits_limit(policy):
-    other = reading(page="work", purpose="task")
-    for i in range(2):
-        assert see(policy, f"https://quote.com/{i}", reading(stocks=0.5)) == [("count", "stocks")]
-        see(policy, "app://editor", other, app="com.microsoft.VSCode")
-    got = policy.decide({"url": "https://quote.com/9"}, reading(stocks=0.5))
-    assert actions(got) == [("intervene", "stocks")] and "visit 3 of 2" in got[0].reason
+def test_check_in_session_then_times_up_then_one_extension(policy, tmp_path):
+    d = decide(policy, "https://weibo.com/1", reading(social=0.5))
+    assert actions(d) == [("intervene", "social")] and d[0].panel == "check_in"
+    c = policy.start_session("social", 5, "reply to a friend", d[0].id)
+    assert policy.rejudge_due()  # the page you're on is in the session now
+    # The session covers the rule, on any site.
+    for url in ("https://weibo.com/1", "https://x.com/home"):
+        d = decide(policy, url, reading(social=0.5))
+        assert actions(d) == [("allow", "social")] and "reply to a friend" in d[0].reason
+    now = time.time()
+    policy.tick(now)
+    policy.tick(now + 5)
+    assert policy.usage.get("social") == (5.0, 1) and c.seconds == 5.0
+    # Time's up while you're on it: judged again, and it says so.
+    c.until = now - 1
+    policy.tick(now + 10)
+    assert policy.rejudge_due(now + 10)
+    d = decide(policy, "https://weibo.com/1", reading(social=0.5))
+    assert d[0].panel == "times_up" and d[0].reason == "your 5 minutes for “reply to a friend” are up"
+    policy.tick(now + 15)
+    assert "social" in policy.sessions  # kept while "time's up" waits for your answer
+    assert policy.extend_session("social", d[0].id) is not None
+    assert actions(decide(policy, "https://weibo.com/1", reading(social=0.5))) == [("allow", "social")]
+    c.until = time.time() - 1
+    d = decide(policy, "https://weibo.com/1", reading(social=0.5))
+    assert "5 more minutes" in d[0].reason
+    assert policy.extend_session("social", d[0].id) is None  # one extension per session (settings.extensions)
+    policy.end_session("social", "done", d[0].id)
+    assert decide(policy, "https://weibo.com/1", reading(social=0.5))[0].panel == "check_in"
+    events = [json.loads(line) for line in (tmp_path / "decisions.jsonl").open()]
+    assert [e.get("event") for e in events if e["type"] == "session"] == ["start", "extend", "end"]
+    assert [e["response"] for e in events if e["type"] == "response"] == ["session", "snooze", "back"]
+    end = events[-2]
+    assert end["how"] == "done" and end["minutes"] == 10 and end["extended"] == 1
+
+
+def test_the_check_in_wait_grows_with_sessions_today_and_coming_back_soon(policy):
+    assert policy.check_in_wait(5) == 0  # the first session of the day is free
+    assert policy.check_in_wait(15) == 5 and policy.check_in_wait(30) == 10  # longer costs a little
+    policy.start_session("social", 5, "a")
+    assert policy.check_in_wait(5) == 5
+    policy.end_session("social", "done")
+    assert policy.check_in_wait(5) == 10  # back within 20 minutes: doubled
+    policy.last_end = time.time() - 25 * 60
+    assert policy.check_in_wait(5) == 5
+    for _ in range(6):
+        policy.start_session("social", 5, "a")
+    assert policy.check_in_wait(30) == 60  # max_wait_s
+
+
+def test_a_session_that_runs_out_while_you_are_elsewhere_just_ends(policy, tmp_path):
+    c = policy.start_session("social", 5, "a")
+    decide(policy, "https://weibo.com/1", reading(social=0.5))
+    decide(policy, "https://docs.example/x", reading(page="work", purpose="task"))
+    c.until = time.time() - 1
+    policy.tick()
+    assert "social" not in policy.sessions
+    end = [json.loads(line) for line in (tmp_path / "decisions.jsonl").open()][-1]
+    assert end["event"] == "end" and end["how"] == "time"
+
+
+def test_a_running_session_and_the_wait_survive_a_restart(policy, tmp_path):
+    policy.start_session("social", 15, "the match")
+    again = Policy(SETTINGS, RULES, tmp_path)
+    assert actions(decide(again, "https://weibo.com/1", reading(social=0.5))) == [("allow", "social")]
+    assert again.check_in_wait(5) == 5
+
+
+def test_old_budget_files_say_how_to_migrate(tmp_path):
+    from qualm.config import Config
+    from qualm.rules import parse_config
+
+    old = ('[settings]\n# false while testing\nbudgets = false\nlang = "en"\n\n'
+           '[[rules]]\nid = "social"\nkind = "time_cap"\ndescription = "social"\nminutes_per_day = 20\n'
+           '# on purpose is fine\nallow_intentional = true\n')
+    with pytest.raises(ValueError, match="config migrate"):
+        parse_config(old)
+    path = tmp_path / "rules.toml"
+    path.write_text(old)
+    assert Config(path).migrate() == ["settings: budgets removed", "social: kind check_in, minutes_per_day removed"]
+    text = path.read_text()
+    assert "budgets" not in text and "false while testing" not in text and "# on purpose is fine" in text
+    assert parse_config(text)[1][0].kind == "check_in"
 
 
 def test_snooze_allows_the_rule_for_a_while(policy):
@@ -183,13 +255,8 @@ def test_a_feed_only_barely_for_entertainment_is_not_an_entertainment_feed(polic
     assert see(policy, "https://app-ads.apple.com/cm/app/1/recommendations", r) == []
 
 
-def test_scrolling_a_feed_counts_toward_a_time_cap(policy):
-    assert ("count", "social") in see(policy, "https://weibo.com/", reading(page="feed", social=0.5))
-
-
-def test_budgets_off_makes_time_caps_step_in_at_once(tmp_path):
-    p = Policy(Settings(budgets=False), RULES, tmp_path)
-    assert see(p, "https://weibo.com/1", reading(social=0.5)) == [("intervene", "social")]
+def test_scrolling_a_feed_needs_a_check_in(policy):
+    assert ("intervene", "social") in see(policy, "https://weibo.com/", reading(page="feed", social=0.5))
 
 
 def test_every_judgement_is_logged_but_private_ones_without_content(policy, tmp_path):
@@ -232,8 +299,8 @@ def test_review_answers_and_tuning(tmp_path):
 
 
 def test_a_screen_with_nothing_but_its_name_does_not_pop_up(policy):
-    got = policy.decide({"app": "WhatsApp", "window_title": "WhatsApp"}, reading(stocks=0.9), "net.whatsapp.WhatsApp")
-    assert actions(got) == [("skip", "stocks")] and "too little on screen" in got[0].reason
+    got = policy.decide({"app": "WhatsApp", "window_title": "WhatsApp"}, reading(social=0.9), "net.whatsapp.WhatsApp")
+    assert actions(got) == [("skip", "social")] and "too little on screen" in got[0].reason
 
 
 def test_never_here_for_an_app_and_a_site(policy, tmp_path):
@@ -249,10 +316,10 @@ def test_an_allow_class_stops_every_rule_but_not_a_url_pattern(tmp_path):
     from qualm.rules import AllowClass
 
     p = Policy(Settings(allow=(AllowClass("shopping", "an online store", threshold=0.35),)), RULES, tmp_path)
-    shop = reading(stocks=0.9)
+    shop = reading(social=0.9)
     shop.allow = {"shopping": 0.8}
     got = p.decide({"url": "https://store.example/polo"}, shop)
-    assert actions(got) == [("allow", "stocks")] and got[0].reason == "shopping is never flagged"
+    assert actions(got) == [("allow", "social")] and got[0].reason == "shopping is never flagged"
     short = reading(shortvideo=0.9)
     short.allow = {"shopping": 0.8}
     assert see(p, "https://www.youtube.com/shorts/x", short) == [("intervene", "shortvideo")]
@@ -271,9 +338,10 @@ def test_explanations_in_words(policy):
     long = Rule("shortvideo", "deny", "short videos made for endless swiping, such as Douyin, TikTok")
     assert label(long) == "short videos made for endless swiping"
     assert headline(Decision("intervene", "shortvideo", "x"), long, "en") == ("shortvideo", "This looks like short videos made for endless swiping.")
-    videos = Rule("videos", "time_cap", "watching entertainment videos: comedy, gaming", minutes_per_day=45)
-    assert headline(Decision("intervene", "videos", "46 of 45 min today"), videos, "en")[1] == \
-        "That's today's 45 minutes of watching entertainment videos."
+    videos = Rule("videos", "check_in", "watching entertainment videos: comedy, gaming")
+    assert headline(Decision("intervene", "videos", "x", "d", "check_in"), videos, "en") == ("videos · check in", "What are you here for?")
+    up = Decision("intervene", "videos", "your 15 minutes for “the match” are up", "d", "times_up")
+    assert headline(up, videos, "en") == ("videos · time's up", "Your 15 minutes for “the match” are up.")
     focus = {"intent": "write the report", "until": time.time() + 20 * 60 + 5}
     assert headline(Decision("intervene", "videos", "x"), videos, "en", focus) == ("Focus · 20 min left", "You're here to: write the report.")
 
@@ -299,6 +367,7 @@ def test_snoozes_are_counted_for_the_growing_wait(policy):
 
 
 def test_time_away_does_not_count(policy):
+    policy.start_session("social", 15, "a")
     see(policy, "https://weibo.com/1", reading(social=0.5))
     policy.tick(0.0)
     policy.tick(5.0, away=True)
@@ -354,8 +423,8 @@ def test_insights_join_pop_ups_to_answers_and_focus_sessions(tmp_path):
     assert sum(map(sum, got["heat"])) == 2
 
 
-def test_review_fixes_session_and_budget(tmp_path):
-    from qualm.explain import headline, ordinal
+def test_review_fixes_session_and_ordinals(tmp_path):
+    from qualm.explain import ordinal
     from qualm.policy import read_session, start_focus
 
     # A new focus session closes the running one in the log.
@@ -367,12 +436,6 @@ def test_review_fixes_session_and_budget(tmp_path):
     for bad in ('{"paused_until": null}', "[1, 2]", '{"focus": {"intent": 3}}', "{half"):
         (tmp_path / "session.json").write_text(bad)
         assert read_session(tmp_path) == {"paused_until": 0.0, "focus": None}
-    # With both limits, the pop-up names the one that ran out.
-    both = Rule("videos", "time_cap", "videos", minutes_per_day=45, visits_per_day=5)
-    p = Policy(Settings(), [both], tmp_path)
-    p.usage.add("videos", seconds=46 * 60, visits=3)
-    d = p._budget(both, "x")
-    assert d.reason == "46 of 45 min today" and headline(d, both, "en")[1].startswith("That's today's 45 minutes")
     assert [ordinal(n) for n in (2, 3, 11, 21, 22, 112)] == ["2nd", "3rd", "11th", "21st", "22nd", "112th"]
 
 
@@ -402,3 +465,37 @@ def test_the_dashboard_answers_only_to_its_own_host(tmp_path):
         assert get(f"evil.example:{port}") == 403
     finally:
         server.shutdown()
+
+
+def test_one_page_two_check_in_rules_asks_once(tmp_path):
+    videos = Rule("videos", "check_in", "videos", threshold=0.2)
+    p = Policy(Settings(), [*RULES, videos], tmp_path)
+    r = reading(social=0.5)
+    r.rules.append(RuleVerdict("videos", "", 0.5, {}))
+    d = p.decide({"url": "https://www.xiaohongshu.com/video/1"}, r)
+    assert [(x.action, x.panel) for x in d] == [("intervene", "check_in")]
+    p.start_session(d[0].rule, 5, "a friend's video", d[0].id)
+    d = p.decide({"url": "https://www.xiaohongshu.com/video/1"}, r)
+    assert actions(d) == [("allow", "social"), ("allow", "videos")] and p.counting == {"social"}
+
+
+def test_times_up_on_screen_is_never_ended_under_you_and_a_lost_one_asks_again(policy):
+    c = policy.start_session("social", 5, "a")
+    decide(policy, "https://weibo.com/1", reading(social=0.5))
+    now = time.time()
+    c.until = now - 1
+    policy.tick(now)  # still here: asked
+    policy.hold("social", True)  # the app shows "time's up"
+    policy.tick(now + 600)  # a slow answer
+    assert "social" in policy.sessions
+    policy.hold("social", False)  # closed without an answer that ends it
+    policy.rejudge_due(now + 600)
+    policy.tick(now + 601)
+    assert "social" not in policy.sessions and policy.rejudge_due(now + 601)
+
+
+def test_a_session_that_ran_out_while_qualm_was_off_ended_at_its_time(policy, tmp_path):
+    c = policy.start_session("social", 5, "a")
+    c.until = time.time() - 30 * 60  # e.g. the Mac slept
+    policy.tick()
+    assert policy.last_end == c.until and policy.check_in_wait(5) == 5  # not doubled: it ended 30 min ago

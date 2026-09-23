@@ -2,7 +2,7 @@
 
 Kev answers with probabilities only; it can't say why. So the explanation
 is built from what Qualm does know: which signal fired (a URL pattern,
-the score, an entertainment feed, a budget), how far past the threshold
+the score, an entertainment feed), how far past the threshold
 the score was, what the model took the page to be, and, asked once per
 pop-up, which part of the screen carried the signal: the model is asked
 again with only the title and address, and with only the page text. In
@@ -48,11 +48,10 @@ def headline(d: Decision, rule: Rule, lang: str, focus: dict | None = None) -> t
     if focus is not None:
         left = max(1, round((focus["until"] - datetime.now().timestamp()) / 60))
         return f"Focus · {left} min left", f"You're here to: {focus['intent']}."
-    if "min today" in d.reason or "visit" in d.reason:
-        m = re.search(r"of (\d+(?:\.\d+)?) min today", d.reason)  # the budget's reason names only what ran out
-        if m:
-            return f"{name} · daily limit", f"That's today's {m.group(1)} minutes of {label(rule, lang)}."
-        return f"{name} · daily limit", f"That's today's visits for {label(rule, lang)}."
+    if d.panel == "check_in":
+        return f"{name} · check in", "What are you here for?"
+    if d.panel == "times_up":
+        return f"{name} · time's up", d.reason[0].upper() + d.reason[1:] + "."
     if d.reason == "an entertainment feed":
         return name, "This is a feed, picked for you."
     return name, f"This looks like {label(rule, lang)}."
@@ -60,13 +59,16 @@ def headline(d: Decision, rule: Rule, lang: str, focus: dict | None = None) -> t
 
 def reason(d: Decision, reading: Reading | None, rule: Rule, lang: str) -> str:
     """One or two sentences on why, without another model call."""
+    if d.panel == "times_up":
+        return "Done takes you back."
+    if d.panel == "check_in":
+        return (f"This looks like {label(rule, lang)}. Say what for and how long, "
+                "and Qualm stays out of the way until then.")
     if d.reason == "matches URL pattern":
         head = f"This address is on your list for {rule.id}."
     elif d.reason == "an entertainment feed":
         head = "Nothing on it was your choice yet: it's a feed of recommendations, for entertainment."
         return head
-    elif "min today" in d.reason or "visit" in d.reason:
-        head = f"Your {rule.id} budget: {d.reason}."
     elif reading is not None and (v := reading.verdict(rule.id)) is not None:
         ratio = v.p_hit / rule.threshold if rule.threshold else 1.0
         sure = "A clear match" if ratio >= 3 else "A likely match" if ratio >= 1.5 else "A close call"
@@ -90,6 +92,16 @@ def context(shown_today: list[str], snooze: tuple[float, float, str] | None = No
     n = len(shown_today) + 1
     if n > 1:
         parts.append(f"{ordinal(n)} time today · last at {shown_today[-1][11:16]}")
+    return " · ".join(parts)
+
+
+def session_context(n_today: int, minutes_today: float, last_end: float = 0.0) -> str:
+    """The check-in's neutral line: "3rd time today · 52 min so far · last ended 14:20"."""
+    if not n_today:
+        return ""
+    parts = [f"{ordinal(n_today + 1)} time today", f"{minutes_today:.0f} min so far"]
+    if last_end and datetime.fromtimestamp(last_end).date() == datetime.now().date():
+        parts.append(f"last ended {datetime.fromtimestamp(last_end):%H:%M}")
     return " · ".join(parts)
 
 

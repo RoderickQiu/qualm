@@ -193,3 +193,40 @@ def test_starting_focus_rejudges_the_screen_you_are_on(monkeypatch, tmp_path):
     watcher._judge = lambda client, s: asked.append(clock["t"]) or True
     watcher.run()
     assert asked == [1.0, 11.0]
+
+
+def test_a_check_in_session_on_an_unchanged_page_ends_with_times_up(monkeypatch, tmp_path):
+    """The page never changes, so only the policy's re-check can say the time is up."""
+    import time as real_time
+
+    from qualm.decide import Reading, RuleVerdict
+    from qualm.rules import Rule
+
+    clock, seen = {"t": 0.0}, []
+    front = types.SimpleNamespace(processIdentifier=lambda: -1)
+    monkeypatch.setattr(w, "NSWorkspace", types.SimpleNamespace(sharedWorkspace=lambda: types.SimpleNamespace(frontmostApplication=lambda: front)))
+    monkeypatch.setattr(w, "make_client", lambda: None)
+    monkeypatch.setattr(w, "ask", lambda client, state, rules, lang, allow: Reading(
+        0.0, "single_item", {"single_item": 0.9}, "entertain", {"entertain": 0.9}, [RuleVerdict("videos", "in_scope", 0.9, {})], 100.0))
+    monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
+    policy = Policy(Settings(), [Rule("videos", "check_in", "entertainment videos", threshold=0.5)], tmp_path)
+
+    def on_event(ev):
+        d = ev.decisions[0]
+        seen.append(d.panel or d.action)
+        if d.panel == "check_in":
+            policy.start_session("videos", 5, "the match", d.id)  # the user answers the pop-up
+
+    watcher = w.Watcher(policy, on_event, interval=0, debounce=0.5, recheck=30, shots=False, presence=False)
+
+    def sleep(_):
+        clock["t"] += 1.0
+        if clock["t"] == 20:
+            policy.sessions["videos"].until = real_time.time() - 1  # five minutes later
+        if clock["t"] >= 30:
+            watcher.stop.set()
+
+    monkeypatch.setattr(w, "capture", lambda skip=(): page("https://www.bilibili.com/video/BV1"))
+    monkeypatch.setattr(w.time, "sleep", sleep)
+    watcher.run()
+    assert seen == ["check_in", "allow", "times_up"]

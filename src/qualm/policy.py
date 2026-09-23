@@ -2,11 +2,12 @@
 
 The model says what the screen is. This module decides what to do about it,
 using what a single reading can't know: how the user got here, what they
-already allowed, and how much of today's budget is left. docs/POLICY.md has
+already allowed, and the check-in session they're in. docs/POLICY.md has
 the reasoning.
 
-Actions: "skip" (not judged), "allow" (a rule hit, but an exemption applies),
-"count" (time_cap in scope, within budget), "intervene".
+Actions: "skip" (not judged), "allow" (a rule hit, but an exemption or your
+session covers it), "intervene". An intervention's `panel` says which pop-up:
+"" (step in), "check_in" (what for, how long) or "times_up".
 """
 
 from __future__ import annotations
@@ -36,6 +37,19 @@ OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge Qualm itse
 OWN_TITLES = ("Qualm review", "SeeNot review")  # the same page shown elsewhere (Cursor's browser: a vscode-file:// URL)
 SESSION_FILE = "session.json"  # pause and focus: set from the menu, the dashboard or the CLI
 
+# Check-ins (docs/POLICY.md). The wait before a session can start doubles with
+# each session today, the first free: 0, 5, 10, 20, 40, 60 s (max_wait_s), and
+# doubles again when you come back within SOON_S of a session ending. The
+# research this follows: one sec (PNAS 2023), a short wait and a question at
+# each opening cut use where a message alone didn't.
+CHECK_IN_MINUTES = (5, 15, 30)  # offered on arrival; 5 is preselected
+LONGER_WAIT_S = {15: 5, 30: 10}  # a longer session costs a few more seconds
+FIRST_WAIT_S = 5
+SOON_S = 20 * 60
+EXTEND_MINUTES, EXTEND_WAIT_S = 5, 10  # "5 more" when the time is up
+RECHECK_S = 30  # still on the page this long after "Take me back" or "Done": step in again
+ANSWER_S = 120  # a session whose time is up waits this long for your answer to "time's up"
+
 
 def host_of(url: str) -> str:
     """example.com for https://www.example.com/a; "" for non-web URLs."""
@@ -46,7 +60,7 @@ def host_of(url: str) -> str:
 def gate(rule: Rule, p: float, state: dict, reading: Reading, settings: Settings,
          intentional: bool = False) -> tuple[str, str] | None:
     """One rule on one reading, before anything you said at runtime (snoozes,
-    "Not this one", budgets): None (no hit), ("hit", why), or ("allow" |
+    "Not this one", check-ins): None (no hit), ("hit", why), or ("allow" |
     "skip", why) for a hit an exemption covers. Shared by the live policy and
     `rules test`, so a test shows what the rule would really do."""
     url = state.get("url", "")
@@ -55,7 +69,7 @@ def gate(rule: Rule, p: float, state: dict, reading: Reading, settings: Settings
     if not (pattern or feed or p >= rule.threshold):
         return None
     # A feed of candidates doesn't break "don't show me X"; scrolling it
-    # still counts toward a time budget.
+    # still needs a check-in.
     if rule.kind == "deny" and rule.target == "content" and reading.page_kind == "feed" and not pattern:
         return None
     # An app that shows nothing but its name (WhatsApp, games, players)
@@ -114,7 +128,7 @@ def write_session(data_dir: Path, **changes) -> dict:
 
 def start_focus(data_dir: Path, intent: str, minutes: float) -> dict:
     """A focus session: what you're here to do, until when. While it runs,
-    every rule hit steps in at once (budgets don't apply) and the pop-up
+    every rule hit steps in at once (check-ins don't apply) and the pop-up
     reminds you what you said: SeeNot's session intents, on the desktop."""
     intent = " ".join(intent.split())
     if not intent:
@@ -159,6 +173,22 @@ class Decision:
     rule: str = ""
     reason: str = ""
     id: str = ""  # set on interventions, to join the user's response in the log
+    panel: str = ""  # interventions: "" (step in), "check_in" or "times_up"
+
+
+@dataclass
+class CheckIn:
+    """A session you checked in for: this rule's pages are fine until `until`."""
+    id: str  # the check-in pop-up's decision id
+    rule: str
+    purpose: str  # what you said it's for
+    minutes: float
+    started: float
+    until: float
+    extended: int = 0
+    seconds: float = 0.0  # time actually on the rule's pages
+    asked_at: float = 0.0  # when "time's up" popped up: kept for ANSWER_S, for the answer
+    showing: bool = False  # the "time's up" pop-up is on screen: kept until it's answered
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -170,7 +200,7 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 class Usage:
-    """Seconds and visits per time_cap rule, for today, kept across restarts."""
+    """Seconds and sessions per check-in rule, for today, kept across restarts."""
 
     def __init__(self, path: Path):
         self.path = path
@@ -184,16 +214,19 @@ class Usage:
         today = date.today().isoformat()
         if today != self.day:
             self.day, self.counts = today, {}
-        return self.counts.setdefault(rule_id, {"seconds": 0.0, "visits": 0})
+        c = self.counts.setdefault(rule_id, {})
+        c.setdefault("seconds", 0.0)
+        c.setdefault("sessions", 0)
+        return c
 
-    def add(self, rule_id: str, seconds: float = 0.0, visits: int = 0) -> None:
+    def add(self, rule_id: str, seconds: float = 0.0, sessions: int = 0) -> None:
         c = self._rule(rule_id)
         c["seconds"] += seconds
-        c["visits"] += visits
+        c["sessions"] += sessions
 
     def get(self, rule_id: str) -> tuple[float, int]:
         c = self._rule(rule_id)
-        return c["seconds"], c["visits"]
+        return c["seconds"], c["sessions"]
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,7 +250,12 @@ class Policy:
         self.paused_until = 0.0
         self.focus: dict | None = None  # {"intent", "started", "until"}: see start_focus()
         self.reload_session()
-        self.counting: set[str] = set()  # time_cap rules the current screen counts toward
+        self.counting: set[str] = set()  # check-in rules whose session the current screen is in
+        self.sessions: dict[str, CheckIn] = {}  # rule id -> its session (running, or up and not yet ended)
+        self._started_today: list[float] = []  # when each check-in session today began, for the wait
+        self.last_end = 0.0  # when the latest session ended
+        self._rejudge_at: list[float] = []  # when the watcher should judge the screen again
+        self._restore_sessions()
         self._base_rules = rules
         self._allowed: dict[str, set[str]] = {}  # rule id -> URLs marked "Not this one"
         self._titles: dict[str, list[str]] = {}
@@ -321,7 +359,7 @@ class Policy:
                 self._arrive(key, "other", "task", bundle_id)
                 return [Decision("skip", reason="sensitive page")]
             self._arrive(key, reading.page_kind, reading.purpose, bundle_id)
-            out, counted, now = [], set(), time.time()
+            out, counted, now, check_ins = [], set(), time.time(), []
             for rule in self.active_rules():
                 v = reading.verdict(rule.id)
                 g = gate(rule, v.p_hit if v else 0.0, state, reading, self.settings, self._cur["intentional"])
@@ -335,52 +373,182 @@ class Policy:
                 elif self.snoozed.get(rule.id, 0) > now:
                     until = datetime.fromtimestamp(self.snoozed[rule.id]).strftime("%H:%M")
                     out.append(Decision("allow", rule.id, f"snoozed until {until}"))
-                elif rule.kind == "deny" or not self.settings.budgets or self.focusing():
+                elif rule.kind == "deny" or self.focusing():
                     out.append(Decision("intervene", rule.id, why, uuid.uuid4().hex[:12]))
                 else:
-                    counted.add(rule.id)
-                    if rule.id not in self.counting:
-                        self.usage.add(rule.id, visits=1)
-                    out.append(self._budget(rule, why))
+                    check_ins.append((rule, why))
+            out += self._check_in(check_ins, counted, now)
             self.counting = counted
             return out
 
-    def _budget(self, rule: Rule, why: str) -> Decision:
-        seconds, visits = self.usage.get(rule.id)
-        parts, flags = [], []
-        if rule.minutes_per_day:
-            parts.append(f"{seconds / 60:.0f} of {rule.minutes_per_day:g} min today")
-            flags.append(seconds >= rule.minutes_per_day * 60)
-        if rule.visits_per_day:
-            parts.append(f"visit {visits} of {rule.visits_per_day} today")
-            flags.append(visits > rule.visits_per_day)
-        over = any(flags)
-        reason = ", ".join(parts) or why
-        if over:
-            # Only what ran out, so the pop-up names the right limit.
-            spent = [p for p, out in zip(parts, flags) if out]
-            return Decision("intervene", rule.id, ", ".join(spent), uuid.uuid4().hex[:12])
-        return Decision("count", rule.id, reason)
+    def _check_in(self, hits: list[tuple[Rule, str]], counted: set[str], now: float) -> list[Decision]:
+        """The check-in rules this page hits: one pop-up at most. A running
+        session covers the page's other check-in rules too (a video on a
+        social site is one session, not two)."""
+        if not hits:
+            return []
+        live = next((self.sessions[r.id] for r, _ in hits if r.id in self.sessions and self.sessions[r.id].until > now), None)
+        if live is not None:
+            counted.add(live.rule)
+            said = f"until {datetime.fromtimestamp(live.until):%H:%M}, for “{live.purpose}”"
+            return [Decision("allow", r.id, f"your session {said}" if r.id == live.rule else f"your {live.rule} session {said}")
+                    for r, _ in hits]
+        up = next((self.sessions[r.id] for r, _ in hits if r.id in self.sessions), None)
+        if up is not None:  # still here when the time you chose is up
+            up.asked_at = up.asked_at or now
+            spent = f"{EXTEND_MINUTES:g} more minutes" if up.extended else f"{up.minutes:g} minutes"
+            return [Decision("intervene", up.rule, f"your {spent} for “{up.purpose}” are up", uuid.uuid4().hex[:12], "times_up")]
+        rule, why = hits[0]
+        return [Decision("intervene", rule.id, why, uuid.uuid4().hex[:12], "check_in")]
 
     def tick(self, now: float | None = None, away: bool = False) -> None:
-        """Call on every loop: adds the time since the last tick to the rules
-        the current screen counts toward, unless you're away (presence.py)."""
+        """Call on every loop: adds the time since the last tick to the
+        sessions the current screen is in, unless you're away (presence.py),
+        and ends the sessions whose time ran out while you were elsewhere."""
         now = time.time() if now is None else now
         with self.lock:
             if self._last_tick is not None and not away:
                 elapsed = min(now - self._last_tick, MAX_TICK_S)
                 for rule_id in self.counting:
                     self.usage.add(rule_id, seconds=elapsed)
+                    if rule_id in self.sessions:
+                        self.sessions[rule_id].seconds += elapsed
             self._last_tick = now
+            for rule_id, c in list(self.sessions.items()):
+                if c.until > now:
+                    continue
+                if rule_id in self.counting:
+                    # Time's up while you're on it: judge the screen again,
+                    # which pops up "time's up".
+                    self.counting.discard(rule_id)
+                    c.asked_at = now  # kept until the pop-up is answered (ANSWER_S)
+                    self._rejudge_at.append(now)
+                elif c.showing or (c.asked_at and now - c.asked_at < ANSWER_S):
+                    continue  # "time's up" is on screen, or about to be: its answer ends it
+                elif c.asked_at:
+                    # Asked, but the pop-up never showed (another was open) or you
+                    # left: judge again, so a page you're still on gets a check-in.
+                    self.end_session(rule_id, "time", now=now)
+                    self._rejudge_at.append(now)
+                else:
+                    # Ran out while you were elsewhere (or the Mac slept, or Qualm
+                    # was off): it ended when the time was up, not now.
+                    self.end_session(rule_id, "time", now=min(now, c.until))
             if now - self._last_save > 30:
                 self.usage.save()
                 self._last_save = now
+
+    def rejudge_due(self, now: float | None = None) -> bool:
+        """True once when the screen should be judged again though it didn't
+        change: a session's time is up, an unlock ran out, or you're still
+        on a page RECHECK_S after "Take me back"."""
+        now = time.time() if now is None else now
+        with self.lock:
+            due = [t for t in self._rejudge_at if t <= now]
+            if not due:
+                return False
+            self._rejudge_at = [t for t in self._rejudge_at if t > now]
+            return True
+
+    def rejudge_in(self, seconds: float) -> None:
+        with self.lock:
+            self._rejudge_at.append(time.time() + seconds)
+
+    # -- check-in sessions ---------------------------------------------------
+
+    def check_in_wait(self, minutes: float = CHECK_IN_MINUTES[0], now: float | None = None) -> int:
+        """Seconds before a session of `minutes` can start: see CHECK_IN_MINUTES."""
+        now = time.time() if now is None else now
+        with self.lock:
+            n = sum(1 for t in self._started_today if datetime.fromtimestamp(t).date() == date.today())
+            wait = FIRST_WAIT_S * 2 ** (n - 1) if n else 0
+            if self.last_end and now - self.last_end < SOON_S:
+                wait = max(wait * 2, FIRST_WAIT_S)
+            return int(min(wait + LONGER_WAIT_S.get(int(minutes), 0), self.settings.max_wait_s))
+
+    def hold(self, rule_id: str, showing: bool) -> None:
+        """The app shows (or closed) "time's up" for this rule's session: it
+        isn't ended under the open pop-up, however long the answer takes."""
+        with self.lock:
+            if (c := self.sessions.get(rule_id)) is not None:
+                c.showing = showing
+
+    def start_session(self, rule_id: str, minutes: float, purpose: str, decision_id: str = "") -> CheckIn:
+        now = time.time()
+        with self.lock:
+            if rule_id in self.sessions:
+                self.end_session(rule_id, "new", now=now)
+            c = CheckIn(decision_id or uuid.uuid4().hex[:12], rule_id, purpose, minutes, now, now + minutes * 60)
+            self.sessions[rule_id] = c
+            self._started_today.append(now)
+            self.usage.add(rule_id, sessions=1)
+            self._rejudge_at.append(now)  # the page you're on is in the session now: start counting
+        self._log({"type": "session", "event": "start", "id": c.id, "rule": rule_id, "minutes": minutes,
+                   "for": purpose, "until": round(c.until)})
+        self.log_response(decision_id, "session", rule_id, reason=purpose, minutes=minutes)
+        return c
+
+    def extend_session(self, rule_id: str, decision_id: str = "", minutes: float = EXTEND_MINUTES) -> CheckIn | None:
+        """ "5 more" when the time is up; None when the session is gone or out of extensions."""
+        now = time.time()
+        with self.lock:
+            c = self.sessions.get(rule_id)
+            if c is None or c.extended >= self.settings.extensions:
+                return None
+            c.until = max(c.until, now) + minutes * 60
+            c.extended += 1
+            c.asked_at = 0.0
+            self._rejudge_at.append(now)
+        self._log({"type": "session", "event": "extend", "id": c.id, "rule": rule_id, "minutes": minutes,
+                   "until": round(c.until)})
+        self.log_response(decision_id, "snooze", rule_id, reason=c.purpose, minutes=minutes)
+        return c
+
+    def end_session(self, rule_id: str, how: str, decision_id: str = "", now: float | None = None) -> CheckIn | None:
+        """how: "done" (you ended it when the time was up), "time" (it ran out
+        while you were elsewhere), "new" (a new session replaced it)."""
+        now = time.time() if now is None else now
+        with self.lock:
+            c = self.sessions.pop(rule_id, None)
+            if c is None:
+                return None
+            self.last_end = now
+            self.counting.discard(rule_id)
+        self._log({"type": "session", "event": "end", "id": c.id, "rule": rule_id, "how": how, "for": c.purpose,
+                   "minutes": c.minutes + c.extended * EXTEND_MINUTES, "stayed": round(c.seconds / 60, 1),
+                   "extended": c.extended})
+        if how == "done":
+            self.log_response(decision_id, "back", rule_id)
+        return c
+
+    def _restore_sessions(self) -> None:
+        """Today's sessions from the log, so a restart keeps a running one and the wait."""
+        path = self.data_dir / "decisions.jsonl"
+        if not path.exists():
+            return
+        today = date.today().isoformat()
+        for line in path.open(encoding="utf-8"):
+            if not line.startswith('{"at": "' + today) or '"session"' not in line:
+                continue
+            e = json.loads(line)
+            if e.get("type") != "session":
+                continue
+            at = datetime.fromisoformat(e["at"]).timestamp()
+            if e["event"] == "start":
+                self._started_today.append(at)
+                self.sessions[e["rule"]] = CheckIn(e["id"], e["rule"], e.get("for", ""), e["minutes"], at, e["until"])
+            elif e["event"] == "extend" and (c := self.sessions.get(e["rule"])) is not None:
+                c.until, c.extended = e["until"], c.extended + 1
+            elif e["event"] == "end":
+                self.sessions.pop(e["rule"], None)
+                self.last_end = at
 
     # -- what the user says back ---------------------------------------------
 
     def snooze(self, rule_id: str, minutes: float, reason: str = "", decision_id: str = "") -> None:
         with self.lock:
             self.snoozed[rule_id] = time.time() + minutes * 60
+            self._rejudge_at.append(self.snoozed[rule_id] + 1)  # still on it when the unlock runs out: step in
             self._snooze_times.append(time.time())
             self._snoozes[rule_id] = (self.snoozed[rule_id], minutes, reason)
         self.log_response(decision_id, "snooze", rule_id, reason=reason, minutes=minutes)
@@ -470,17 +638,18 @@ class Policy:
         return time.time() < self.paused_until
 
     def usage_summary(self) -> str:
+        """For the menu: a running session, or today's minutes."""
         with self.lock:
-            parts = []
+            parts, now = [], time.time()
             for r in self.active_rules():
-                if r.kind != "time_cap":
+                if r.kind != "check_in":
                     continue
-                seconds, visits = self.usage.get(r.id)
-                s = f"{r.id} {seconds / 60:.0f}"
-                s += f"/{r.minutes_per_day:g} min" if r.minutes_per_day else " min"
-                if r.visits_per_day:
-                    s += f", {visits}/{r.visits_per_day} visits"
-                parts.append(s)
+                c = self.sessions.get(r.id)
+                seconds, _ = self.usage.get(r.id)
+                if c is not None and c.until > now:
+                    parts.append(f"{r.id} until {datetime.fromtimestamp(c.until):%H:%M}")
+                elif seconds >= 60:
+                    parts.append(f"{r.id} {seconds / 60:.0f} min today")
             return " · ".join(parts)
 
     # -- the log that becomes labels -----------------------------------------
@@ -530,6 +699,7 @@ class Policy:
         the model was down and a rule's own site fired."""
         self._log({
             "type": "intervention", "id": d.id, "rule": d.rule, "reason": d.reason, "screen": screen,
+            **({"panel": d.panel} if d.panel else {}),
             **({"page_kind": reading.page_kind, "purpose": reading.purpose,
                 "p_hit": {v.rule_id: round(v.p_hit, 4) for v in reading.rules}} if reading is not None else {}),
         })

@@ -1,8 +1,9 @@
 # Handoff: qualm
 
 Written 2026-09-22; updated the same day after the trials, again after
-the MVP was built, and on the night of 2026-09-23 (pop-up, focus sessions,
-dashboard, 8-bit model, `serve` / `doctor`). This is the working
+the MVP was built, on the night of 2026-09-23 (pop-up, focus sessions,
+dashboard, 8-bit model, `serve` / `doctor`), and on the day of 2026-09-23
+(check-ins replace daily budgets). This is the working
 document: update the Status and Measured sections as you go. README.md is
 the public face: what it is, screenshots, getting started.
 
@@ -174,6 +175,51 @@ atomically. Also from the live test: while the model is down or timing
 out (it hit the 30 s timeout under swap), a rule's own sites still step
 in, as `sites` always promised.
 
+### Check-ins instead of daily budgets (day of 2026-09-23)
+
+Asked to leave testing mode for the "real" one, the user rejected the
+daily budget itself, and they were right (docs/POLICY.md, "Check-ins, not
+daily budgets"): it reads as an allowance, puts no friction on the first
+44 minutes, and can't see the short check that becomes forty minutes. Now:
+
+- `kind = "check_in"` replaces `time_cap`; `minutes_per_day`,
+  `visits_per_day` and `[settings] budgets` are gone. New settings:
+  `max_wait_s` (60) and `extensions` (1). An old file won't load and says
+  to run `qualm config migrate` (done on this Mac's rules.toml).
+- On arrival (not on purpose, not learning): "What are you here for?", a
+  few words, 5/15/30 min (5 is Return). The session covers the rule on any
+  site; nothing pops up until it's over. Time's up while you're there:
+  Done (default, goes back) or "5 more" once after 10 s; then only a new
+  check-in. The wait before Start: 0 for the day's first session, then 5,
+  10, 20, 40, 60 s; doubled within 20 min of a session ending; +5 s for 15
+  min, +10 s for 30.
+- **The watcher now re-judges an unchanged page when the policy asks**
+  (`Policy.rejudge_due`): when a session's time is up, when an "I need it"
+  unlock runs out (before, sitting on the same page after 10 minutes never
+  popped up again), and 30 s after "Take me back"/"Done", so an app with no
+  Back steps in again.
+- Sessions are logged (`decisions.jsonl`, `type: session`, start / extend
+  / end with what for, said and stayed) and rebuilt from the log on
+  restart. Dashboard: "Check-ins today" (running and finished sessions),
+  "Checked in" as a pop-up outcome, and "what you said, and what you did".
+- The model's question for these rules is word for word the old
+  time-cap question, so thresholds and trial numbers still hold.
+
+Verified: 75 tests (the session life cycle, the wait, the migration, and a
+watcher test where only the re-check can say time's up; it caught a bug
+where the session ended in the tick between noticing and asking). An
+independent review then found, all fixed: a "time's up" dropped behind
+another pop-up left the page unguarded; a slow answer let the session end
+under the open pop-up; a session that ran out while Qualm was off counted
+as just ended (doubling the next wait); two check-in rules on one page
+asked twice; the dashboard counted extensions twice and broke against an
+app still running the old code. Also:
+`app --demo checkin|timesup` screenshotted (the countdown runs 20 → 0, then
+"Start 5 min"); the dashboard's Today and Insights in headless Chrome on
+demo data. Not verified: the live loop in a browser with the new code
+(the user was at the Mac; the demo pop-ups already interrupted them), and a
+day of real use.
+
 ### MVP (built after the trials)
 
 `qualm app` is a menu bar app (Python + PyObjC) that watches the
@@ -227,7 +273,7 @@ uv run qualm label              # capture + label one moment -> data/labels.json
 uv run qualm eval               # precision/recall per threshold, latency
 uv run qualm install            # or: start model server + app at every login (uninstall to undo)
 uv run qualm app                # the MVP: menu bar + intervention panel
-uv run qualm app --demo         # show the panel once, learn nothing (deny|feed|budget|focus|prompt)
+uv run qualm app --demo         # show the panel once, learn nothing (deny|feed|checkin|timesup|focus|prompt)
 uv run qualm focus write the report --minutes 50   # --stop ends it
 uv run qualm pause 30           # --stop resumes
 uv run qualm watch              # the same loop in the terminal, every judgement printed
@@ -257,7 +303,7 @@ fallback may trigger an **Automation** prompt per browser the first time.
 | `src/qualm/personalize.py` | The `rules` / `allow` / `except` / `never` / `settings` commands |
 | `src/qualm/trial.py` | `rules test` / `label` / `tune`: a rule on your recent screens, and its threshold from your answers |
 | `src/qualm/decide.py` | TypeSafe SDK client (Kev or Jev) and `ask()` |
-| `src/qualm/policy.py` | Reading -> skip / allow / count / intervene: thresholds, URL patterns, exemptions, "opened on purpose", budgets, snoozes, user exceptions, the decision log |
+| `src/qualm/policy.py` | Reading -> skip / allow / intervene: thresholds, URL patterns, exemptions, "opened on purpose", check-in sessions and their waits, snoozes, re-judging, user exceptions, the decision log |
 | `src/qualm/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
 | `src/qualm/app.py` | Menu bar item (focus, pause), the intervention panel and the focus prompt (PyObjC); serves the dashboard |
 | `src/qualm/ui.py` | The look: the blurred HUD panel, labels, badges, the screen dim |
@@ -283,7 +329,8 @@ pages), `reviews.jsonl` (your answers on the review page),
 `decisions.jsonl` (interventions, your answers, focus sessions), `session.json`
 (pause and focus now), `reflections.jsonl` (the weekly question), `exceptions.jsonl` ("Not
 this one", "Never here", `except`/`never` commands), `trials.jsonl` (`rules
-test` scores, per exact rule wording) and `usage.json` (today's budgets).
+test` scores, per exact rule wording) and `usage.json` (today's minutes and
+check-in sessions per rule; `usage_history.json` keeps every day).
 
 Never flagged: `[[allow]]` classes in rules.toml are kinds of page described
 in words (shipped: shopping, "an online store: a product page, listing, cart
@@ -302,9 +349,8 @@ the model scores low, are URL patterns instead. Whole policy on the trial
 set: precision 0.96, recall 1.00 (was 0.96 / 0.92). The pop-up's
 "Never in <app>" / "Never on <site>" does the same for one app or site.
 
-Testing mode: `[settings] budgets = false` (the current default) makes every
-rule hit pop up at once, time caps included. `qualm settings set
-budgets=true` for real budgets.
+There is no testing mode any more: deny rules step in at once, check-in
+rules ask on arrival (above, and docs/POLICY.md).
 
 ## Design decisions, and why
 
@@ -322,7 +368,7 @@ budgets=true` for real budgets.
    - `sensitive`: a yes/no question.
    - `page_kind`: feed / single_item / search / work / other.
    - `rule_<id>`: violates/safe/unknown for DENY rules, in_scope/out_of_scope/unknown
-     for TIME_CAP rules.
+     for check-in rules (TIME_CAP on Android).
 
    The logic that combines them is plain code in `Gate`. For example, a
    content rule never fires on a feed page; the Android prompt needed a page of
@@ -529,10 +575,11 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 
 ## Next steps, in order
 
-0. **Switch to the new version.** In the morning the app and server may
-   still be the old processes: `qualm doctor` says which. Restart the
-   server as `qualm serve` (8-bit) and the app as `qualm app`, or `qualm
-   install` for both at login.
+0. **Switch to the new version.** Restart `qualm app` (the server can stay):
+   the running app predates check-ins, refuses the migrated rules.toml
+   ("not reloaded") and keeps the old behaviour until then. `qualm doctor`
+   says what's running. Then watch the first check-ins and time's-ups in
+   real use: the live loop with the new code isn't verified yet.
 1. **Use the app for a few days, and review.** Browse normally, then go
    through the dashboard's Review tab: "Was Qualm right?" per card; for
    wrong ones, "Is this X?" per rule. Use the menu's "This should have been

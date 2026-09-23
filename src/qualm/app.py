@@ -1,10 +1,19 @@
 """Menu bar app: the watcher on a thread, an intervention panel on top.
 
 The panel is friction, not a lock: it floats over everything (full-screen
-video included), dims the screens behind it, and offers a way out. "Take
-me back" is the default; "I need it" unlocks after a short wait that grows
-with each use and asks what for; "Not this one" teaches the rule an
-exception; "Never here" silences an app or site. Each answer is logged.
+video included), dims the screens behind it, and offers a way out. It has
+three faces:
+
+- a deny rule steps in: "Take me back" is the default; "I need it" unlocks
+  after a short wait that grows with each use and asks what for;
+- a check-in rule, on arrival: what for, and 5, 15 or 30 minutes (5 is
+  Return), after a wait that grows with each session today;
+- the check-in's time is up: "Done" goes back; "5 more" once, after a wait;
+  then only a new check-in.
+
+"Not this one" teaches the rule an exception; "Never here" silences an app
+or site. Each answer is logged. Still on the page RECHECK_S after going
+back: it steps in again.
 
 The menu starts a focus session ("I'm here to write the report, for 50
 min"), pauses, and opens the dashboard. Pause and focus live in
@@ -44,15 +53,16 @@ from Foundation import NSObject
 from PyObjCTools import AppHelper
 
 from . import ui
-from .policy import Decision, Policy, end_focus, host_of, start_focus
+from .policy import (CHECK_IN_MINUTES, EXTEND_MINUTES, EXTEND_WAIT_S, RECHECK_S, Decision, Policy, end_focus,
+                     host_of, start_focus)
 from .watcher import PANEL_TITLE, Event, Watcher, describe, go_back
 
 SNOOZE_MINUTES = 10
 FOCUS_SNOOZE_MINUTES = 5  # in a focus session, "I need it" is a short break
 # "I need it" unlocks after a wait that doubles with each snooze in the last
-# hour: 5, 10, 20, 40, 60 s. Research on one sec (PNAS 2023) found the
-# option to back out and a short wait both cut use; the message alone didn't.
-FIRST_WAIT_S, MAX_WAIT_S = 5, 60
+# hour: 5, 10, 20, 40, 60 s (max_wait_s). Research on one sec (PNAS 2023) found
+# the option to back out and a short wait both cut use; the message alone didn't.
+FIRST_WAIT_S = 5
 FOCUS_LENGTHS = (25, 50, 90)  # minutes offered by the focus prompt
 W, PAD = 560.0, 28.0  # panel width and margin
 BADGE = 46.0
@@ -64,7 +74,9 @@ class Controller(NSObject):
         self.policy, self.rules_path, self.demo = policy, rules_path, demo
         self.current: tuple[Decision, Event] | None = None
         self.last: Event | None = None  # the latest judged screen, for "This should have been blocked"
-        self.mode = "ask"  # the panel: "ask" -> "why" (what do you need it for) -> "done" (a short "got it")
+        # The panel: "ask" -> "why" (what do you need it for) -> "done" (a short
+        # "got it"); "checkin" -> "done"; "timesup" -> "done" or "checkin".
+        self.mode = "ask"
         self.evidence_text = self.context_text = ""
         self.dimmer = ui.Dimmer()
         self._build_menu()
@@ -121,7 +133,7 @@ class Controller(NSObject):
 
     @objc.python_method
     def _refresh(self):
-        """Icon and menu from the policy's state: focus, pause, today's budgets."""
+        """Icon and menu from the policy's state: focus, pause, check-in sessions."""
         focus, paused = self.policy.focusing(), self.policy.paused()
         # SF Symbols, so menu bar managers (Thaw, Bartender) can show the item;
         # they list it as "python3" because it isn't an app bundle.
@@ -239,6 +251,10 @@ class Controller(NSObject):
         self.why.setPlaceholderString_("What's it for? A few words.")
         self.why.setTarget_(self)
         self.why.setAction_("need:")
+        self.length = NSSegmentedControl.segmentedControlWithLabels_trackingMode_target_action_(
+            [f"{m} min" for m in CHECK_IN_MINUTES], 0, self, "lengthChanged:")
+        self.length.setSelectedSegment_(0)
+        self.length.sizeToFit()
         self.back = NSButton.buttonWithTitle_target_action_("Take me back", self, "back:")
         self.back.setKeyEquivalent_("\r")
         self.back.setControlSize_(3)  # large
@@ -247,7 +263,7 @@ class Controller(NSObject):
         self.fine = ui.link("Not this one", self, "fine:")
         self.never = ui.link("Never here", self, "never:")
         for v in (self.badge_box, self.badge_icon, self.eyebrow, self.headline, self.place_icon, self.place,
-                  self.body, self.context, self.why, self.back, self.need, self.fine, self.never):
+                  self.body, self.context, self.why, self.length, self.back, self.need, self.fine, self.never):
             view.addSubview_(v)
 
     @objc.python_method
@@ -267,7 +283,7 @@ class Controller(NSObject):
             rows += [(18, None), (18, "place"), (10, None), (body_h, "body")]
             if ctx_h:
                 rows += [(8, None), (ctx_h, "context")]
-            if self.mode == "why":
+            if self.mode in ("why", "checkin"):
                 rows += [(16, None), (30, "why")]
             rows += [(20, None), (36, "buttons")]
         rows += [(22, None)]
@@ -283,7 +299,8 @@ class Controller(NSObject):
         self.badge_icon.setFrame_(NSMakeRect(PAD, hy + header - BADGE, BADGE, BADGE))
         self.eyebrow.setFrame_(NSMakeRect(text_x, hy + header - eh, head_w, eh))
         self.headline.setFrame_(NSMakeRect(text_x, hy + header - eh - 3 - hh, head_w, hh))
-        for v in (self.place_icon, self.place, self.body, self.context, self.why, self.back, self.need, self.fine, self.never):
+        for v in (self.place_icon, self.place, self.body, self.context, self.why, self.length, self.back, self.need,
+                  self.fine, self.never):
             v.setHidden_(done)
         if not done:
             self.place_icon.setFrame_(NSMakeRect(PAD, y["place"] + 1, 16, 16))
@@ -293,9 +310,14 @@ class Controller(NSObject):
             self.context.setHidden_(not ctx_h)
             if ctx_h:
                 self.context.setFrame_(NSMakeRect(PAD, y["context"], iw, ctx_h))
-            self.why.setHidden_(self.mode != "why")
+            self.why.setHidden_(self.mode not in ("why", "checkin"))
+            self.length.setHidden_(self.mode != "checkin")
             if self.mode == "why":
                 self.why.setFrame_(NSMakeRect(PAD, y["why"], iw, 30))
+            elif self.mode == "checkin":
+                lw = self.length.frame().size.width
+                self.why.setFrame_(NSMakeRect(PAD, y["why"], iw - lw - 10, 30))
+                self.length.setFrameOrigin_((W - PAD - lw, y["why"] + 2))
             by = y["buttons"]
             for b in (self.back, self.need):
                 b.sizeToFit()
@@ -316,12 +338,12 @@ class Controller(NSObject):
         from .explain import context, headline, reason
 
         self.current = (d, ev)
-        self.mode = "ask"
         rule = self.policy.rule(d.rule)
         lang = self.policy.settings.lang
         focus = self.policy.focusing()
         eyebrow, head = headline(d, rule, lang, focus)
-        kind = "focus" if focus else "budget" if eyebrow.endswith("daily limit") else "deny"
+        self.mode = {"check_in": "checkin", "times_up": "timesup"}.get(d.panel, "ask")
+        kind = "focus" if focus else {"checkin": "checkin", "timesup": "timesup"}.get(self.mode, "deny")
         ui.recolor(self.badge_box, kind)
         ui.set_symbol(self.badge_icon, kind, BADGE)
         self.eyebrow.setStringValue_(eyebrow.upper())
@@ -332,13 +354,9 @@ class Controller(NSObject):
         self.place.setStringValue_(f"{where} — {host}" if host and host not in where.lower() else where)
         self.body.setStringValue_(reason(d, ev.reading, rule, lang))
         self.context_text = context(self.policy.popups_today(d.rule, but=d.id), self.policy.last_snooze(d.rule))
-        checking = ev.reading is not None and not self.demo
+        checking = ev.reading is not None and not self.demo and self.mode == "ask"
         self.evidence_text = "Checking which part of the screen triggered it…" if checking else ""
         self.why.setStringValue_("")
-        self.why.setPlaceholderString_("What's it for? A few words.")
-        self.back.setKeyEquivalent_("\r")
-        self.panel.setDefaultButtonCell_(self.back.cell())
-        self.need.setKeyEquivalent_("")
         self.snooze_minutes = FOCUS_SNOOZE_MINUTES if focus else SNOOZE_MINUTES
         self.back.setTitle_("Back to it" if focus else "Take me back")
         self.fine.setTitle_("It's part of the task" if focus else "Not this one")
@@ -346,7 +364,15 @@ class Controller(NSObject):
         place = host or ev.screen.app.strip("‎")
         self.never.setTitle_((f"Never on {place}" if host else f"Never in {place}")[:32])
         self.never.sizeToFit()
-        self._start_countdown()
+        if self.mode == "checkin":
+            self._enter_checkin()
+        elif self.mode == "timesup":
+            self._enter_timesup()
+        else:
+            self.why.setPlaceholderString_("What's it for? A few words.")
+            self._default(self.back)
+            self._start_countdown(min(self.policy.settings.max_wait_s,
+                                      FIRST_WAIT_S * 2 ** self.policy.snoozes_in_last_hour()))
         self._layout()
         if checking:
             threading.Thread(target=self._find_evidence, args=(d, ev), daemon=True).start()
@@ -355,8 +381,54 @@ class Controller(NSObject):
         self.dimmer.show()
         NSApp.activateIgnoringOtherApps_(True)
         self.panel.makeKeyAndOrderFront_(None)
-        self.panel.makeFirstResponder_(None)
+        self.panel.makeFirstResponder_(self.why if self.mode == "checkin" else None)
         ui.fade(self.panel, 1.0, 0.2)
+
+    @objc.python_method
+    def _default(self, button):
+        """The button Return presses."""
+        for b in (self.back, self.need):
+            b.setKeyEquivalent_("\r" if b is button else "")
+        self.panel.setDefaultButtonCell_(button.cell())
+
+    @objc.python_method
+    def _enter_checkin(self):
+        """What for, and how long. Return starts 5 minutes once the wait is over."""
+        from .explain import session_context
+
+        d, _ = self.current
+        self.mode = "checkin"
+        rule = self.policy.rule(d.rule)
+        ui.recolor(self.badge_box, "checkin")
+        ui.set_symbol(self.badge_icon, "checkin", BADGE)
+        self.eyebrow.setStringValue_(f"{rule.id.replace('_', ' ')} · check in".upper())
+        self.headline.setStringValue_("What are you here for?")
+        seconds, n = self.policy.usage.get(d.rule)
+        self.context_text = session_context(n, seconds / 60, self.policy.last_end)
+        self.why.setPlaceholderString_("A few words: what's it for?")
+        self.length.setSelectedSegment_(0)
+        self.back.setTitle_("Take me back")
+        # Each length's wait, fixed now: a session ended a moment ago counts.
+        self._waits = {m: self.policy.check_in_wait(m) for m in CHECK_IN_MINUTES}
+        self._default(self.need)
+        self._start_countdown(None)
+
+    @objc.python_method
+    def _enter_timesup(self):
+        d, _ = self.current
+        self.policy.hold(d.rule, True)
+        c = self.policy.sessions.get(d.rule)
+        seconds, n = self.policy.usage.get(d.rule)
+        stayed = f"{c.seconds / 60:.0f} min of it on these pages" if c else ""
+        self.context_text = " · ".join(x for x in (stayed, f"{seconds / 60:.0f} min today") if x)
+        self.back.setTitle_("Done")
+        self._default(self.back)
+        self._start_countdown(EXTEND_WAIT_S if self._can_extend() else 0)
+
+    @objc.python_method
+    def _can_extend(self) -> bool:
+        c = self.policy.sessions.get(self.current[0].rule) if self.current else None
+        return c is not None and c.extended < self.policy.settings.extensions
 
     @objc.python_method
     def _find_evidence(self, d: Decision, ev: Event):
@@ -377,27 +449,58 @@ class Controller(NSObject):
             self._layout()
 
     @objc.python_method
-    def _start_countdown(self):
-        n = self.policy.snoozes_in_last_hour()
-        self._wait = min(MAX_WAIT_S, FIRST_WAIT_S * 2 ** n)
-        self._tick_countdown(self.current)
+    def _start_countdown(self, wait: float | None):
+        """The second button unlocks after `wait` seconds; None: the check-in's
+        wait for the length picked, which can change while it counts."""
+        self._fixed_wait = wait
+        self._opened = time.monotonic()
+        self._tick_countdown(self.current, self.mode)
 
     @objc.python_method
-    def _tick_countdown(self, which):
-        if self.current is not which or self.mode != "ask":
+    def _left(self) -> int:
+        wait = self._waits[self._picked()] if self._fixed_wait is None else self._fixed_wait
+        return max(0, int(wait - (time.monotonic() - self._opened) + 0.999))
+
+    @objc.python_method
+    def _picked(self) -> int:
+        return CHECK_IN_MINUTES[max(0, self.length.selectedSegment())]
+
+    @objc.python_method
+    def _tick_countdown(self, which, mode):
+        if self.current is not which or self.mode != mode:
             return  # the panel closed or moved on
-        if self._wait <= 0:
-            self.need.setEnabled_(True)
-            self.need.setTitle_("I need it" if self.snooze_minutes == SNOOZE_MINUTES else f"{self.snooze_minutes}-min break")
-            return
-        self.need.setEnabled_(False)
-        self.need.setTitle_(f"Wait {self._wait} s")
-        self._wait -= 1
-        AppHelper.callLater(1.0, self._tick_countdown, which)
+        left = self._set_need()
+        if left > 0 or self.mode == "checkin":  # the length can change: keep watching
+            AppHelper.callLater(0.5 if self.mode == "checkin" else 1.0, self._tick_countdown, which, mode)
+
+    @objc.python_method
+    def _need_title(self) -> str:
+        if self.mode == "checkin":
+            return f"Start {self._picked()} min"
+        if self.mode == "timesup":
+            return f"{EXTEND_MINUTES:g} more" if self._can_extend() else "New session"
+        return "I need it" if self.snooze_minutes == SNOOZE_MINUTES else f"{self.snooze_minutes}-min break"
+
+    @objc.python_method
+    def _set_need(self) -> int:
+        """The second button's title and state for the time left; relaid out only when it changes."""
+        left = self._left()
+        title = f"Wait {left} s" if left > 0 else self._need_title()
+        self.need.setEnabled_(left <= 0)
+        if str(self.need.title()) != title:
+            self.need.setTitle_(title)
+            self._layout()
+        return left
+
+    def lengthChanged_(self, sender):
+        if self.current is not None and self.mode == "checkin":
+            self._set_need()
 
     @objc.python_method
     def _close(self):
         cur, self.current = self.current, None
+        if cur is not None:
+            self.policy.hold(cur[0].rule, False)
         panel = self.panel
         ui.fade(panel, 0.0, 0.15, lambda: panel.orderOut_(None) if self.current is None else None)
         self.dimmer.hide()
@@ -418,22 +521,51 @@ class Controller(NSObject):
     def back_(self, sender):
         if self.current is None or self.mode == "done":
             return
+        mode = self.mode
         d, ev = self._close()
-        self.policy.log_response(d.id, "back", d.rule)
+        if mode == "timesup":
+            if self.policy.end_session(d.rule, "done", d.id) is None:
+                self.policy.log_response(d.id, "back", d.rule)
+        else:
+            self.policy.log_response(d.id, "back", d.rule)
+        self.policy.rejudge_in(RECHECK_S)  # still here then (no Back in that app): step in again
         if not self.demo:
             threading.Thread(target=go_back, args=(ev.screen.bundle_id,), daemon=True).start()
 
     def need_(self, sender):
         if self.current is None or self.mode == "done":
             return
+        d, ev = self.current
+        if self.mode == "checkin":
+            if self._left() > 0:
+                return
+            reason = str(self.why.stringValue()).strip()
+            if len(reason) < 3:
+                self.why.setPlaceholderString_("A few words first: what's it for?")
+                self.panel.makeFirstResponder_(self.why)
+                return
+            c = self.policy.start_session(d.rule, self._picked(), reason, d.id)
+            self._confirm(f"Until {datetime.fromtimestamp(c.until):%H:%M}, for “{reason[:60]}”.")
+            return
+        if self.mode == "timesup":
+            if self._left() > 0:
+                return
+            if self._can_extend() and (c := self.policy.extend_session(d.rule, d.id)) is not None:
+                self._confirm(f"{EXTEND_MINUTES:g} more, until {datetime.fromtimestamp(c.until):%H:%M}.")
+                return
+            # No more time on this one: a new check-in, with its wait.
+            self.policy.hold(d.rule, False)
+            self.policy.end_session(d.rule, "new")
+            self._enter_checkin()
+            self._layout()
+            self.panel.makeFirstResponder_(self.why)
+            return
         if self.mode == "ask":
             # Say what for first: a reason turns an impulse into a decision.
             self.mode = "why"
             self.need.setTitle_(f"Unlock {self.snooze_minutes} min")
             self.need.setEnabled_(True)
-            self.back.setKeyEquivalent_("")  # Return now means "unlock", from the field or the button
-            self.need.setKeyEquivalent_("\r")
-            self.panel.setDefaultButtonCell_(self.need.cell())
+            self._default(self.need)  # Return now means "unlock", from the field or the button
             self._layout()
             self.panel.makeFirstResponder_(self.why)
             return
@@ -442,7 +574,6 @@ class Controller(NSObject):
             self.why.setPlaceholderString_("A few words first: what's it for?")
             self.panel.makeFirstResponder_(self.why)
             return
-        d, ev = self.current
         self.policy.snooze(d.rule, self.snooze_minutes, reason, d.id)
         until = datetime.now() + timedelta(minutes=self.snooze_minutes)
         self._confirm(f"Until {until:%H:%M}, for “{reason[:60]}”.")
@@ -517,7 +648,7 @@ class Controller(NSObject):
         self.focus_prompt.orderOut_(None)
 
 
-DEMOS = ("deny", "feed", "budget", "focus", "prompt")
+DEMOS = ("deny", "feed", "checkin", "timesup", "focus", "prompt")
 
 
 def _demo(ctrl: Controller, policy: Policy, kind: str) -> None:
@@ -535,7 +666,7 @@ def _demo(ctrl: Controller, policy: Policy, kind: str) -> None:
 
     deny = pick(lambda r: r.kind == "deny", policy.rules[0])
     feed = pick(lambda r: r.feed_hit, deny)
-    cap = pick(lambda r: r.kind == "time_cap", deny)
+    cap = pick(lambda r: r.kind == "check_in", deny)
     social = pick(lambda r: r.id == "social", cap)
     screens = {
         "deny": (deny, "p_hit 0.91 >= 0.15", ScreenState(
@@ -544,7 +675,10 @@ def _demo(ctrl: Controller, policy: Policy, kind: str) -> None:
         "feed": (feed, "an entertainment feed", ScreenState(
             app="Google Chrome", bundle_id="com.google.Chrome", window_title="小红书 - 你的生活兴趣社区",
             url="https://www.xiaohongshu.com/explore")),
-        "budget": (cap, f"46 of {cap.minutes_per_day or 45:g} min today", ScreenState(
+        "checkin": (cap, "p_hit 0.73 >= 0.25", ScreenState(
+            app="Safari", bundle_id="com.apple.Safari", window_title="Top 10 Movie Fails of the Year",
+            url="https://www.bilibili.com/video/BV1demo")),
+        "timesup": (cap, "your 15 minutes for “the keynote everyone's talking about” are up", ScreenState(
             app="Safari", bundle_id="com.apple.Safari", window_title="Top 10 Movie Fails of the Year",
             url="https://www.bilibili.com/video/BV1demo")),
         "focus": (social, "p_hit 0.73 >= 0.30", ScreenState(
@@ -555,6 +689,16 @@ def _demo(ctrl: Controller, policy: Policy, kind: str) -> None:
     if kind == "focus":
         start_focus(policy.data_dir, "write the pitch deck", 50)
         policy.reload_session()
+    panel = {"checkin": "check_in", "timesup": "times_up"}.get(kind, "")
+    if kind in ("checkin", "timesup"):
+        # Two sessions earlier today, one ended 12 minutes ago: the wait shows.
+        for purpose, ago in (("lunch break", 3 * 3600), ("the keynote everyone's talking about", 16 * 60)):
+            c = policy.start_session(rule.id, 15, purpose, f"demo{ago}")
+            c.started, c.until, c.seconds = time.time() - ago, time.time() - ago + 15 * 60, 14 * 60
+            policy.usage.add(rule.id, seconds=14 * 60)
+            if kind == "checkin" or ago > 3600:
+                policy.end_session(rule.id, "time", now=time.time() - ago + 15 * 60)
+        policy.rejudge_due(time.time() + 1)
     # An earlier pop-up today, so the context line shows.
     earlier = max(datetime.now() - timedelta(minutes=50), datetime.now().replace(hour=0, minute=1))
     with (policy.data_dir / "decisions.jsonl").open("a", encoding="utf-8") as f:
@@ -562,7 +706,7 @@ def _demo(ctrl: Controller, policy: Policy, kind: str) -> None:
                             "rule": rule.id, "reason": why, "screen": {}}) + "\n")
     reading = Reading(0.02, "single_item", {"single_item": 0.9}, "entertain", {"entertain": 0.9},
                       [RuleVerdict(rule.id, "violates", 0.91 if kind == "deny" else 0.73, {})], 850.0)
-    d = Decision("intervene", rule.id, why, "demo")
+    d = Decision("intervene", rule.id, why, "demo", panel)
     AppHelper.callLater(0.5, ctrl.handle, Event(screen, {}, reading if kind != "feed" else None, [d]))
 
 
@@ -585,8 +729,7 @@ def run_app(policy: Policy, rules_path: str, budget: int, demo: str | None = Non
         print("! No Accessibility permission: Qualm can only see app names. Grant it in System Settings >"
               " Privacy & Security > Accessibility, then restart.", flush=True)
         AppHelper.callAfter(ctrl.set_status, "needs Accessibility permission (see System Settings)")
-    mode = "budgets on: time caps count first" if policy.settings.budgets else "budgets off: every hit pops up"
-    print(f"Qualm watching ({mode}). Ctrl-C to stop.", flush=True)
+    print("Qualm watching. Ctrl-C to stop.", flush=True)
 
     if demo:
         _demo(ctrl, policy, demo)

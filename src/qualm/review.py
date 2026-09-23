@@ -2,12 +2,12 @@
 
 `qualm review --web` serves http://127.0.0.1:8765 (the app serves it too):
 the dashboard in dashboard.html. Today: focus and pause, the day's pop-ups
-and budgets. Review: one card per screen with its screenshot, what Qualm did and why, what the model read,
+and check-in sessions. Review: one card per screen with its screenshot, what Qualm did and why, what the model read,
 and each rule's score against its threshold. You answer "was Qualm right?"
 and, per rule, "is this X?". From those answers the page suggests
 thresholds (from the logged scores, no model calls) and applies them to
 rules.toml, which the running app reloads. Insights: how pop-ups ended,
-when they happen, what you unlocked time for, focus sessions. Rules: on and
+when they happen, what you unlocked time for, check-ins said vs kept, focus sessions. Rules: on and
 off, thresholds, exceptions, never-here places.
 
 Verdicts go to data/reviews.jsonl (append-only; the last entry per
@@ -176,14 +176,17 @@ def _lines(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
 
 
-OUTCOMES = ("back", "snooze", "fine", "never")  # what you answered a pop-up with; "open": no answer
+# What you answered a pop-up with; "open": no answer. "session": you checked
+# in; "snooze": "I need it", or "5 more" when a session's time was up.
+OUTCOMES = ("back", "session", "snooze", "fine", "never")
 
 
 def insights(data_dir: Path, rules: list[Rule], days: int = 14, weeks: int = 8) -> dict:
     """Everything the Today and Insights tabs draw, from the logs: how each
     pop-up ended, per day; pop-ups per week; when in the week they happen;
     the time you asked for and what for; focus sessions; how often you said
-    Qualm was right; minutes on each budget. No streaks, no score."""
+    Qualm was right; check-in sessions, what you said and what you did. No
+    streaks, no score."""
     from datetime import date, timedelta
 
     today = date.today()
@@ -211,7 +214,7 @@ def insights(data_dir: Path, rules: list[Rule], days: int = 14, weeks: int = 8) 
         if wk >= oldest_week:
             heat[d.weekday()][int(e["at"][11:13])] += 1
     unlocks = [{"at": e["at"], "rule": e.get("rule", ""), "reason": e.get("reason", ""), "minutes": e.get("minutes")}
-               for e in events if e.get("type") == "response" and e.get("response") == "snooze"][-30:]
+               for e in events if e.get("type") == "response" and e.get("response") in ("snooze", "session")][-30:]
     # Focus sessions: started, ended early or ran out; pop-ups while they ran.
     sessions = []
     for e in events:
@@ -243,10 +246,26 @@ def insights(data_dir: Path, rules: list[Rule], days: int = 14, weeks: int = 8) 
     if live_path.exists():  # today's counts, saved every 30 s
         live = json.loads(live_path.read_text(encoding="utf-8"))
         history[live.get("day", "")] = live.get("counts", {})
-    budgets = [{"rule": r.id, "minutes_per_day": r.minutes_per_day, "visits_per_day": r.visits_per_day,
-                "minutes": [round(history.get(d, {}).get(r.id, {}).get("seconds", 0) / 60, 1) for d in span],
-                "visits": [history.get(d, {}).get(r.id, {}).get("visits", 0) for d in span]}
-               for r in rules if r.kind == "time_cap" and r.enabled]
+    checkins = [{"rule": r.id, "minutes": [round(history.get(d, {}).get(r.id, {}).get("seconds", 0) / 60, 1) for d in span]}
+                for r in rules if r.kind == "check_in" and r.enabled]
+    # Check-in sessions: what you said (what for, how long) and what you did.
+    started: dict[str, dict] = {}
+    for e in events:
+        if e.get("type") != "session":
+            continue
+        if e["event"] == "start":
+            started[e["id"]] = {"at": e["at"], "rule": e["rule"], "for": e.get("for", ""), "minutes": e["minutes"],
+                                "until": e.get("until", 0), "extended": 0, "stayed": None, "how": ""}
+        elif (c := started.get(e["id"])) is not None:
+            if e["event"] == "extend":
+                c["extended"] += 1
+                c["until"] = e.get("until", c["until"])
+            elif e["event"] == "end":
+                c.update(stayed=e.get("stayed"), how=e.get("how", ""))  # minutes: what you said at the start
+    sessions_list = [c for c in started.values() if c["at"][:10] >= span[0]]
+    now_ts = datetime.now().timestamp()
+    for c in sessions_list:
+        c["running"] = not c["how"] and c["until"] > now_ts
     reflections = {}
     for e in _lines(data_dir / "reflections.jsonl"):
         reflections[e["week"]] = e
@@ -255,7 +274,7 @@ def insights(data_dir: Path, rules: list[Rule], days: int = 14, weeks: int = 8) 
     judged_today = sum(1 for j in load_judgements(data_dir) if j["at"][:10] == span[-1] and "p_hit" in j)
     return {"days": span, "outcomes": per_day, "by_rule": per_rule_day, "weeks": per_week, "heat": heat,
             "unlocks": unlocks, "focus": sessions[-20:], "trust": {"right": right, "wrong": wrong},
-            "budgets": budgets, "reflections": reflections, "this_week": week_starts[-1], "judged_today": judged_today,
+            "checkins": checkins, "sessions": sessions_list[-60:], "reflections": reflections, "this_week": week_starts[-1], "judged_today": judged_today,
             "today": today_popups}
 
 
@@ -263,7 +282,7 @@ REFLECT_ANSWERS = ("mostly", "mixed", "not_really")
 
 
 def reflect(data_dir: Path, week: str, answer: str, note: str = "") -> None:
-    """The weekly question: was the time on your budgets worth it? Time you
+    """The weekly question: was the time you checked in for worth it? Time you
     value and time you don't look the same in a total; only you can tell."""
     if answer not in REFLECT_ANSWERS:
         raise ValueError(f"answer one of {REFLECT_ANSWERS}")
@@ -352,7 +371,6 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
             "insights": insights(data_dir, rules),
             "session": session_state(data_dir),
             "tuning": tuning(data_dir, rules),
-            "budgets": settings.budgets,
         }
 
     ok_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}

@@ -8,7 +8,7 @@
 :root {
   --bg:#f6f5f2; --card:#ffffff; --ink:#1c1c1e; --mute:#6e6e73; --faint:#a1a1a6; --line:#e6e4df; --soft:#f0eee9;
   --accent:#f3814e; --accent2:#ffb36b; --accentbg:#fdeee4;
-  --back:#3fae6a; --snooze:#e9a23b; --fine:#6f86b8; --never:#a07cc5; --open:#cfccc6;
+  --back:#3fae6a; --session:#35a39c; --snooze:#e9a23b; --fine:#6f86b8; --never:#a07cc5; --open:#cfccc6;
   --focus:#2f9fd8; --focusbg:#e3f3fb;
   --red:#c8372d; --redbg:#fbeae8; --amber:#9a5700; --amberbg:#fcf0dc; --blue:#1f5fbf; --bluebg:#e7effb; --green:#1e7b3c; --greenbg:#e4f3e9;
   --shadow:0 1px 2px rgba(0,0,0,.04), 0 6px 24px rgba(0,0,0,.05);
@@ -154,7 +154,7 @@ table.tune th { font-size:12px; color:var(--mute); font-weight:500; border-top:0
     <a data-tab="insights">Insights</a>
     <a data-tab="rules">Rules</a>
   </div>
-  <div class="right"><span id="mode" class="small faint"></span><span id="state"></span></div>
+  <div class="right"><span id="state"></span></div>
 </nav>
 <div class="wrap" id="view"></div>
 <div id="zoom"><img alt=""></div>
@@ -167,7 +167,7 @@ let pick = null;      // while answering "wrong": the set of rule ids the page r
 let showDetails = false, focusLen = 50;
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const OUT = {back:["Went back","var(--back)"], snooze:["Unlocked","var(--snooze)"], fine:["Not this one","var(--fine)"], never:["Never here","var(--never)"], open:["No answer","var(--open)"]};
+const OUT = {back:["Went back","var(--back)"], session:["Checked in","var(--session)"], snooze:["Unlocked","var(--snooze)"], fine:["Not this one","var(--fine)"], never:["Never here","var(--never)"], open:["No answer","var(--open)"]};
 function toast(t) { const el = $("#toast"); el.textContent = t; el.style.display = "block"; clearTimeout(el.tm); el.tm = setTimeout(() => { el.style.display = "none"; }, 1800); }
 
 async function load() {
@@ -327,7 +327,7 @@ function sessionCard() {
     h += '<h2><span class="chip paused"><span class="dot"></span>Paused until ' + clock(S.paused_until) + "</span></h2>" +
       '<div class="muted">Nothing is judged until then.</div><div class="save"><button class="primary" data-act="resume">Resume now</button></div>';
   } else {
-    h += '<h2>Start a focus session</h2><div class="small muted">Say what you\'re here to do. Until it ends every rule steps in at once, time caps included, and the pop-up names your intent.</div>' +
+    h += '<h2>Start a focus session</h2><div class="small muted">Say what you\'re here to do. Until it ends every rule steps in at once, check-ins included, and the pop-up names your intent.</div>' +
       '<form id="focusform"><input type="text" id="intent" placeholder="e.g. write the report" autocomplete="off">' +
       '<span class="seg">' + [25, 50, 90].map(m => '<button type="button" data-len="' + m + '" class="' + (m === focusLen ? "on" : "") + '">' + m + " min</button>").join("") + "</span>" +
       '<button class="focusbtn" type="submit">Start</button></form>' +
@@ -356,16 +356,23 @@ function todayView() {
     stat(I.judged_today, "screens read today", "on this Mac, by the local model") +
     stat(reviewedN ? Math.round(100 * I.trust.right / reviewedN) + "%" : "–", "right, by your reviews", reviewedN ? I.trust.right + " of " + reviewedN + " pop-ups you reviewed" : "review a few to see") + "</div>";
   h += '<div class="grid g2">';
-  h += '<div class="card"><h2>Budgets today</h2>' + (I.budgets.length ? I.budgets.map(b => {
-    const m = b.minutes[b.minutes.length - 1], lim = b.minutes_per_day, v = b.visits[b.visits.length - 1];
-    return '<div style="margin:10px 0"><div class="row" style="justify-content:space-between"><b>' + esc(b.rule) + '</b><span class="small muted">' +
-      Math.round(m) + (lim ? " of " + lim : "") + " min" + (b.visits_per_day ? " · " + v + " of " + b.visits_per_day + " visits" : "") + "</span></div>" +
-      '<div class="bar" style="margin-top:6px"><div style="width:' + (lim ? Math.min(100, 100 * m / lim) : 0) + '%"></div></div></div>';
-  }).join("") + (D.budgets ? "" : '<div class="small faint">Testing mode is on: every hit pops up at once, so these don\'t fill yet. <code>qualm settings set budgets=true</code></div>')
-    : '<div class="muted small">No time-capped rules.</div>') + "</div>";
+  const todays = (I.sessions || []).filter(c => c.at.slice(0, 10) === day);
+  h += '<div class="card"><h2>Check-ins today</h2>' + ((I.checkins || []).length ? I.checkins.map(b =>
+    '<div class="row" style="justify-content:space-between;margin:8px 0"><b>' + esc(b.rule) + '</b><span class="small muted">' +
+      Math.round(b.minutes[b.minutes.length - 1]) + " min · " + plural(todays.filter(c => c.rule === b.rule).length, "session") + "</span></div>").join("") +
+    (todays.length ? '<div class="list-plain" style="margin-top:10px">' + todays.slice().reverse().map(sessionLine).join("") + "</div>"
+      : '<div class="small faint" style="margin-top:8px">When you arrive at one of these, Qualm asks what for and for how long, and steps in when that time is up.</div>')
+    : '<div class="muted small">No check-in rules.</div>') + "</div>";
   h += '<div class="card"><h2>Today, hour by hour</h2>' + timeline() + '<div class="legend">' + Object.keys(OUT).map(k => '<span><i style="background:' + OUT[k][1] + '"></i>' + OUT[k][0] + "</span>").join("") + "</div></div>";
   h += "</div>";
   return h;
+}
+function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+function sessionLine(c) {
+  const said = c.minutes + " min", did = c.running ? "running" : c.stayed == null ? "" : c.stayed.toFixed(0) + " min on it";
+  return '<div><span class="quote">' + esc(c["for"] || "no reason given") + '</span>' +
+    (c.running ? ' <span class="chip focus" style="padding:1px 8px;font-size:11px">until ' + clock(c.until) + "</span>" : "") +
+    '<div class="small faint">' + esc(c.at.slice(11, 16)) + " · " + esc(c.rule) + " · said " + said + (c.extended ? " (+" + 5 * c.extended + ")" : "") + (did && !c.running ? " · " + did : "") + "</div></div>";
 }
 function stat(v, k, sub) { return '<div class="card stat"><div class="v">' + esc(v) + '</div><div class="k">' + esc(k) + '</div><div class="sub">' + esc(sub || "") + "</div></div>"; }
 function lastPopup() { const p = D.insights.today; return p.length ? hm(p[p.length - 1].at) : ""; }
@@ -394,7 +401,7 @@ function insightsView() {
   let h = '<div style="margin-bottom:18px"><h1>Insights</h1><div class="muted">What happened when Qualm stepped in, over the last two weeks. No score and no streak: a slow week is information, not a failure.</div></div>';
   h += '<div class="grid g2" style="margin-bottom:16px"><div class="card"><h2>How each pop-up ended</h2>' +
     (total ? '<div class="small muted" style="margin-bottom:8px">' + total + " pop-ups in 14 days" + (answered ? "; you went back on " + Math.round(100 * all.back / answered) + "% of the ones you answered." : ".") + "</div>" +
-      stacked(cols, ["back", "snooze", "fine", "never", "open"], Object.fromEntries(Object.entries(OUT).map(([k, v]) => [k, v[1]]))) +
+      stacked(cols, ["back", "session", "snooze", "fine", "never", "open"], Object.fromEntries(Object.entries(OUT).map(([k, v]) => [k, v[1]]))) +
       '<div class="legend">' + Object.keys(OUT).map(k => '<span><i style="background:' + OUT[k][1] + '"></i>' + OUT[k][0] + " " + all[k] + "</span>").join("") + "</div>"
       : '<div class="empty">No pop-ups yet.</div>') + "</div>";
   const wk = Object.keys(I.weeks);
@@ -410,19 +417,21 @@ function insightsView() {
   h += '<div class="grid g2" style="margin-bottom:16px">';
   h += '<div class="card"><h2>Time you asked for, and what for</h2>' + (I.unlocks.length ? '<div class="list-plain">' + I.unlocks.slice().reverse().slice(0, 12).map(u =>
       '<div><span class="quote">' + esc(u.reason || "no reason given") + '</span><div class="small faint">' + esc(u.at.slice(5, 16).replace("T", " ")) + " · " + esc(u.rule) + (u.minutes ? " · " + esc(u.minutes) + " min" : "") + "</div></div>").join("") + "</div>"
-      : '<div class="muted small">When you use “I need it”, what you said it was for shows up here.</div>') + "</div>";
+      : '<div class="muted small">When you check in or use “I need it”, what you said it was for shows up here.</div>') + "</div>";
   h += '<div class="card"><h2>Focus sessions</h2>' + (I.focus.length ? '<div class="list-plain">' + I.focus.slice().reverse().slice(0, 10).map(f =>
       '<div><b>' + esc(f.intent) + '</b>' + (f.running ? ' <span class="chip focus" style="padding:1px 8px;font-size:11px">running</span>' : "") + '<div class="small faint">' + esc(f.at.slice(5, 16).replace("T", " ")) + " · " + f.minutes + " of " + f.planned + " min · " +
       (f.popups ? f.popups + " pop-up" + (f.popups > 1 ? "s" : "") + ", went back " + f.back + "×" : "no pop-ups") + "</div></div>").join("") + "</div>"
       : '<div class="muted small">Start one from the menu bar, the Today tab, or <code>qualm focus write the report</code>.</div>') + "</div>";
   h += "</div>";
-  if (I.budgets.length) {
-    h += '<div class="grid g' + Math.min(3, I.budgets.length) + '" style="margin-bottom:16px">' + I.budgets.map(b =>
-      '<div class="card"><h2>' + esc(b.rule) + ' <span class="small muted" style="font-weight:400">minutes a day' + (b.minutes_per_day ? ", budget " + b.minutes_per_day : "") + "</span></h2>" +
-      bars(b.minutes.map(Math.round), I.days.map(d => d.slice(8)), "var(--fine)", 90) + "</div>").join("") + "</div>";
+  if ((I.checkins || []).length) {
+    const done = I.sessions.filter(c => !c.running && c.how), kept = done.filter(c => !c.extended && c.how !== "new");
+    h += '<div class="card" style="margin-bottom:16px"><h2>Check-ins: what you said, and what you did</h2><div class="small muted" style="margin-bottom:8px">' +
+      (done.length ? done.length + " sessions in 14 days; " + kept.length + " ended when you said, without more time." : "No finished sessions yet.") + "</div>" +
+      '<div class="grid g' + Math.min(3, I.checkins.length) + '">' + I.checkins.map(b =>
+        "<div><b>" + esc(b.rule) + '</b> <span class="small muted">minutes a day</span>' + bars(b.minutes.map(Math.round), I.days.map(d => d.slice(8)), "var(--session)", 90) + "</div>").join("") + "</div></div>";
   }
   const r = (I.reflections || {})[I.this_week];
-  h += '<div class="grid g2"><div class="card"><h2>This week, one question</h2><div class="muted" style="margin-bottom:10px">Was the time on your budgets worth it? A total can\'t tell time you valued from time that slipped by; you can.</div><div class="choices">' +
+  h += '<div class="grid g2"><div class="card"><h2>This week, one question</h2><div class="muted" style="margin-bottom:10px">Was the time you checked in for worth it? A total can\'t tell time you valued from time that slipped by; you can.</div><div class="choices">' +
     [["mostly", "Mostly"], ["mixed", "Mixed"], ["not_really", "Not really"]].map(([k, l]) => '<button data-reflect="' + k + '" class="' + (r && r.answer === k ? "primary" : "") + '">' + l + "</button>").join("") + "</div>" +
     (Object.keys(I.reflections || {}).length > 1 ? '<div class="small faint" style="margin-top:10px">Earlier: ' + Object.values(I.reflections).filter(x => x.week !== I.this_week).slice(-6).map(x => esc(x.week.slice(5)) + " " + esc(x.answer.replace("_", " "))).join(" · ") + "</div>" : "") + "</div>";
   const t = I.trust, n = t.right + t.wrong;
@@ -551,7 +560,7 @@ function rulesView() {
     h += '<div class="rule ' + (r.enabled ? "" : "off") + '"><button class="switch ' + (r.enabled ? "on" : "") + '" data-toggle="' + esc(r.id) + '" title="' + (r.enabled ? "on: click to switch off" : "off: click to switch on") + '"></button>' +
       '<div><div class="id">' + esc(r.id) + (r.enabled && !r.active ? ' <span class="small faint">(outside its hours now)</span>' : "") + '</div><div class="sum">' + esc(r.summary) + "</div>" +
       '<div class="small faint" style="margin-top:4px">threshold ' + esc(r.threshold) + (t ? " · your answers: " + t.yes + " yes, " + t.no + " no" : "") + sug + "</div></div>" +
-      '<span class="tag ' + (r.kind === "deny" ? "intervene" : "count") + '">' + (r.kind === "deny" ? "steps in" : "time cap") + "</span></div>";
+      '<span class="tag ' + (r.kind === "deny" ? "intervene" : "count") + '">' + (r.kind === "deny" ? "steps in" : "checks in") + "</span></div>";
   });
   h += '<div class="small faint" style="margin-top:10px">New rules, wording and hours: <code>qualm rules add</code> / <code>qualm rules set</code>, or ask Claude Code (it knows the CLI). “Edit rules…” in the menu opens the file.</div></div>';
   h += '<div class="grid g2"><div class="card"><h2>Exceptions</h2><div class="small muted" style="margin-bottom:8px">In your own words; the model reads them with the rule. E.g. for videos: “a lecture or conference talk”.</div>' +
@@ -571,7 +580,6 @@ function rulesView() {
 // ---- render and input ---------------------------------------------------
 function render() {
   document.querySelectorAll(".tabs a").forEach(a => a.classList.toggle("on", a.dataset.tab === tab));
-  $("#mode").textContent = D.budgets ? "" : "testing mode";
   const S = D.session;
   $("#state").innerHTML = S.focus ? '<span class="chip focus"><span class="dot"></span>Focus · ' + Math.max(1, Math.round((S.focus.until - S.now) / 60)) + " min</span>"
     : S.paused_until > S.now ? '<span class="chip paused"><span class="dot"></span>Paused until ' + clock(S.paused_until) + "</span>"

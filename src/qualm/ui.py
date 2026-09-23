@@ -47,11 +47,12 @@ DIM_ALPHA = 0.32
 # Accents per kind of moment, as (r, g, b): calm, not alarming.
 ACCENTS = {
     "deny": (1.0, 0.62, 0.35),  # warm amber
-    "budget": (0.98, 0.80, 0.33),  # soft yellow
+    "checkin": (0.70, 0.62, 1.0),  # soft violet: a question, not a stop
+    "timesup": (0.98, 0.80, 0.33),  # soft yellow
     "focus": (0.38, 0.78, 0.98),  # clear blue
     "done": (0.45, 0.85, 0.55),  # green, for "got it"
 }
-SYMBOLS = {"deny": "hand.raised.fill", "budget": "hourglass", "focus": "scope", "done": "checkmark"}
+SYMBOLS = {"deny": "hand.raised.fill", "checkin": "timer", "timesup": "hourglass", "focus": "scope", "done": "checkmark"}
 
 
 def rgb(r: float, g: float, b: float, a: float = 1.0) -> NSColor:

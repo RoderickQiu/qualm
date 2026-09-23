@@ -88,7 +88,7 @@ class Watcher:
         self._cache: OrderedDict[str, Reading] = OrderedDict()
         self._pending: dict | None = None  # a judgement with a pop-up, waiting out DWELL_S
         self._changed_at = 0.0  # when the current screen appeared (monotonic)
-        self._rejudge = False  # set when focus or pause changed
+        self._rejudge = False  # set when focus or pause changed, or the policy asks
         self.dwell = DWELL_S
         self.presence = Presence() if presence else None
 
@@ -161,6 +161,10 @@ class Watcher:
             self._reload_rules()
             front = NSWorkspace.sharedWorkspace().frontmostApplication()
             self.policy.tick(away=self._away(front))
+            if self.policy.rejudge_due():
+                # A session's time is up, or you're still here after "Take me
+                # back": judge the same screen again (from the cache).
+                self._rejudge = True
             if front is None or front.processIdentifier() == me:
                 # Our own panel is in front: keep judging the screen behind it.
                 time.sleep(self.interval)
@@ -181,7 +185,7 @@ class Watcher:
             # the debounce window. The same screen whose text changed (a feed
             # scrolled, the next video loaded in place): ask again, at most once
             # per recheck. Nothing changed: don't ask; the answer would be the
-            # same. Time caps keep counting from the last answer meanwhile.
+            # same. A check-in session keeps counting from the last answer meanwhile.
             new_screen = now - changed_at >= self.debounce and changed_at > last_asked
             state = s.to_state(self.budget)
             new_text = changed_at <= last_asked and state != judged_state and now - last_asked >= self.recheck

@@ -31,9 +31,9 @@ qualm rules list                   # every rule in a sentence: on/off, active no
 qualm rules show social --json     # every field, plus exceptions learned from the pop-up
 qualm rules starters               # the ready-made rules, and which you have
 
-# A rule in your own words. With --minutes or --visits it's a budget; without, Qualm steps in.
+# A rule in your own words. With --check-in it asks what for and how long; without, Qualm steps in.
 qualm rules add news --what "reading news: news sites, articles and headlines" \
-    --minutes 15 --when "mon-fri 09:00-18:00" --site nytimes.com --on-purpose-ok
+    --check-in --when "mon-fri 09:00-18:00" --site nytimes.com --on-purpose-ok
 qualm rules add feeds --from-starter
 
 # Change anything: key=value sets, key+=item / key-=item edit a list, key= removes a key.
@@ -50,8 +50,7 @@ qualm rules remove news
 | Field | Meaning | `rules add` flag |
 |---|---|---|
 | `description` | what the rule is about, in your words; the model reads it | `--what` |
-| `kind` | `deny` (step in) or `time_cap` (count; step in over budget) | set by `--minutes` / `--visits` |
-| `minutes_per_day`, `visits_per_day` | the budget | `--minutes`, `--visits` |
+| `kind` | `deny` (step in at once) or `check_in` (ask what for and how long on arrival; step in when that time is up) | `--check-in` |
 | `sites` | always a hit here: `douyin.com` (and subdomains), `youtube.com/shorts` (and under it), `youtube.com/` (home page only) | `--site` (repeat) |
 | `patterns` | the same as URL regexes | |
 | `when` | only at these times: `"mon-fri 09:00-18:00"`, `"weekends"`, `"22:00-02:00"`; empty: always | `--when` (repeat) |
@@ -140,7 +139,8 @@ qualm never remove --site example.com
 
 # Settings
 qualm settings show
-qualm settings set budgets=true                  # count time caps; step in only over budget
+qualm settings set max_wait_s=90                 # the longest check-in wait, in seconds (default 60)
+qualm settings set extensions=0                  # no "5 more" when a check-in's time is up
 qualm settings set no_monitor+=com.tencent.xinWeChat   # never read at all
 qualm settings set allow_sites+=gitlab.com       # never judged; links from it count as on purpose
 ```
@@ -163,7 +163,7 @@ commands would be refused halfway.
 ## Focus and pause
 
 ```bash
-qualm focus write the report --minutes 50   # every rule hit steps in at once, time caps included;
+qualm focus write the report --minutes 50   # every rule hit steps in at once, check-ins included;
                                             # the pop-up says "You're here to: write the report."
 qualm focus                                 # what's running, minutes left
 qualm focus --stop

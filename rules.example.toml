@@ -11,7 +11,8 @@
 # block the mechanism (endless short video, feeds, live rooms), not the site.
 #
 # Editing by hand is fine too; the app reloads the file on save. Per rule:
-#   kind              "deny" (step in) or "time_cap" (count; step in over budget)
+#   kind              "deny" (step in at once) or "check_in" (ask what for and for
+#                     how long on arrival; step in when that time is up)
 #   description       what the rule is about, in your words; the model reads this
 #   threshold         the model's score that counts as a hit; `rules tune` sets it
 #   sites             always a hit here: "douyin.com", "youtube.com/shorts",
@@ -23,15 +24,15 @@
 #   feed_hit          any page the model reads as an entertainment feed hits
 #   allow_learning    lectures, tutorials and docs never hit this rule
 #   allow_intentional one item opened from search, a work app or a chat link is fine
-#   minutes_per_day   time_cap: daily minutes
-#   visits_per_day    time_cap: separate visits a day (0 = no limit)
 #   exceptions        things that look like a hit but are fine; "Not this one" adds more
 #   note              why it's set this way, for whoever reads this next
 
 [settings]
-# false while testing: every rule hit pops up at once, time caps included.
-# Set true to count minutes and visits and only step in over budget.
-budgets = false
+# Check-ins: the wait before a session starts doubles with each session today
+# (the first is free) and again when you come back within 20 minutes of one
+# ending, up to max_wait_s. "5 more" when the time is up: `extensions` per session.
+max_wait_s = 60
+extensions = 1
 # Never read at all: password managers. Add chat apps or banking apps if
 # you'd rather they're never read either.
 no_monitor = [
@@ -105,18 +106,16 @@ note = "A lecture or launch event streamed live is fine. Twitch pages carry no '
 
 [[rules]]
 id = "videos"
-kind = "time_cap"
+kind = "check_in"
 description = "watching entertainment videos on Bilibili or YouTube: comedy, gaming, variety shows, film clips"
 threshold = 0.25
-minutes_per_day = 45
 allow_learning = true
 note = "Courses, lectures, tutorials and talks never count. Trials: 1.00 / 1.00, but only 6 clips, all Bilibili: weak evidence."
 
 [[rules]]
 id = "social"
-kind = "time_cap"
+kind = "check_in"
 description = "browsing social media, such as Xiaohongshu, Weibo, X/Twitter, Jike, Reddit"
 threshold = 0.3
-minutes_per_day = 20
 allow_intentional = true
 note = "The Reddit thread Google found for your error message doesn't count. Trials: precision 0.90, recall 0.95; held-out sites 0.90 / 0.90."

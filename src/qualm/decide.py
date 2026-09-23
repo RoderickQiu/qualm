@@ -34,7 +34,7 @@ def make_client() -> TypeSafeClient:
 class RuleVerdict:
     rule_id: str
     choice: str
-    p_hit: float  # P(violates) for deny rules, P(in_scope) for time caps
+    p_hit: float  # P(violates) for deny rules, P(in_scope) for check-in rules
     probabilities: dict[str, float]
 
 

@@ -85,9 +85,9 @@ def test_add_remove_and_settings(cfg):
         cfg.add("rules", {"id": "news", "kind": "deny", "description": "again"})
     cfg.remove("rules", "feeds")
     assert "feeds" not in {r.id for r in cfg.load()[1]}
-    cfg.edit_settings({"budgets": True, "allow_sites": ["github.com", "gitlab.com"]})
+    cfg.edit_settings({"max_wait_s": 90, "allow_sites": ["github.com", "gitlab.com"]})
     s = cfg.load()[0]
-    assert s.budgets and s.allowed_url("https://gitlab.com/x") and not s.allowed_url("https://example.com")
+    assert s.max_wait_s == 90 and s.allowed_url("https://gitlab.com/x") and not s.allowed_url("https://example.com")
 
 
 def test_emptied_list_drops_the_key(cfg):
@@ -139,12 +139,12 @@ def test_cli_round_trip(tmp_path):
                               "--data", str(tmp_path / "d")], capture_output=True, text=True)
         return out
 
-    assert run("rules", "add", "news", "--what", "news sites", "--minutes", "15", "--site", "nytimes.com").returncode == 0
+    assert run("rules", "add", "news", "--what", "news sites", "--check-in", "--site", "nytimes.com").returncode == 0
     assert run("rules", "set", "news", "when+=weekdays", "threshold=0.3").returncode == 0
     assert run("rules", "off", "shortvideo").returncode == 0
     rows = json.loads(run("rules", "list", "--json").stdout)["rules"]
     news = next(r for r in rows if r["id"] == "news")
-    assert news["kind"] == "time_cap" and news["when"] == ["weekdays"] and news["threshold"] == 0.3
+    assert news["kind"] == "check_in" and news["when"] == ["weekdays"] and news["threshold"] == 0.3
     assert not next(r for r in rows if r["id"] == "shortvideo")["enabled"]
     bad = run("rules", "set", "news", "when=someday")
     assert bad.returncode == 2 and "someday" in bad.stderr
@@ -163,7 +163,7 @@ def test_cli_round_trip(tmp_path):
     cfg = json.loads(run("config", "export").stdout)
     cfg["rules"] = [r for r in cfg["rules"] if r["id"] != "videos"]
     cfg["rules"].append({"id": "games", "kind": "deny", "description": "video games"})
-    next(r for r in cfg["rules"] if r["id"] == "social")["minutes_per_day"] = 10
+    next(r for r in cfg["rules"] if r["id"] == "social")["allow_learning"] = True
     (tmp_path / "want.json").write_text(json.dumps(cfg))
     out = json.loads(run("config", "apply", str(tmp_path / "want.json"), "--json").stdout)
     # Without --prune, a rule left out of the list is kept.

@@ -97,10 +97,7 @@ def summary(r: Rule, settings: Settings) -> str:
     if r.kind == "deny":
         s = f"Steps in on {what}"
     else:
-        limits = [f"{r.minutes_per_day:g} min" if r.minutes_per_day else "", f"{r.visits_per_day} visits" if r.visits_per_day else ""]
-        s = f"{' and '.join(x for x in limits if x) or 'No limit set'} a day of {what}"
-        if not settings.budgets:
-            s += " (testing mode: steps in at once)"
+        s = f"Checks in on {what}: asks what for and for how long, and steps in when that time is up"
     s += "." if not s.endswith(".") else ""
     extra = []
     if r.when:
@@ -121,9 +118,9 @@ def summary(r: Rule, settings: Settings) -> str:
 def _rule_json(r: Rule, settings: Settings, usage: dict) -> dict:
     d = asdict(r)
     d |= {"reads": r.text(settings.lang), "active_now": r.active(), "summary": summary(r, settings)}
-    if r.kind == "time_cap":
+    if r.kind == "check_in":
         u = usage.get(r.id, {})
-        d["today"] = {"minutes": round(u.get("seconds", 0) / 60, 1), "visits": u.get("visits", 0)}
+        d["today"] = {"minutes": round(u.get("seconds", 0) / 60, 1), "sessions": u.get("sessions", 0)}
     return d
 
 
@@ -152,7 +149,7 @@ def rules_list(args) -> None:
     lines = [_capacity_line(cap), ""]
     for r, d in zip(rules, rows):
         state = "off" if not r.enabled else "on" if d["active_now"] else "on, not now"
-        today = f"  today: {d['today']['minutes']:g} min, {d['today']['visits']} visits" if "today" in d else ""
+        today = f"  today: {d['today']['minutes']:g} min, {d['today']['sessions']} sessions" if "today" in d else ""
         lines.append(f"{r.id:<12} [{state}] threshold {r.threshold:g}{today}\n    {d['summary']}")
     if not rules:
         lines.append("no rules. `qualm rules starters` lists ready-made ones; `rules add` makes your own.")
@@ -188,11 +185,7 @@ def rules_add(args) -> None:
             _fail(f"id {args.id!r}: lowercase letters, digits and _, starting with a letter")
         if not args.what:
             _fail('say what the rule is about: --what "short videos made for endless swiping"')
-        entry = {"id": args.id, "kind": "time_cap" if (args.minutes or args.visits) else "deny", "description": args.what}
-        if args.minutes:
-            entry["minutes_per_day"] = args.minutes
-        if args.visits:
-            entry["visits_per_day"] = args.visits
+        entry = {"id": args.id, "kind": "check_in" if args.check_in else "deny", "description": args.what}
         entry["threshold"] = args.threshold
         for key, val in (("sites", args.site), ("when", args.when)):
             if val:
@@ -546,7 +539,7 @@ def focus(args) -> None:
     text = _session_line(sj)
     if args.intent:
         text = (f"Focus on “{sj['focus']['intent']}” until {sj['focus']['until'][11:]}. Every rule hit steps in at once, "
-                "time caps included, and the pop-up reminds you of this. End it: qualm focus --stop")
+                "check-ins included, and the pop-up reminds you of this. End it: qualm focus --stop")
     _out(args, sj, text)
 
 
@@ -615,6 +608,11 @@ def config_check(args) -> None:
          f"ok: {len(rules)} rules, {len(settings.allow)} allow classes. {_capacity_line(cap)}")
 
 
+def config_migrate(args) -> None:
+    changed = config_path(args.rules).migrate()
+    _changed(args, {"changes": changed}, "\n".join(changed) or "nothing to migrate")
+
+
 def config_undo(args) -> None:
     config_path(args.rules).undo()
     _changed(args, {"undone": True}, "back to the version before the last change (undo again to redo)")
@@ -675,7 +673,7 @@ def status(args) -> None:
         out["model"] = {"reachable": False, "url": kev, "error": type(e).__name__}
     try:
         settings, rules = config_path(args.rules).load()
-        out["config"] = {"ok": True, "budgets": settings.budgets, "rules_on_now": [r.id for r in rules if r.active()],
+        out["config"] = {"ok": True, "rules_on_now": [r.id for r in rules if r.active()],
                          "capacity": capacity(settings, rules)}
     except ValueError as e:
         out["config"] = {"ok": False, "error": str(e)}
@@ -691,7 +689,7 @@ def status(args) -> None:
              f"model: {'up, ' + m['id'] if m['reachable'] else 'unreachable at ' + m['url'] + ' (HANDOFF.md, Run it)'}",
              f"config: {'ok, ' + _capacity_line(c['capacity']) if c['ok'] else 'broken: ' + c['error']}"]
     if c.get("ok"):
-        lines.append(f"on now: {', '.join(c['rules_on_now']) or 'no rules'}; budgets {'on' if c['budgets'] else 'off (testing: every hit pops up)'}")
+        lines.append(f"on now: {', '.join(c['rules_on_now']) or 'no rules'}")
     lines.append(_session_line(out["session"]))
     if "last_judgement" in out:
         lj = out["last_judgement"]
@@ -705,7 +703,7 @@ def status(args) -> None:
 FIELDS = {
     "rules": {
         "id": "short name, used in logs: lowercase letters, digits and _, starting with a letter; can't change later",
-        "kind": "deny: step in; time_cap: count minutes and visits, step in over budget",
+        "kind": "deny: step in at once; check_in: ask what for and for how long on arrival, step in when that time is up",
         "description": "what the rule is about, in your words; the model reads it. Describe the mode, not the site",
         "description_en": "optional English version, sent instead when [settings] lang = \"en\"",
         "exceptions": "things that look like a hit but are fine; the model reads them with the rule",
@@ -716,8 +714,6 @@ FIELDS = {
         "allow_learning": "lectures, tutorials and docs never hit this rule",
         "allow_intentional": "one item opened from search, a work app or a chat link is fine",
         "feed_hit": "any page the model reads as an entertainment feed hits this rule",
-        "minutes_per_day": "time_cap: daily minutes",
-        "visits_per_day": "time_cap: separate visits a day; 0 = no limit",
         "enabled": "false: kept in the file, but never asked and never fires",
         "when": "only at these times; empty = always",
         "note": "why it's set this way, for whoever reads the file next",
@@ -738,7 +734,9 @@ FIELDS = {
         "no_monitor": "apps (bundle ids) never read at all",
         "allow_sites": "sites never judged; links from them count as opened on purpose",
         "allow_urls": "the same, as URL regexes",
-        "budgets": "true: time caps count minutes and visits first; false (testing): every hit pops up at once",
+        "max_wait_s": "the longest wait, in seconds, before a check-in or \"I need it\" unlocks; it doubles with each "
+                      "session today (the first is free) and again when you come back within 20 min of one ending",
+        "extensions": "how many \"5 more\" a check-in session may get when its time is up (0: none)",
         "max_questions": "questions one reading may ask (rules on at once + allow classes + 3 shared); "
                          "more slows the model sharply (25 is ~1.5 s on Kev-4B, 24 GB Mac)",
     },
@@ -808,8 +806,8 @@ def register(sub, defaults: dict) -> None:
     sp = cmd(g, "add", rules_add, "a new rule, in your words (or a starter: --from-starter)", changes=True)
     sp.add_argument("id", help="short name: lowercase, digits, _")
     sp.add_argument("--what", help='what it is about, in your words: "short videos made for endless swiping"')
-    sp.add_argument("--minutes", type=float, help="a daily time budget instead of stepping in at once")
-    sp.add_argument("--visits", type=int, help="a daily visit limit instead of stepping in at once")
+    sp.add_argument("--check-in", action="store_true",
+                    help="ask what for and for how long on arrival, and step in when that time is up, instead of stepping in at once")
     sp.add_argument("--site", action="append", help="always counts here: douyin.com, youtube.com/shorts, youtube.com/ (home only); repeat")
     sp.add_argument("--when", action="append", help='only then: "mon-fri 09:00-18:00", "weekends", "22:00-02:00"; repeat')
     sp.add_argument("--learning-ok", action="store_true", help="lectures, tutorials and docs never hit it")
@@ -832,7 +830,7 @@ def register(sub, defaults: dict) -> None:
              "--what tries other wording, or a draft rule under a new id, without saving")
     sp.add_argument("id")
     sp.add_argument("--what", help="wording to try instead of the saved one (or for a draft)")
-    sp.add_argument("--kind", choices=("deny", "time_cap"), help="for a draft, or to try the other kind")
+    sp.add_argument("--kind", choices=("deny", "check_in"), help="for a draft, or to try the other kind")
     sp.add_argument("--threshold", type=float, help="threshold to try")
     sp.add_argument("--last", type=int, default=100, help="how many recent distinct screens")
     sp.add_argument("--show", type=int, default=20, help="how many to print, highest score first")
@@ -879,9 +877,9 @@ def register(sub, defaults: dict) -> None:
         sp.add_argument("--app", help="bundle id, e.g. net.whatsapp.WhatsApp")
         sp.add_argument("--name", help="the app's name, for display")
 
-    g = group("settings", "budgets on or off, apps never read, sites never judged, the question limit")
+    g = group("settings", "apps never read, sites never judged, check-in waits, the question limit")
     cmd(g, "show", settings_show, "every setting, with what it does")
-    sp = cmd(g, "set", settings_set, "budgets=true, no_monitor+=com.example.App, allow_sites+=github.com", changes=True)
+    sp = cmd(g, "set", settings_set, "max_wait_s=90, no_monitor+=com.example.App, allow_sites+=github.com", changes=True)
     sp.add_argument("pairs", nargs="+", metavar="KEY=VALUE")
 
     g = group("config", "the whole config as JSON: export, edit, apply in one checked step; check; undo")
@@ -892,6 +890,8 @@ def register(sub, defaults: dict) -> None:
     sp.add_argument("--prune", action="store_true", help="also remove rules and allow classes missing from the file")
     cmd(g, "check", config_check, "does rules.toml load, and how full is the question budget")
     cmd(g, "undo", config_undo, "back to the version before the last change; again to redo", changes=True)
+    cmd(g, "migrate", config_migrate, "a rules.toml from before check-ins: time_cap rules become check_in, "
+        "daily budgets are removed", changes=True)
 
     sp = sub.add_parser("doctor", help="is everything Qualm needs in place? each problem with its fix",
                         description="Checks the Mac, memory and swap, Accessibility, rules.toml, the Kev repo, the model "
@@ -903,7 +903,7 @@ def register(sub, defaults: dict) -> None:
     sp.set_defaults(fn=run, cmd_fn=doctor)
     sp = sub.add_parser("focus", help="a focus session: say what you're here to do; every rule steps in at once until it ends",
                         description="Start a focus session (qualm focus write the report --minutes 50), show it (qualm focus), "
-                                    "or end it (--stop). While it runs, every rule hit steps in at once, time caps included, "
+                                    "or end it (--stop). While it runs, every rule hit steps in at once, check-ins included, "
                                     "and the pop-up reminds you what you said.")
     sp.add_argument("intent", nargs="*", help="what you're here to do, in a few words")
     sp.add_argument("--minutes", type=float, default=50, help="how long (default 50)")

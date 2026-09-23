@@ -1,4 +1,4 @@
-"""Are you at the screen? Time caps only count while you are.
+"""Are you at the screen? Check-in sessions only count time while you are.
 
 Away means the screen is locked, or there has been no keyboard or mouse
 input for IDLE_S, unless the front app is keeping the display awake (a

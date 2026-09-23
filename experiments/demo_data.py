@@ -5,8 +5,8 @@ dashboard without your own data (which is personal: never put it in a README).
     uv run qualm review --web --data /tmp/qualm-demo/data --rules rules.example.toml
 
 Same file formats as the app writes. Pop-ups thin out over the weeks and
-cluster in the evening, you go back more often as time goes on, and a focus
-session is running now.
+cluster in the evening, you go back more often as time goes on, check-ins
+mostly end when you said, and a focus session is running now.
 """
 import argparse
 import json
@@ -61,8 +61,7 @@ def main():
         week = (a.days - 1 - back) // 7
         n = max(1, round(rnd.gauss((9, 6, 4)[min(week, 2)], 1.5)))
         back_share = (0.45, 0.6, 0.72)[min(week, 2)]
-        usage = {"videos": {"seconds": rnd.uniform(15, 50) * 60, "visits": rnd.randint(2, 6)},
-                 "social": {"seconds": rnd.uniform(8, 26) * 60, "visits": rnd.randint(3, 9)}}
+        usage = {"videos": {"seconds": 0.0, "sessions": 0}, "social": {"seconds": 0.0, "sessions": 0}}
         history[day.isoformat()] = usage
         # A focus session on most weekdays.
         if day.weekday() < 5 and rnd.random() < 0.7 and back > 0:
@@ -95,8 +94,34 @@ def main():
                  "purpose_probs": {"entertain": 0.9, "task": 0.06, "learn": 0.04}, "sensitive": 0.02, "p_hit": p,
                  "answers": {}, "latency_ms": rnd.randint(380, 900), "cached": False, "allow": {"shopping": 0.05, "music": 0.03}}
             judgements.append(j)
+            check_in = rule in usage
             decisions.append({"at": j["at"], "type": "intervention", "id": did, "rule": rule, "reason": reason, "screen": screen,
-                              "page_kind": j["page_kind"], "purpose": "entertain", "p_hit": p})
+                              "page_kind": j["page_kind"], "purpose": "entertain", "p_hit": p,
+                              **({"panel": "check_in"} if check_in else {})})
+            if check_in and rnd.random() > back_share - 0.15:
+                # Checked in: what for, how long; mostly ended when you said.
+                said = rnd.choices((5, 15, 30), weights=(5, 3, 1))[0]
+                why, start = rnd.choice(REASONS), at + timedelta(seconds=rnd.randint(4, 25))
+                extended = int(rnd.random() < 0.2)
+                stayed = round(min(said + 5 * extended, rnd.uniform(0.5, 1.1) * (said + 5 * extended)), 1)
+                usage[rule]["seconds"] += stayed * 60
+                usage[rule]["sessions"] += 1
+                until = start + timedelta(minutes=said)
+                decisions += [
+                    {"at": start.isoformat(timespec="seconds"), "type": "session", "event": "start", "id": did, "rule": rule,
+                     "minutes": said, "for": why, "until": round(until.timestamp())},
+                    {"at": start.isoformat(timespec="seconds"), "type": "response", "id": did, "rule": rule, "response": "session",
+                     "reason": why, "minutes": said}]
+                end = start + timedelta(minutes=stayed)
+                if end > now:
+                    continue  # still running
+                if extended:
+                    decisions.append({"at": until.isoformat(timespec="seconds"), "type": "session", "event": "extend", "id": did,
+                                      "rule": rule, "minutes": 5, "until": round(until.timestamp()) + 300})
+                decisions.append({"at": end.isoformat(timespec="seconds"), "type": "session", "event": "end", "id": did, "rule": rule,
+                                  "how": "done" if extended or stayed >= said else "time", "for": why,
+                                  "minutes": said + 5 * extended, "stayed": stayed, "extended": extended})
+                continue
             r = rnd.random()
             answer = "back" if r < back_share else "snooze" if r < back_share + 0.18 else "fine" if r < back_share + 0.25 else "never" if r < back_share + 0.27 else None
             if answer:
@@ -127,6 +152,21 @@ def main():
     started = time.time() - 18 * 60
     decisions.append({"at": datetime.fromtimestamp(started).isoformat(timespec="seconds"), "type": "focus", "intent": intent, "minutes": minutes})
     (out / "session.json").write_text(json.dumps({"paused_until": 0.0, "focus": {"intent": intent, "started": started, "until": started + minutes * 60}}))
+    # Today: a check-in that ended when you said, and one running now.
+    for rule, why, said, ago, stayed in (("social", "reading the launch thread", 5, 95, 4.2),
+                                         ("videos", "the keynote everyone's talking about", 15, 6, None)):
+        start = now - timedelta(minutes=ago)
+        sid = jid() + "cafe"
+        decisions += [{"at": start.isoformat(timespec="seconds"), "type": "session", "event": "start", "id": sid, "rule": rule,
+                       "minutes": said, "for": why, "until": round((start + timedelta(minutes=said)).timestamp())},
+                      {"at": start.isoformat(timespec="seconds"), "type": "response", "id": sid, "rule": rule, "response": "session",
+                       "reason": why, "minutes": said}]
+        if stayed is not None:
+            decisions.append({"at": (start + timedelta(minutes=said)).isoformat(timespec="seconds"), "type": "session", "event": "end",
+                              "id": sid, "rule": rule, "how": "time", "for": why, "minutes": said, "stayed": stayed, "extended": 0})
+        usage[rule]["seconds"] += (stayed or ago) * 60
+        usage[rule]["sessions"] += 1
+    decisions.sort(key=lambda e: e["at"])
     monday = today - timedelta(days=today.weekday())
     refl = [{"week": (monday - timedelta(weeks=w)).isoformat(), "answer": ans, "note": "", "at": now.isoformat(timespec="seconds")}
             for w, ans in ((2, "not_really"), (1, "mixed"))]

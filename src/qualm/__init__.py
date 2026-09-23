@@ -6,7 +6,7 @@ Jev-style typed decision model (local Kev, or hosted Jev).
     qualm probe              print the screen state on every change, no model
     qualm ask                one reading of the current screen
     qualm app                menu bar app: watch, and step in when a rule is hit
-    qualm app --demo [KIND]  show the pop-up once: deny, feed, budget, focus, or the focus prompt
+    qualm app --demo [KIND]  show the pop-up once: deny, feed, checkin, timesup, focus, or the focus prompt
     qualm focus WHAT         a focus session: every rule steps in, and the pop-up reminds you; --stop ends it
     qualm pause [MINUTES]    pause every rule (default 30); --stop resumes
     qualm watch              the same loop in the terminal, printing every judgement
@@ -24,7 +24,7 @@ Make it yours (each takes --help and --json; each change takes --dry-run):
     qualm allow list|add|set|on|off|remove   kinds of page never flagged
     qualm except list|add|remove  things that look like a rule but are fine
     qualm never list|add|remove   apps and sites where no rule fires
-    qualm settings show|set       budgets, apps never read, sites never judged, the question limit
+    qualm settings show|set       apps never read, sites never judged, check-in waits, the question limit
     qualm config export|apply|check|undo   the whole config as JSON, changed in one checked step
     qualm schema                  every field, its type, default and meaning
     qualm status                  app running? model up? config ok?

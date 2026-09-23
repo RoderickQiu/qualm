@@ -116,7 +116,7 @@ def _save_label(path: str, record: dict) -> int:
 
 
 def cmd_label(args) -> None:
-    from .rules import DENY_OPTIONS, PAGE_KINDS, PURPOSES, TIME_CAP_OPTIONS
+    from .rules import DENY_OPTIONS, PAGE_KINDS, PURPOSES, CHECK_IN_OPTIONS
     from .state import capture
 
     settings, rules = _config(args)
@@ -129,7 +129,7 @@ def cmd_label(args) -> None:
         "page_kind": _pick("page kind", PAGE_KINDS),
         "purpose": _pick("what is it for", PURPOSES),
         "rules": {
-            r.id: _pick(f"rule {r.id} ({r.text(settings.lang)})", DENY_OPTIONS if r.kind == "deny" else TIME_CAP_OPTIONS)
+            r.id: _pick(f"rule {r.id} ({r.text(settings.lang)})", DENY_OPTIONS if r.kind == "deny" else CHECK_IN_OPTIONS)
             for r in rules
         },
     }
@@ -389,7 +389,7 @@ def main() -> None:
 
     sp = add("app", cmd_app)
     sp.add_argument("--data", default=DEFAULT_DATA)
-    sp.add_argument("--demo", nargs="?", const="deny", choices=("deny", "feed", "budget", "focus", "prompt"),
+    sp.add_argument("--demo", nargs="?", const="deny", choices=("deny", "feed", "checkin", "timesup", "focus", "prompt"),
                     help="show the panel once with a made-up moment (default: deny); nothing is watched or learned")
 
     sp = add("label", cmd_label)

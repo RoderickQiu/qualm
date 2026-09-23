@@ -19,15 +19,17 @@ from typing import Literal
 
 from typesafe_sdk import Choice, Noul
 
-# Mirrors ConstraintType in seenot-variant: DENY and TIME_CAP. NO_MONITOR is
+# "deny": step in at once. "check_in": ask what for and for how long when
+# you arrive, stay out of the way until then, step in when the time is up
+# (seenot-variant's TIME_CAP, without a daily budget). NO_MONITOR is
 # [settings] no_monitor: those apps are never read.
-Kind = Literal["deny", "time_cap"]
+Kind = Literal["deny", "check_in"]
 # "content": judge the opened item; a feed of candidates never hits.
 # "page": judge the page itself, so feeds and hot lists can hit.
 Target = Literal["content", "page"]
 
 DENY_OPTIONS = ("violates", "safe", "unknown")
-TIME_CAP_OPTIONS = ("in_scope", "out_of_scope", "unknown")
+CHECK_IN_OPTIONS = ("in_scope", "out_of_scope", "unknown")
 HIT_LABELS = ("violates", "in_scope")
 PAGE_KINDS = ("feed", "single_item", "search", "work", "other")
 PURPOSES = ("learn", "task", "entertain")
@@ -114,8 +116,6 @@ class Rule:
     # on sites the rule never names. In the trials it lifted feed recall from
     # 0.40 to 0.67 with no false positives.
     feed_hit: bool = False
-    minutes_per_day: float = 0  # time_cap: daily budget
-    visits_per_day: int = 0  # time_cap: 0 = no visit limit
     enabled: bool = True  # off: never asked, never fires
     when: tuple[str, ...] = ()  # "mon-fri 09:00-18:00"; empty = always
     note: str = ""  # for you (or an agent) reading the file: why it's set this way
@@ -166,9 +166,12 @@ class Settings:
     no_monitor: tuple[str, ...] = ()  # bundle ids that are never read at all
     allow_sites: tuple[str, ...] = ()  # sites that are never judged ("github.com")
     allow_urls: tuple[str, ...] = ()  # the same as URL regexes
-    # False: a time_cap hit steps in at once, like a deny rule, instead of
-    # counting minutes and visits. Clearer while testing.
-    budgets: bool = True
+    # The longest wait before a check-in or "I need it" unlocks, in seconds.
+    # The wait doubles with each session today (the first is free) and again
+    # when you come back soon after one ended.
+    max_wait_s: int = 60
+    # "5 more" when a check-in session's time is up: how many per session.
+    extensions: int = 1
     # Questions one reading may ask: rules on at the same time + allow classes
     # + the 3 shared ones. Kev-4B on a 24 GB Mac: 13 questions 0.6 s, 28 1.8 s,
     # 53 4.5-18 s, 103 timed out and swapped the machine (HANDOFF, Measured).
@@ -190,6 +193,11 @@ def _make(cls, fields: set[str], table: str, raw: dict):
     rid = raw.get("id")
     if not isinstance(rid, str) or not re.fullmatch(ID_RE, rid):
         raise ValueError(f"[[{table}]] id {rid!r}: lowercase letters, digits and _, starting with a letter")
+    old = set(raw) & {"minutes_per_day", "visits_per_day"}
+    if table == "rules" and (old or raw.get("kind") == "time_cap"):
+        raise ValueError(
+            f"rule {rid!r}: daily budgets are gone; a check_in rule asks what for and for how long when you "
+            f"arrive, and steps in when that time is up. `qualm config migrate` updates the file.")
     unknown = set(raw) - fields
     if unknown:
         raise ValueError(f"{table} {rid!r}: unknown keys {sorted(unknown)}; known: {sorted(fields)}")
@@ -208,6 +216,9 @@ def _make(cls, fields: set[str], table: str, raw: dict):
 def parse_config(text: str) -> tuple[Settings, list[Rule]]:
     data = tomllib.loads(text)
     s = data.get("settings", {})
+    if "budgets" in s:
+        raise ValueError("[settings] budgets is gone: time rules check in when you arrive instead of counting a "
+                         "daily budget. `qualm config migrate` updates the file.")
     unknown = set(s) - SETTINGS_FIELDS
     if unknown:
         raise ValueError(f"[settings]: unknown keys {sorted(unknown)}; known: {sorted(SETTINGS_FIELDS)}")
@@ -216,16 +227,21 @@ def parse_config(text: str) -> tuple[Settings, list[Rule]]:
         no_monitor=tuple(s.get("no_monitor", ())),
         allow_sites=tuple(s.get("allow_sites", ())),
         allow_urls=tuple(s.get("allow_urls", ())),
-        budgets=bool(s.get("budgets", True)),
+        max_wait_s=int(s.get("max_wait_s", Settings.max_wait_s)),
+        extensions=int(s.get("extensions", Settings.extensions)),
         max_questions=int(s.get("max_questions", Settings.max_questions)),
         allow=tuple(_make(AllowClass, ALLOW_FIELDS, "allow", a) for a in data.get("allow", ())),
     )
     for site in settings.allow_sites:
         site_pattern(site)
+    if not 0 <= settings.max_wait_s <= 600:
+        raise ValueError("[settings] max_wait_s: seconds, between 0 and 600")
+    if not 0 <= settings.extensions <= 5:
+        raise ValueError("[settings] extensions: between 0 and 5")
     rules = [_make(Rule, RULE_FIELDS, "rules", r) for r in data.get("rules", ())]
     for r in rules:
-        if r.kind not in ("deny", "time_cap"):
-            raise ValueError(f"rule {r.id!r}: kind is deny (step in) or time_cap (count, step in over budget)")
+        if r.kind not in ("deny", "check_in"):
+            raise ValueError(f"rule {r.id!r}: kind is deny (step in at once) or check_in (ask what for, step in when the time is up)")
         if r.target not in ("content", "page"):
             raise ValueError(f"rule {r.id!r}: target is content or page")
         for w in r.when:
@@ -350,6 +366,8 @@ def rule_question(rule: Rule, lang: str = "zh") -> Choice:
                 "unknown": "The screen does not show enough to tell",
             },
         )
+    # check_in: the wording the trials' thresholds were tuned on, from when
+    # these rules were daily time caps. Changing it moves every score.
     return Choice(
         instructions=f"The user set a time limit on: {what}.{exceptions} "
         "Does the current screen count toward that limit?",

@@ -34,15 +34,20 @@ search is on purpose. The fifth thread opened from a feed is drift.
   this? Is it for learning, a task, or entertainment? Is it private? Does it break each of your
   rules, and how likely is that? One pass, about 0.6 s.
 - **Decides in plain code.** Per-rule thresholds, and exemptions for learning material, work
-  tools, search, private pages and things opened on purpose. Time budgets, pauses, and what you
-  taught it.
+  tools, search, private pages and things opened on purpose. Check-in sessions, pauses, and what
+  you taught it.
 - **Steps in gently.** A dark, blurred panel dims the screen and says why. *Take me back* is the
   default. *I need it* unlocks after a short wait that grows each time you use it, and asks what
   for. *Not this one* teaches the rule an exception, and *Never here* silences an app or site.
+- **Checks in instead of counting a daily budget.** For entertainment video and social media,
+  it asks on arrival: what are you here for, and for 5, 15 or 30 minutes? Then it stays quiet
+  until that time is up, and *Done* takes you back. Each session today makes the next one wait
+  a little longer, up to a minute. It never blocks. [docs/POLICY.md](docs/POLICY.md) says why
+  daily budgets were the wrong design.
 
 <p align="center">
-<img src="docs/assets/panel-why.png" width="410" alt="After the wait: what's it for?">
-<img src="docs/assets/panel-budget.png" width="410" alt="A time budget used up">
+<img src="docs/assets/panel-checkin.png" width="410" alt="Check in: what are you here for, and for how long?">
+<img src="docs/assets/panel-timesup.png" width="410" alt="The time you chose is up">
 </p>
 
 ### Focus sessions
@@ -59,11 +64,11 @@ the menu bar, the dashboard, or `qualm focus write the pitch deck`.
 ### A dashboard that doesn't scold
 
 Open it at `http://127.0.0.1:8765`. It shows how each pop-up ended, when in the week they happen,
-what you unlocked time for (in your words), your focus sessions and budgets, and one question a
+what you unlocked time for (in your words), your focus sessions, check-ins (what you said and what you did), and one question a
 week: *was that time worth it?* It has no score and no streaks. Review tells Qualm where it was
 wrong, with the closest calls first, and your answers retune the thresholds.
 
-<p align="center"><img src="docs/assets/dashboard-insights.png" width="820" alt="Insights: how pop-ups ended, per week, an hour-by-weekday heatmap, what you unlocked time for, focus sessions, budgets."></p>
+<p align="center"><img src="docs/assets/dashboard-insights.png" width="820" alt="Insights: how pop-ups ended, per week, an hour-by-weekday heatmap, what you unlocked time for, focus sessions, check-ins."></p>
 
 <details><summary>Today and Rules, light and dark</summary>
 <p align="center">
@@ -82,7 +87,7 @@ flowchart LR
     B --> C{Changed?}
     C -- no --> A
     C -- yes --> D[Kev on this Mac<br/>typed questions, one pass]
-    D --> E[Policy<br/>thresholds, exemptions,<br/>how you got here, budgets]
+    D --> E[Policy<br/>thresholds, exemptions,<br/>how you got here, check-ins]
     E -- hit, and you stayed 4 s --> F[Pop-up]
     F --> G[(Your answers<br/>data/, local)]
     G -. review, tune .-> E
@@ -95,7 +100,7 @@ flowchart LR
   nobody listed. Sites and URL patterns are there for what must always count.
 - **Everything is a command**, so you can personalize it from a terminal, or have Claude Code do it
   ([.claude/skills/qualm](.claude/skills/qualm/SKILL.md)): `qualm rules add news --what "news
-  articles and headlines" --minutes 15`, then `rules test`, `rules label` and `rules tune`.
+  articles and headlines" --check-in`, then `rules test`, `rules label` and `rules tune`.
   [docs/PERSONALIZE.md](docs/PERSONALIZE.md) covers all of it.
 
 ## Get started
@@ -111,13 +116,13 @@ uv sync
 uv run qualm doctor           # what's missing, and how to fix it
 uv run qualm serve            # terminal 1: Kev-4B, 8-bit (the first start downloads it)
 uv run qualm app              # terminal 2: the menu bar app
-uv run qualm app --demo       # just see the pop-up (also: feed, budget, focus, prompt)
+uv run qualm app --demo       # just see the pop-up (also: feed, checkin, timesup, focus, prompt)
 uv run qualm install          # later: start both at every login (uninstall to undo)
 ```
 
 Give your terminal **Accessibility** permission (System Settings → Privacy & Security). Without
-it, Qualm sees only app names. You'll start in testing mode, where every rule hit pops up at once.
-`qualm settings set budgets=true` switches to real daily budgets.
+it, Qualm sees only app names. A rules.toml from before check-ins won't load; `qualm config migrate`
+updates it.
 
 | Everyday | |
 |---|---|
@@ -139,8 +144,8 @@ as a first filter, not a verdict. The details are in [HANDOFF.md](HANDOFF.md), u
 | short video | 1.00 | 1.00 | 1.00 / 0.77 |
 | feeds | 1.00 | 0.60 | 1.00 / 0.60 |
 | livestreams | 1.00 | 1.00 | 1.00 / 1.00 |
-| entertainment video (budget) | 1.00 | 0.83 | 1.00 / 0.83 |
-| social media (budget) | 0.88 | 0.70 | 0.88 / 0.70 |
+| entertainment video (check-in) | 1.00 | 0.83 | 1.00 / 0.83 |
+| social media (check-in) | 0.88 | 0.70 | 0.88 / 0.70 |
 
 This is the whole policy (thresholds, exemptions, patterns), with each page judged cold.
 

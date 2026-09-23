@@ -37,12 +37,48 @@ These are the things that should be stopped, whatever site they appear on:
 3. **Entertainment livestreams.** There's no end and no natural stopping point.
    A live lecture or launch event is exempt.
 4. **Compulsive checking.** A social profile, an inbox, stock quotes. One
-   check can be a decision; the twelfth is a habit. This is a visit limit
-   (`visits_per_day`), not a ban. The shipped rules don't include stocks any
-   more: it's a niche habit, and in real use it fired on shopping chats and on
-   Qualm's own review page. Add it back if it's yours.
-5. **Unbounded entertainment video and social browsing.** Not bad in itself.
-   These get a daily time budget, not a block.
+   check can be a decision; the twelfth is a habit. A check-in rule (below)
+   makes each one a little slower than the last, never a ban. The shipped
+   rules don't include stocks any more: it's a niche habit, and in real use
+   it fired on shopping chats and on Qualm's own review page. Add it back if
+   it's yours.
+5. **Unbounded entertainment video and social browsing.** Not bad in itself;
+   the harm is the two minutes that become forty. These rules check in
+   (`kind = "check_in"`), not block.
+
+## Check-ins, not daily budgets
+
+A daily budget ("45 minutes of video") was the first design, and it's the
+wrong one. It reads as an allowance to use up; the first 44 minutes, the
+morning's first idle check included, get no friction at all; the cutoff
+lands at a random moment; and once it's blown, people give up on it or
+turn the tool off. It also can't see what hurts: the short check that turns
+into forty minutes, or the fifteenth check in an hour.
+
+So a check-in rule asks at the door and holds you to your own answer:
+
+1. **On arrival**: "What are you here for?" (Not for learning material with
+   `allow_learning`, nor a link or search result you opened on purpose with
+   `allow_intentional`.) A few words,
+   and 5, 15 or 30 minutes. 5 is preselected, so Return means 5.
+2. **During the session** nothing pops up. The session covers the rule,
+   not the site: YouTube then Bilibili is one session; and a page two
+   check-in rules both hit (a video on a social site) asks once.
+3. **When the time is up and you're still there**: "Your 15 minutes for
+   'the match' are up." Done is the default and takes you back. "5 more"
+   is there once per session (`extensions`), after a 10 s wait; after that,
+   only a new check-in. Still on the page 30 s after going back (an app with
+   no Back): it steps in again.
+4. **Each session costs a little more.** The wait before Start unlocks: the
+   first session of the day is free, then 5, 10, 20, 40 s, up to 60
+   (`max_wait_s`); doubled again when you come back within 20 minutes of a
+   session ending; 15 minutes adds 5 s and 30 minutes 10 s.
+
+Never a block: the most it costs is a minute's wait. The pop-up states
+where you are ("3rd time today · 52 min so far · last ended 14:20"), and
+the dashboard shows each session: what for, how long you said, how long you
+stayed. This follows one sec (PNAS 2023): a short pause and a question at
+each opening cut use, where the message alone didn't.
 
 ## What should never be blocked
 
@@ -80,7 +116,7 @@ new decision.
 Every intervention offers two ways out besides going back:
 
 - **"I need it: 10 min"** snoozes the rule and asks why. The reason is
-  logged. SeeNot's session intents are the fuller version of this.
+  logged. Check-ins and focus sessions are the fuller version of this.
 - **"Not this one"** says the model was wrong. The page's URL is allowed for
   that rule from now on, and its title becomes one of the rule's
   `exceptions`, which is the text the model reads. This is the desktop
@@ -108,7 +144,7 @@ words, and every part of it is a command (docs/PERSONALIZE.md), so an
 agent can set it up as well as you can:
 
 - which modes you care about, and in what words (`rules add`, `rules set ID what=...`);
-- per-rule `threshold`, `minutes_per_day`, `visits_per_day`;
+- per-rule `threshold` and `kind` (`deny` or `check_in`); `max_wait_s` and `extensions`;
 - per-rule `allow_learning` and `allow_intentional`;
 - when a rule applies (`when = ["mon-fri 09:00-18:00"]`), and whether it's on at all;
 - the sites a rule always covers, as plain domains (`sites`);
