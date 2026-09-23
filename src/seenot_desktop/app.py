@@ -287,6 +287,12 @@ def run_app(policy: Policy, rules_path: str, budget: int, demo: bool = False, re
         print(f"  [{text}]", flush=True)
         AppHelper.callAfter(ctrl.set_status, text)
 
+    from ApplicationServices import AXIsProcessTrusted
+
+    if not AXIsProcessTrusted():
+        print("! No Accessibility permission: SeeNot can only see app names. Grant it in System Settings >"
+              " Privacy & Security > Accessibility, then restart.", flush=True)
+        AppHelper.callAfter(ctrl.set_status, "needs Accessibility permission (see System Settings)")
     mode = "budgets on: time caps count first" if policy.settings.budgets else "budgets off: every hit pops up"
     print(f"SeeNot watching ({mode}). Ctrl-C to stop.", flush=True)
 

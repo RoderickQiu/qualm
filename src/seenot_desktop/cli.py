@@ -345,6 +345,18 @@ def cmd_export(args) -> None:
     print(f"{n} records -> {args.out}")
 
 
+def cmd_install(args) -> None:
+    from .autostart import install
+
+    install(Path.cwd().resolve(), Path(args.kev_dir).expanduser().resolve(), args.model, args.port)
+
+
+def cmd_uninstall(args) -> None:
+    from .autostart import uninstall
+
+    uninstall()
+
+
 def main() -> None:
     from . import __doc__ as doc
     from .state import DEFAULT_CHAR_BUDGET
@@ -400,6 +412,13 @@ def main() -> None:
     sp.add_argument("--reviews", action="store_true", help="also score your answers from the review page")
     sp.add_argument("--data", default=DEFAULT_DATA)
     sp.add_argument("--precision", type=float, default=0.9, help="precision --suggest aims for")
+
+    sp = add("install", cmd_install, model=False)
+    sp.add_argument("--kev-dir", default="~/Documents/kev", help="the Kev repo")
+    sp.add_argument("--model", default="jaredpalmer/kev-4b")
+    sp.add_argument("--port", type=int, default=8009)
+
+    sp = add("uninstall", cmd_uninstall, model=False)
 
     sp = add("export", cmd_export)
     sp.add_argument("--labels", default=DEFAULT_LABELS)

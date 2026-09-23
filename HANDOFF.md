@@ -36,6 +36,36 @@ Trials run 2026-09-22 (second session). Short version:
 | Fine-tune on this Mac (MPS)? | **No.** 0.8B training used 20 GB and produced no step in 15 min (Qwen3.5 linear-attention kernels fall back to reference PyTorch). Use CUDA / Modal. |
 | Is the label set real? | **No, it is a stand-in.** 119 pages opened by script and labelled by what was opened, not a day of your own use. See "Trial data". |
 
+### Since the MVP (optimizations, 2026-09-22)
+
+Each one addresses something seen in real use, or a finding from the
+research on digital self-control tools:
+
+- **Answer cache**: 92% of real model calls re-asked text the model had
+  already read. Answers are cached by exactly what the model reads and is asked.
+- **Ask only on change**: a new screen after 0.5 s; the same screen's changed
+  text at most every 30 s; nothing changed, no call.
+- **4 s before a pop-up**: pages passed through, or still loading, don't pop up.
+- **Reasons in words** (`explain.py`): Kev returns probabilities only, so the
+  reason is built from the signal that fired, the margin over the threshold,
+  and the page type and purpose; plus which part of the screen carried it
+  (asked again with only the title, and with only the page text). Time2Stop
+  (CHI 2024) found explanations raised the accuracy and receptivity of
+  interventions.
+- **Friction on "I need it"**: unlocks after 5 s, doubling with each snooze in
+  the last hour (to 60 s), and asks what for. In the one sec study (PNAS
+  2023), the option to back out and a short wait reduced use; the message
+  alone didn't.
+- **Review queue, closest calls first.**
+- **Idle** (`presence.py`): time caps stop while the screen is locked, or after
+  2 min without input, unless the front app keeps the display awake (a video).
+- **This week** tab: pop-ups per rule and day, your answers, time per budget.
+- **`install`**: LaunchAgents for the model server and the app, restarted on crash.
+  Not run yet: under launchd, macOS asks for Accessibility and Screen
+  Recording for the Python binary itself.
+- **Never judge SeeNot**: a running copy had judged a demo panel.
+- **[[allow]] classes, never here, thin screens, Chrome capture**: see below.
+
 ### MVP (built after the trials)
 
 `seenot-desktop app` is a menu bar app (Python + PyObjC) that watches the
@@ -62,7 +92,8 @@ Not built:
   players, canvases).
 - Event-driven triggers (currently a 0.5 s poll of the front window; the model is
   asked only when the screen changes, or its text changes, at most every 30 s).
-- A signed .app bundle or launch at login (it runs from the terminal).
+- A signed .app bundle: the menu bar item still shows as "python3" in menu bar
+  managers.
 
 ## Run it
 
@@ -84,6 +115,7 @@ uv run seenot-desktop ask --delay 3      # switch windows within 3 s, get one re
 uv run seenot-desktop label              # capture + label one moment -> data/labels.jsonl
 uv run seenot-desktop eval --lang zh     # precision/recall per threshold, latency
 uv run seenot-desktop eval --lang en
+uv run seenot-desktop install            # or: start model server + app at every login (uninstall to undo)
 uv run seenot-desktop app                # the MVP: menu bar + intervention panel
 uv run seenot-desktop app --demo         # show the panel once, learn nothing
 uv run seenot-desktop watch              # the same loop in the terminal, every judgement printed
@@ -329,9 +361,13 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
      notifications) plus `NSWorkspace.didActivateApplicationNotification`.
    - Add a Vision OCR fallback (`VNRecognizeTextRequest`, zh-Hans) when the
      Accessibility tree yields no text.
-6. **Ship it:** a Swift `MenuBarExtra` app (or py2app) that launches at login and
-   starts the Kev server itself. Port SeeNot's session intents: "I'm here to do
-   X for 20 minutes" before a session, in place of the per-rule snooze.
+6. **Ship it:** a signed `SeeNot.app` (Swift `MenuBarExtra`, or py2app) with its own
+   name and permissions; `install` covers start-at-login meanwhile. Port
+   SeeNot's session intents: "I'm here to do X for 20 minutes" before a
+   session, in place of the per-rule snooze.
+7. **Graded friction past the pop-up** (InteractOut, CHI 2024: slowing
+   interaction beat lockouts): dim or blur the window when you keep going
+   back to a page after "Take me back".
 
 ## Known problems and gotchas
 

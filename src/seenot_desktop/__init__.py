@@ -9,6 +9,7 @@ Jev-style typed decision model (local Kev, or hosted Jev).
     seenot-desktop label              capture the screen and record your ground-truth labels
     seenot-desktop eval               replay labels through the model; precision, recall, latency
     seenot-desktop harvest            your answers to interventions -> label records
+    seenot-desktop install            start the model server and the app at login (uninstall: remove)
     seenot-desktop export             labels -> Kev training JSONL, for a fine-tune
 """
 
