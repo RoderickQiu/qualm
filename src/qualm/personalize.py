@@ -562,6 +562,16 @@ def pause(args) -> None:
     _out(args, sj, f"paused until {sj['paused_until'][11:]}; qualm pause --stop resumes" if sj["paused"] else "resumed: watching")
 
 
+def doctor(args) -> None:
+    """Everything Qualm needs, checked; exit 2 if something must be fixed."""
+    from .doctor import FAIL, checks, report
+
+    results = checks(args.rules, args.data, args.kev_dir)
+    _out(args, {"checks": results}, report(results))
+    if any(r["status"] == FAIL for r in results):
+        raise SystemExit(EXIT["invalid"])
+
+
 def settings_show(args) -> None:
     settings, _ = config_path(args.rules).load()
     d = {k: v for k, v in asdict(settings).items() if k != "allow"}
@@ -883,6 +893,14 @@ def register(sub, defaults: dict) -> None:
     cmd(g, "check", config_check, "does rules.toml load, and how full is the question budget")
     cmd(g, "undo", config_undo, "back to the version before the last change; again to redo", changes=True)
 
+    sp = sub.add_parser("doctor", help="is everything Qualm needs in place? each problem with its fix",
+                        description="Checks the Mac, memory and swap, Accessibility, rules.toml, the Kev repo, the model "
+                                    "server, the app and start-at-login, and says how to fix what isn't right.")
+    sp.add_argument("--rules", default=defaults["rules"])
+    sp.add_argument("--data", default=defaults["data"])
+    sp.add_argument("--kev-dir", default="~/Documents/kev")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(fn=run, cmd_fn=doctor)
     sp = sub.add_parser("focus", help="a focus session: say what you're here to do; every rule steps in at once until it ends",
                         description="Start a focus session (qualm focus write the report --minutes 50), show it (qualm focus), "
                                     "or end it (--stop). While it runs, every rule hit steps in at once, time caps included, "

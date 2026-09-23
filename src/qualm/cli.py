@@ -345,7 +345,13 @@ def cmd_export(args) -> None:
 def cmd_install(args) -> None:
     from .autostart import install
 
-    install(Path.cwd().resolve(), Path(args.kev_dir).expanduser().resolve(), args.model, args.port)
+    install(Path(__file__).resolve().parents[2], Path(args.kev_dir).expanduser().resolve(), args.model, args.port, args.bits)
+
+
+def cmd_serve(args) -> None:
+    from .autostart import serve
+
+    serve(Path(__file__).resolve().parents[2], Path(args.kev_dir).expanduser().resolve(), args.model, args.port, args.bits)
 
 
 def cmd_uninstall(args) -> None:
@@ -411,10 +417,13 @@ def main() -> None:
     sp.add_argument("--data", default=DEFAULT_DATA)
     sp.add_argument("--precision", type=float, default=0.9, help="precision --suggest aims for")
 
-    sp = add("install", cmd_install, model=False)
-    sp.add_argument("--kev-dir", default="~/Documents/kev", help="the Kev repo")
-    sp.add_argument("--model", default="jaredpalmer/kev-4b")
-    sp.add_argument("--port", type=int, default=8009)
+    for name, fn in (("serve", cmd_serve), ("install", cmd_install)):
+        sp = add(name, fn, model=False)
+        sp.add_argument("--kev-dir", default="~/Documents/kev", help="the Kev repo (git clone https://github.com/jaredpalmer/kev)")
+        sp.add_argument("--model", default="jaredpalmer/kev-4b")
+        sp.add_argument("--port", type=int, default=8009)
+        sp.add_argument("--bits", type=int, choices=(8, 16), default=8,
+                        help="8 (default): half the memory, the same answers on the trials; 16: bf16 as trained")
 
     sp = add("uninstall", cmd_uninstall, model=False)
 

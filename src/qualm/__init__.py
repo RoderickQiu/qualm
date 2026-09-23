@@ -1,6 +1,8 @@
 """qualm: intent-aware screen intervention on macOS (a desktop take on SeeNot), decided by a
 Jev-style typed decision model (local Kev, or hosted Jev).
 
+    qualm doctor             is everything in place? each problem with its fix
+    qualm serve              the local model server (Kev-4B, 8-bit), in this terminal
     qualm probe              print the screen state on every change, no model
     qualm ask                one reading of the current screen
     qualm app                menu bar app: watch, and step in when a rule is hit
