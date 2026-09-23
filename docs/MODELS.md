@@ -20,7 +20,7 @@ measured on a Mac with an M5 Pro and 24 GB, running macOS 27, in September
 |---|---|---|
 | Time per reading | ~1.1 s with memory to spare (p95 1.6 s); 3–20 s when the Mac is swapping | ~0.2 s (p90 0.8 s) |
 | Memory | 6.1–7.1 GB for the model server, plus 88 MB for the app | 88 MB for the app |
-| Disk | ~14 GB: runtime 1.1 GB, weights 9 GB, 8-bit copy 4.2 GB | none |
+| Disk | ~6 GB: runtime 1.1 GB, adapter 0.3 GB, 8-bit copy 4.5 GB | none |
 | Money | none | ~$0.02–0.06 per workday (see below) |
 | Privacy | nothing leaves the Mac | the text of each new screen goes to TypeSafe |
 | Accuracy (119 trial pages, the whole policy) | the reference | the same or better on every rule |
@@ -136,16 +136,25 @@ why that matters:
 
 ### Starting it
 
-The first start downloads Kev-4B's adapter (0.3 GB) and its Qwen3.5-4B base
-(8.7 GB). It then merges the adapter, quantizes to 8 bits, and saves that copy
-in `models/` (4.2 GB). Every later start loads the saved copy. Measured on
-this Mac on 2026-09-23, with 22 GB already in swap, by the app's own managed
-server:
+The first start downloads Kev-4B's adapter (0.3 GB) and the 8-bit copy,
+already merged and quantized:
+[RoderickQiu/kev-4b-mlx-8bit](https://huggingface.co/RoderickQiu/kev-4b-mlx-8bit)
+(4.5 GB, Apache-2.0, published 2026-09-23). The copy is used only if its
+`provenance.json` names the same Kev checkpoint and Qwen revision and the same
+8-bit settings, and its SHA-256 matches. Otherwise Qualm downloads the
+Qwen3.5-4B base (8.7 GB), merges the adapter, quantizes it and saves that. Every
+later start loads the saved copy from `models/`. Measured on this Mac on
+2026-09-23, with 22 GB already in swap:
 
 | Start | Ready after | Memory peak | Then |
 |---|---|---|---|
-| First (build the 8-bit copy) | 100 s | 16 GB | 6–7 GB |
+| First, with the published copy | 191 s (mostly the download, ~25 MB/s) | 4.8 GB | ~5–7 GB |
+| First, building it here | 100 s (plus 9 GB of downloads) | 16 GB | 6–7 GB |
 | Every later one (the saved copy) | 11 s | 4.8 GB | ~5–7 GB |
+
+The published copy answers exactly as a locally built one: the same file (by
+SHA-256), and a difference of 0.0 on 15 pages × 10 questions against the
+running server.
 
 So the saved copy matters: a start no longer needs 16 GB for a minute and a
 half. On Kev-0.8B the effect was small (peak 3.6 → 3.4 GB), because its bf16

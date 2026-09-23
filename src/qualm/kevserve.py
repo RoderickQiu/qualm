@@ -7,8 +7,12 @@
 #   pointer head stays fp32); KEV_QUANT_GROUP sets the group size (64).
 # - With QUALM_MODEL_CACHE set, the quantized weights are saved there the
 #   first time and loaded from there after that. The first start loads bf16
-#   (~9 GB for Kev-4B), merges and quantizes; every later start reads the
-#   8-bit weights directly (~4.5 GB) and never holds bf16.
+#   (~9 GB for Kev-4B), merges and quantizes (100 s, a 16 GB peak); every
+#   later start reads the 8-bit weights directly (11 s, 4.8 GB).
+# - With QUALM_PREBUILT set (a Hugging Face repo), the first start fetches
+#   those 8-bit weights instead of building them (4.5 GB, no bf16 at all),
+#   if they were built from this very checkpoint and base, the same way,
+#   and their SHA-256 matches; otherwise it builds them as above.
 import json, os, runpy, shutil, sys
 from pathlib import Path
 
@@ -30,10 +34,44 @@ if bits := int(os.environ.get("KEV_QUANT_BITS", "0")):
         base = f"{self.meta.base}@{self.meta.base_revision or 'main'}".replace("/", "--")
         return Path(cache_root) / f"{Path(self.path).name[:12]}-{base}-q{bits}g{group}"
 
+    def _fetch(self, cached):
+        """The prebuilt 8-bit weights into `cached`; False (and why) if they don't fit this checkpoint."""
+        import hashlib
+        repo = os.environ.get("QUALM_PREBUILT")
+        if not repo:
+            return False
+        try:
+            from huggingface_hub import hf_hub_download
+            prov = json.loads(Path(hf_hub_download(repo, "provenance.json")).read_text())
+            want = (Path(self.path).name, self.meta.base_revision, {"bits": bits, "group_size": group})
+            got = (prov["kev"]["revision"], prov["base"]["revision"], prov["quantization"])
+            if want != got:
+                print(f"{repo} was built from {got}, not {want}: building here instead", flush=True)
+                return False
+            tmp = cached.with_name(cached.name + ".partial")
+            shutil.rmtree(tmp, ignore_errors=True)
+            print(f"downloading the 8-bit weights from {repo} (4.5 GB)", flush=True)
+            for name in ("config.json", "model.safetensors"):
+                hf_hub_download(repo, name, local_dir=tmp)
+            digest = hashlib.sha256()
+            with open(tmp / "model.safetensors", "rb") as f:
+                for block in iter(lambda: f.read(1 << 24), b""):
+                    digest.update(block)
+            if digest.hexdigest() != prov["model.safetensors"]["sha256"]:
+                print(f"{repo}: the weights' SHA-256 doesn't match: building here instead", flush=True)
+                return False
+            tmp.rename(cached)
+            return True
+        except Exception as e:  # offline, repo gone, disk full: build instead
+            print(f"couldn't fetch {repo} ({type(e).__name__}: {e}): building here instead", flush=True)
+            return False
+
     def _load_mlx(self, tok, opts):
         from kev.mlx_model import MLXDecisionModel
 
         cached = _cache_dir(self) if cache_root and opts.lora_scale == 1 else None
+        if cached and not (cached / "model.safetensors").exists():
+            _fetch(self, cached)
         if cached and (cached / "model.safetensors").exists():
             from kev.model import PointerHead
 

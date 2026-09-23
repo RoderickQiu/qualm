@@ -283,6 +283,15 @@ keychain); the rest in the main thread.
   here to: ...", Take me back / Not now), no dim, keyboard not taken, and the
   full panel if still there 20 s later; the headline rotates between three
   wordings per kind (a tooltip says so); focus words never rotate.
+- **The 8-bit copy published** (the user's Hugging Face account, uploaded by
+  the user: the permission classifier blocked me): RoderickQiu/kev-4b-mlx-8bit
+  with head.pt, tokenizer, provenance.json (revisions, method, SHA-256),
+  LICENSE, a model card (credits, changes, quality). kevserve fetches it when
+  the provenance and hash match (QUALM_PREBUILT; localmodel.PREBUILT). A real
+  first start from an empty cache: 191 s (download), a 4.8 GB peak, never
+  bf16; the same answers as the running server (0.0 on 15 x 10). This copy
+  equals quantizing at load exactly (0.0 on 119 trial pages) and is within
+  0.012-0.038 of bf16.
 - **The managed server, live**: the user's hand-started server stopped; the
   app started its own from kev-env: the first start (building the 8-bit
   copy, 4.2 GB) took 100 s and peaked at 16 GB; a later start from the copy
@@ -796,9 +805,12 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    the wording of a rule is the problem: `rules set ID what="..."`, then
    `rules test ID` and `rules tune`. Not run yet: the CLI loop on a rule
    someone new writes from scratch, with real answers.
-3. **Publish Kev-4B's 8-bit weights** (with Jared's say), so a first start
-   downloads ~4.5 GB instead of 9 and never loads bf16; and ask whether
-   PyTorch can be optional for MLX serving (it's most of the 1 GB runtime).
+3. **Tell Jared about the 8-bit copy** (published 2026-09-23 as
+   RoderickQiu/kev-4b-mlx-8bit, Apache-2.0, credited, marked unofficial):
+   he might host it officially; and ask whether PyTorch can be optional for
+   MLX serving (most of the 1 GB runtime). If Kev's checkpoint changes, a
+   new copy must be published (Qualm checks provenance and builds locally
+   meanwhile).
 4. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
    your own labels:
    `qualm export --lang en --labels data/labels.jsonl --out train.jsonl`, then

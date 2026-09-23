@@ -460,7 +460,7 @@ def cmd_setup(args) -> None:
         print("  System Settings > Privacy & Security > Accessibility: turn on Qualm (or, from a terminal, "
               "your terminal app). `qualm setup --permission` opens it.")
     if backend == "kev":
-        print("\nThe app starts the local model itself. The first start downloads about 9 GB and saves an 8-bit copy "
+        print("\nThe app starts the local model itself. The first start downloads about 5 GB "
               "(a few minutes); `qualm serve` does it now, in this terminal.")
     print("\nDone. Start it: open Qualm.app, or `qualm app`." if not login else "\nDone. Qualm is starting.")
 

@@ -116,7 +116,7 @@ flowchart LR
 asks four things:
 
 1. **Where the model runs.** *On this Mac* (Kev-4B, 8-bit): private, about 1 s per check; it uses 6–7 GB of
-   memory while it runs, and the first start downloads about 9 GB, once. *Hosted* (TypeSafe's Jev): about
+   memory while it runs, and the first start downloads about 5 GB, once. *Hosted* (TypeSafe's Jev): about
    0.2 s and almost no memory, but the text of each new screen is sent to TypeSafe; it needs an API key,
    which is kept in your keychain. Setup recommends one from what your Mac has free right now, counting
    what's swapped out.

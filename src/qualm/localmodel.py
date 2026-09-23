@@ -2,9 +2,9 @@
 
     runtime    ~/Library/Application Support/Qualm/kev-env: Python with Kev,
                PyTorch and MLX (~1 GB), installed with uv on first use
-    weights    Kev-4B's adapter and its Qwen3.5-4B base from Hugging Face
-               (~9 GB, once), then an 8-bit copy in models/ (4.2 GB), so
-               later starts never load the 9 GB bf16 weights
+    weights    Kev-4B's adapter (0.3 GB) and its 8-bit copy, merged and
+               quantized, from Hugging Face (PREBUILT, 4.5 GB), into models/;
+               without it, the 8.7 GB bf16 base, merged and quantized here
     server     started and stopped by the app (ManagedServer), or in a
                terminal with `qualm serve`; http://127.0.0.1:8009
 
@@ -33,9 +33,13 @@ KEV_REPO = "https://github.com/jaredpalmer/kev"
 KEV_COMMIT = "08ab0b87d27cb5577a3b371ad7ed4e4686b0502b"  # tested with Qualm; bump deliberately
 KEV_SPEC = f"kev[serve] @ git+{KEV_REPO}@{KEV_COMMIT}"
 MODEL, PORT, BITS = "jaredpalmer/kev-4b", 8009, 8
+# Kev-4B already merged and quantized to 8 bits (docs/MODELS.md): the first
+# start downloads 4.5 GB and loads in seconds, instead of fetching the 9 GB
+# base and building it (100 s, a 16 GB peak). Used only if it matches.
+PREBUILT = "RoderickQiu/kev-4b-mlx-8bit"
 NEED_GB = (6.1, 7.1)  # the 8-bit server while answering, measured on the trial pages
 HEADROOM_GB = 2.0  # so opening a browser tab doesn't push it into swap
-DOWNLOAD_GB, DISK_GB = 9.0, 15.0  # first start: weights to fetch; everything on disk after
+DOWNLOAD_GB, DISK_GB = 5.0, 6.0  # first start: the adapter + the 8-bit copy; runtime + weights on disk
 
 
 def apple_silicon() -> bool:
@@ -142,6 +146,8 @@ def server_command(model: str = MODEL, port: int = PORT, bits: int = BITS,
     script = Path(__file__).resolve().parent / "kevserve.py"
     env = {"KEV_DTYPE": "bf16", "MLX_CACHE_GB": "1", "QUALM_MODEL_CACHE": str(paths.models_dir()),
            "HF_HUB_DISABLE_PROGRESS_BARS": "1"}
+    if model == MODEL and bits == BITS:
+        env["QUALM_PREBUILT"] = os.environ.get("QUALM_PREBUILT", PREBUILT)
     if bits in (4, 8):
         env["KEV_QUANT_BITS"] = str(bits)
     tail = ["--run", model, "--port", str(port)]
@@ -193,7 +199,7 @@ class ManagedServer:
             paths.LOGS.mkdir(parents=True, exist_ok=True)
             log = (paths.LOGS / "kev.log").open("a", encoding="utf-8")
             first = not any(paths.models_dir().glob(f"*q{BITS}g*/model.safetensors"))
-            self.say(f"loading the model (first time: downloading ~{DOWNLOAD_GB:.0f} GB, then saving 8-bit weights)…"
+            self.say(f"loading the model (first time: downloading ~{DOWNLOAD_GB:.0f} GB)…"
                      if first else "loading the model…")
             inherited = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
             self.proc = subprocess.Popen(argv, cwd=cwd, env={**inherited, **env}, stdout=log, stderr=subprocess.STDOUT)

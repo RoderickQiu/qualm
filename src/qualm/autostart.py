@@ -38,7 +38,7 @@ def serve(kev_dir: Path | None = None, model: str = localmodel.MODEL, port: int 
     argv, env, cwd = localmodel.server_command(model, port, bits, kev_dir)
     first = not any(paths.models_dir().glob(f"*q{bits}g*/model.safetensors"))
     print(f"Kev server: {model}, {'bf16' if bits == 16 else f'{bits}-bit'}, http://127.0.0.1:{port}"
-          + (f" (first start: downloads ~{localmodel.DOWNLOAD_GB:.0f} GB and saves the {bits}-bit weights; a few minutes)"
+          + (f" (first start: downloads ~{localmodel.DOWNLOAD_GB:.0f} GB; a few minutes)"
              if first and bits != 16 else ""), flush=True)
     os.chdir(cwd)
     inherited = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}  # Qualm's venv, not Kev's
