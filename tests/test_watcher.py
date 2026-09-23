@@ -61,3 +61,57 @@ def test_new_text_on_the_same_screen_is_asked_at_most_every_recheck(monkeypatch,
 def test_a_failed_ask_is_retried(monkeypatch, tmp_path):
     asked = run(monkeypatch, tmp_path, [page("a")] * 40, fail_first=True)
     assert asked[:2] == [1.0, 31.0]
+
+
+def judged(monkeypatch, tmp_path, screens):
+    """Like run(), but through the real _judge with a fake model whose answer
+    hits the shortvideo rule. Returns (model calls, events)."""
+    from seenot_desktop.decide import Reading, RuleVerdict
+    from seenot_desktop.rules import Rule
+
+    calls, events = [], []
+
+    def fake_ask(client, state, rules, lang, allow):
+        calls.append(state["url"])
+        return Reading(0.0, "single_item", {"single_item": 0.9}, "entertain", {"entertain": 0.9},
+                       [RuleVerdict("shortvideo", "violates", 0.9, {})], 100.0)
+
+    clock = {"t": 0.0}
+    feed = iter(screens)
+    front = types.SimpleNamespace(processIdentifier=lambda: -1)
+    workspace = types.SimpleNamespace(frontmostApplication=lambda: front)
+    monkeypatch.setattr(w, "NSWorkspace", types.SimpleNamespace(sharedWorkspace=lambda: workspace))
+    monkeypatch.setattr(w, "make_client", lambda: None)
+    monkeypatch.setattr(w, "ask", fake_ask)
+    monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(w.time, "sleep", lambda _: clock.__setitem__("t", clock["t"] + 1.0))
+    policy = Policy(Settings(), [Rule("shortvideo", "deny", "short videos", threshold=0.5)], tmp_path)
+    watcher = w.Watcher(policy, events.append, interval=0, debounce=0.5, recheck=30, shots=False)
+
+    def capture(skip=()):
+        try:
+            return next(feed)
+        except StopIteration:
+            watcher.stop.set()
+            return screens[-1]
+
+    monkeypatch.setattr(w, "capture", capture)
+    watcher.run()
+    return calls, events
+
+
+def test_a_popup_waits_until_you_have_stayed(monkeypatch, tmp_path):
+    calls, events = judged(monkeypatch, tmp_path, [page("a")] * 10)
+    assert [d.action for d in events[0].decisions] == ["intervene"]
+
+
+def test_a_popup_is_dropped_if_you_leave_first(monkeypatch, tmp_path):
+    calls, events = judged(monkeypatch, tmp_path, [page("a")] * 2 + [page("b")] * 10)
+    first = events[0]
+    assert first.screen.url == "a" and first.decisions[0].action == "skip" and "left within" in first.decisions[0].reason
+    assert events[1].screen.url == "b" and events[1].decisions[0].action == "intervene"
+
+
+def test_going_back_to_a_page_uses_the_cache(monkeypatch, tmp_path):
+    calls, events = judged(monkeypatch, tmp_path, [page("a")] * 6 + [page("b")] * 6 + [page("a")] * 6)
+    assert calls == ["a", "b"] and events[-1].reading.cached

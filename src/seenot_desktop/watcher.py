@@ -6,11 +6,14 @@ and intervention panel). Runs on its own thread in the app.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -18,8 +21,11 @@ from AppKit import NSRunningApplication, NSWorkspace
 
 from .decide import Reading, ask, make_client
 from .policy import Decision, Policy
-from .rules import load_config
+from .rules import build_questions, load_config
 from .state import DEFAULT_CHAR_BUDGET, ScreenState, capture
+
+CACHE_SIZE = 1000  # answers kept, keyed by exactly what the model reads and is asked
+DWELL_S = 4.0  # a pop-up waits until you've been on the page this long
 
 BROWSERS = {
     "com.google.Chrome", "com.apple.Safari", "company.thebrowser.Browser", "com.microsoft.edgemac",
@@ -39,7 +45,7 @@ class Event:
 def describe(ev: Event) -> str:
     """One line per judgement, for logs."""
     r = ev.reading
-    seen = f"page={r.page_kind} purpose={r.purpose} {r.latency_ms:.0f} ms" if r else "no model call"
+    seen = f"page={r.page_kind} purpose={r.purpose} " + ("cached" if r.cached else f"{r.latency_ms:.0f} ms") if r else "no model call"
     acts = "; ".join(f"{d.action} {d.rule} ({d.reason})".replace(" ()", "") for d in ev.decisions) or "nothing"
     hits = ""
     if r:
@@ -70,6 +76,10 @@ class Watcher:
         self._exc_mtime = self._exc_path.stat().st_mtime if self._exc_path.exists() else 0.0
         self.shots = shots
         self._shot_sig, self._shot = None, ""
+        self._cache: OrderedDict[str, Reading] = OrderedDict()
+        self._pending: dict | None = None  # a judgement with a pop-up, waiting out DWELL_S
+        self._changed_at = 0.0  # when the current screen appeared (monotonic)
+        self.dwell = DWELL_S
 
     def _reload_rules(self) -> None:
         """Edits to rules.toml and exceptions (by hand or from the review page) apply without a restart."""
@@ -125,6 +135,8 @@ class Watcher:
             s = capture(skip=self.policy.settings.no_monitor)
             if s.signature() != last_sig:
                 last_sig, changed_at = s.signature(), now
+                self._changed_at = now
+            self._settle_pending(s, now)
             # A new screen (app, title or URL): ask once it has been stable for
             # the debounce window. The same screen whose text changed (a feed
             # scrolled, the next video loaded in place): ask again, at most once
@@ -139,8 +151,27 @@ class Watcher:
                     judged_state = None  # the model didn't answer: ask again next time
             time.sleep(self.interval)
 
+    def _ask(self, client, state: dict) -> Reading:
+        """The model's answer, or the cached one if it already read exactly
+        this text with exactly these questions (tab switches, going back)."""
+        settings = self.policy.settings
+        rules = self.policy.rules
+        questions = build_questions(rules, settings.lang, settings.allow)
+        key = hashlib.sha1(json.dumps(
+            [state, {k: q.model_dump(mode="json", exclude_none=True) for k, q in questions.items()}],
+            sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return replace(self._cache[key], latency_ms=0.0, cached=True)
+        reading = ask(client, state, rules, settings.lang, settings.allow)
+        self._cache[key] = reading
+        while len(self._cache) > CACHE_SIZE:
+            self._cache.popitem(last=False)
+        return reading
+
     def _judge(self, client, s: ScreenState) -> bool:
         """Judge one screen. False if the model couldn't be asked."""
+        self._drop_pending()  # a new judgement replaces one still waiting
         state = s.to_state(self.budget)
         pre = self.policy.precheck(s.bundle_id, s.url)
         if pre is not None:
@@ -151,24 +182,55 @@ class Watcher:
             return True
         shot = self._screenshot(s)
         try:
-            reading = ask(client, state, self.policy.rules, self.policy.settings.lang, self.policy.settings.allow)
+            reading = self._ask(client, state)
         except Exception as e:  # server down, timeout: say so, keep watching
             self.on_status(f"model unreachable: {type(e).__name__}")
             time.sleep(5)
             return False
         self.on_status("watching")
         decisions = self.policy.decide(state, reading, s.bundle_id)
-        for d in decisions:
-            if d.action == "intervene":
-                self.policy.log_intervention(d, s.as_record(), reading)
         if reading.sensitive >= 0.5 and shot:
             # Taken before the model said it was sensitive: don't keep it.
             (self.policy.data_dir / "shots" / shot).unlink(missing_ok=True)
             self._shot_sig, shot = None, ""
         ev = Event(s, state, reading, decisions)
-        ev.id = self.policy.log_judgement(s.as_record(), reading, decisions, state=state, shot=shot)
-        self.on_event(ev)
+        pending = {"ev": ev, "shot": shot, "sig": s.signature(), "due": self._changed_at + self.dwell}
+        if any(d.action == "intervene" for d in decisions) and time.monotonic() < pending["due"]:
+            # Don't pop up on a page you're passing through, or one still
+            # loading: wait until you've stayed DWELL_S, then show it.
+            self._pending = pending
+        else:
+            self._finish(pending, shown=True)
         return True
+
+    def _settle_pending(self, s: ScreenState, now: float) -> None:
+        p = self._pending
+        if p is None:
+            return
+        if s.signature() != p["sig"]:
+            self._pending = None
+            self._finish(p, shown=False)
+        elif now >= p["due"]:
+            self._pending = None
+            self._finish(p, shown=True)
+
+    def _drop_pending(self) -> None:
+        if self._pending is not None:
+            p, self._pending = self._pending, None
+            self._finish(p, shown=False)
+
+    def _finish(self, p: dict, shown: bool) -> None:
+        """Log the judgement and hand it on; a pop-up you left before it was
+        due is logged as not shown."""
+        ev = p["ev"]
+        if not shown:
+            ev.decisions = [Decision("skip", d.rule, f"left within {self.dwell:g} s") if d.action == "intervene" else d
+                            for d in ev.decisions]
+        for d in ev.decisions:
+            if d.action == "intervene":
+                self.policy.log_intervention(d, ev.screen.as_record(), ev.reading)
+        ev.id = self.policy.log_judgement(ev.screen.as_record(), ev.reading, ev.decisions, state=ev.state, shot=p["shot"])
+        self.on_event(ev)
 
 
 def go_back(bundle_id: str) -> None:

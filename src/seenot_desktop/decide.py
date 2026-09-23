@@ -50,6 +50,7 @@ class Reading:
     input_tokens: int | None = None
     raw: dict = field(default_factory=dict)
     allow: dict[str, float] = field(default_factory=dict)  # [[allow]] class id -> P(the page is that)
+    cached: bool = False  # answered from the watcher's cache, not the model
 
     def verdict(self, rule_id: str) -> RuleVerdict | None:
         return next((v for v in self.rules if v.rule_id == rule_id), None)

@@ -349,6 +349,7 @@ class Policy:
                 "p_hit": {v.rule_id: round(v.p_hit, 3) for v in reading.rules},
                 "answers": {v.rule_id: {k: round(x, 3) for k, x in v.probabilities.items()} for v in reading.rules},
                 "latency_ms": round(reading.latency_ms),
+                "cached": reading.cached,
                 "allow": {k: round(v, 3) for k, v in reading.allow.items()},
             }
         self.data_dir.mkdir(parents=True, exist_ok=True)
