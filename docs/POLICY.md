@@ -36,9 +36,11 @@ These are the things that should be stopped, whatever site they appear on:
    you. This is judged on the page itself, unlike content rules.
 3. **Entertainment livestreams.** There's no end and no natural stopping point.
    A live lecture or launch event is exempt.
-4. **Compulsive checking.** Stock quotes, a social profile, an inbox. One
-   check can be a decision; the twelfth is a habit. This is a visit limit, not
-   a ban.
+4. **Compulsive checking.** A social profile, an inbox, stock quotes. One
+   check can be a decision; the twelfth is a habit. This is a visit limit
+   (`visits_per_day`), not a ban. The shipped rules don't include stocks any
+   more: it's a niche habit, and in real use it fired on shopping chats and on
+   SeeNot's own review page. Add it back if it's yours.
 5. **Unbounded entertainment video and social browsing.** Not bad in itself.
    These get a daily time budget, not a block.
 
@@ -50,10 +52,10 @@ These are the things that should be stopped, whatever site they appear on:
 - **Search results.** Searching is the intentional act; the page after it
   is where the policy looks.
 - **Learning material**: lectures, tutorials, courses, documentation, papers,
-  on any site. Each rule can opt out of this exemption; `stocks` does,
+  on any site. Each rule can opt out of this exemption; the old stocks rule did,
   because "learning about trading" is how that habit dresses up.
 - **Primary sources that happen to sit in a bad category**: filings,
-  prospectuses and earnings reports (the stocks rule's exception), official
+  prospectuses and earnings reports (the stocks rule's exception, when it existed), official
   announcements.
 - **Sensitive pages**: logins, payments, bank pages. They are not judged at
   all, and not logged.
@@ -121,7 +123,7 @@ It also learns from you over time:
 4. With a few hundred of your own labels, fine-tune Kev on them
    (`seenot-desktop export`; see HANDOFF.md).
 
-Who you are changes the defaults a lot. A trader needs `stocks` off, a video
+Who you are changes the defaults a lot. A trader would never add a stocks rule, a video
 creator needs `shortvideo` off during work hours, and a student may want
 `videos` at 0 minutes during exam weeks. The rules file is where that goes.
 There's deliberately no built-in site list to fight against.

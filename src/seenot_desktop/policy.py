@@ -24,10 +24,10 @@ from .decide import Reading
 from .rules import Rule, Settings
 
 LEARN_MIN = 0.6  # P(purpose = learn) needed for the learning exemption
-WORK_MIN = 0.6  # P(page_kind = work) needed to treat the screen as a work tool
 MAX_TICK_S = 5.0  # longer gaps (sleep, a stalled model call) don't count as usage
 MAX_EXCEPTIONS = 10  # per rule; the newest "Not this one" titles the model reads
 OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge SeeNot itself
+OWN_TITLES = ("SeeNot review",)  # the same page shown elsewhere (Cursor's browser: a vscode-file:// URL)
 
 
 def host_of(url: str) -> str:
@@ -141,14 +141,14 @@ class Policy:
 
     # -- decisions -----------------------------------------------------------
 
-    def precheck(self, bundle_id: str, url: str) -> Decision | None:
+    def precheck(self, bundle_id: str, url: str, title: str = "") -> Decision | None:
         """Decisions that need no model call. None means: ask the model."""
         with self.lock:
             if time.time() < self.paused_until:
                 d = Decision("skip", reason="paused")
             elif bundle_id in self.settings.no_monitor:
                 d = Decision("skip", reason="app not monitored")
-            elif url.startswith(OWN_URLS):
+            elif url.startswith(OWN_URLS) or title.startswith(OWN_TITLES):
                 d = Decision("skip", reason="SeeNot's own page")
             elif url and any(re.search(p, url) for p in self.settings.allow_urls):
                 d = Decision("allow", reason="allowed URL")
@@ -187,7 +187,9 @@ class Policy:
             thin = not url and not state.get("headings") and not state.get("visible_text")
             # A kind of page you said is never flagged ([[allow]]: shopping, ...).
             allowed_as = next((c.id for c in self.settings.allow if reading.allow.get(c.id, 0) >= c.threshold), None)
-            work = reading.page_kind == "work" and reading.page_probs.get("work", 0) >= WORK_MIN
+            # The model's best guess is a work tool (editor, terminal, docs): leave
+            # it alone. Code and notes are full of words any rule can match.
+            work = reading.page_kind == "work"
             learning = reading.page_kind != "feed" and reading.purpose_probs.get("learn", 0) >= LEARN_MIN
             out, counted, now = [], set(), time.time()
             for rule in self._base_rules:

@@ -118,17 +118,3 @@ threshold = 0.3  # trials: precision 0.90, recall 0.95; held-out sites 0.90 / 0.
 minutes_per_day = 20
 # The Reddit thread Google found for your error message doesn't count.
 allow_intentional = true
-
-[[rules]]
-id = "stocks"
-kind = "time_cap"
-description = "看股票行情、K线和股吧讨论"
-description_en = "stock quotes, candlestick charts and stock-trading discussion"
-threshold = 0.3  # real chats about shopping scored up to 0.27; trial stock pages mostly 0.27-0.69
-minutes_per_day = 10
-# One check can be a decision; the twelfth is a habit.
-visits_per_day = 3
-# Stock forums read as discussion, not quotes; the model scores them low.
-patterns = ["guba\\.eastmoney\\.com", "reddit\\.com/r/(wallstreetbets|stocks|investing|StockMarket)", "stocktwits\\.com", "xueqiu\\.com"]
-exceptions = ["company filings, annual reports and earnings reports"]
-# allow_learning stays off: "learning about trading" is how this habit dresses up.

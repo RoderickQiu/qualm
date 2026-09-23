@@ -63,7 +63,14 @@ research on digital self-control tools:
 - **`install`**: LaunchAgents for the model server and the app, restarted on crash.
   Not run yet: under launchd, macOS asks for Accessibility and Screen
   Recording for the Python binary itself.
-- **Never judge SeeNot**: a running copy had judged a demo panel.
+- **Never judge SeeNot**: a running copy had judged a demo panel, and the review
+  page opened inside Cursor (a `vscode-file://` URL) had popped up as stocks.
+  SeeNot now skips its own panel and any window titled "SeeNot review".
+- **Work tools are left alone** whenever the model's best guess is "work", not
+  only when it's 60% sure: code and notes are full of words any rule matches.
+- **Stocks removed from the shipped rules**: a niche habit that, in real use,
+  fired on shopping chats and on SeeNot's own review page. The trial numbers
+  below still include it.
 - **[[allow]] classes, never here, thin screens, Chrome capture**: see below.
 
 ### MVP (built after the trials)

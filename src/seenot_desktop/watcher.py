@@ -189,7 +189,7 @@ class Watcher:
         """Judge one screen. False if the model couldn't be asked."""
         self._drop_pending()  # a new judgement replaces one still waiting
         state = s.to_state(self.budget)
-        pre = self.policy.precheck(s.bundle_id, s.url)
+        pre = self.policy.precheck(s.bundle_id, s.url, s.window_title)
         if pre is not None:
             ev = Event(s, state, None, [pre])
             shot = self._screenshot(s) if pre.action != "skip" else ""

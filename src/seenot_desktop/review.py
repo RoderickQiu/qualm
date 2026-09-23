@@ -462,7 +462,9 @@ function ruleName(r) {
   return cut.length > 60 ? cut.slice(0, 57) + "…" : cut;
 }
 function outcome(j) {
-  const a = j.decisions.map(d => d.action);
+  // Decisions for a rule you've since removed don't count.
+  const ids = new Set(D.rules.map(r => r.id));
+  const a = j.decisions.filter(d => !d.rule || ids.has(d.rule)).map(d => d.action);
   for (const k of ["intervene", "allow", "count", "skip"]) if (a.includes(k)) return k;
   return "none";
 }

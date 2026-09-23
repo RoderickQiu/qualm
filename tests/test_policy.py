@@ -132,7 +132,7 @@ def test_interventions_and_responses_are_logged(policy, tmp_path):
 
 def test_example_rules_load():
     settings, rules = load_config("rules.example.toml")
-    assert settings.lang == "en" and {r.id for r in rules} >= {"shortvideo", "feeds", "stocks"}
+    assert settings.lang == "en" and {r.id for r in rules} >= {"shortvideo", "feeds", "social"}
     assert all(0 < r.threshold < 1 for r in rules)
 
 
@@ -186,7 +186,7 @@ def test_review_answers_and_tuning(tmp_path):
     rules.write_text(open("rules.example.toml", encoding="utf-8").read(), encoding="utf-8")
     set_threshold(rules, "social", 0.35)
     assert next(r for r in load_config(rules)[1] if r.id == "social").threshold == 0.35
-    assert next(r for r in load_config(rules)[1] if r.id == "stocks").threshold == 0.3
+    assert next(r for r in load_config(rules)[1] if r.id == "videos").threshold == 0.25
 
 
 def test_a_screen_with_nothing_but_its_name_does_not_pop_up(policy):
@@ -241,3 +241,13 @@ def test_time_away_does_not_count(policy):
     policy.tick(5.0, away=True)
     policy.tick(10.0)
     assert policy.usage.get("social")[0] == 5.0
+
+
+def test_seenot_review_page_is_never_judged_wherever_it_is_open(policy):
+    assert policy.precheck("com.todesktop.230313mzl4w4u92", "vscode-file://x", "SeeNot review — seenot-desktop").action == "skip"
+
+
+def test_a_work_tool_is_left_alone_even_when_unsure(policy):
+    r = reading(page="work", purpose="task", shortvideo=0.9)
+    r.page_probs = {"work": 0.4, "single_item": 0.3}
+    assert see(policy, "vscode-file://x", r) == [("allow", "shortvideo")]
