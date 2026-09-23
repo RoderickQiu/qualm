@@ -85,7 +85,7 @@ def cmd_watch(args) -> None:
             print(f"    -> {d.action} {d.rule} ({d.reason})", flush=True)
 
     Watcher(policy, on_event, lambda s: print(f"  [{s}]", flush=True), budget=args.budget,
-            heartbeat=args.heartbeat, rules_path=args.rules).run()
+            recheck=args.recheck, rules_path=args.rules).run()
 
 
 def cmd_app(args) -> None:
@@ -369,7 +369,7 @@ def main() -> None:
     sp.add_argument("--delay", type=float, default=0.0, help="seconds to switch windows first")
 
     sp = add("watch", cmd_watch)
-    sp.add_argument("--heartbeat", type=float, default=30.0)
+    sp.add_argument("--recheck", type=float, default=30.0, help="seconds between re-asks when only a page's text changes")
     sp.add_argument("--data", default=DEFAULT_DATA)
 
     sp = add("app", cmd_app)

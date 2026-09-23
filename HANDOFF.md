@@ -60,7 +60,8 @@ Verified working on this Mac (M5 Pro, 24 GB, macOS 27): `probe`, `ask`, `watch`,
 Not built:
 - OCR fallback for apps whose text isn't in the Accessibility tree (video
   players, canvases).
-- Event-driven triggers (currently a 0.5 s poll on the window signature).
+- Event-driven triggers (currently a 0.5 s poll of the front window; the model is
+  asked only when the screen changes, or its text changes, at most every 30 s).
 - Idle detection: time caps keep counting while you're away from the keyboard.
 - A signed .app bundle or launch at login (it runs from the terminal).
 

@@ -57,12 +57,12 @@ class Watcher:
         budget: int = DEFAULT_CHAR_BUDGET,
         interval: float = 0.5,
         debounce: float = 0.5,
-        heartbeat: float = 30.0,
+        recheck: float = 30.0,
         rules_path: str | None = None,
         shots: bool = True,
     ):
         self.policy, self.on_event, self.on_status = policy, on_event, on_status
-        self.budget, self.interval, self.debounce, self.heartbeat = budget, interval, debounce, heartbeat
+        self.budget, self.interval, self.debounce, self.recheck = budget, interval, debounce, recheck
         self.stop = threading.Event()
         self.rules_path = Path(rules_path) if rules_path else None
         self._rules_mtime = self.rules_path.stat().st_mtime if self.rules_path else 0.0
@@ -111,6 +111,7 @@ class Watcher:
     def run(self) -> None:
         client = make_client()
         last_sig, changed_at, last_asked = None, 0.0, float("-inf")
+        judged_state = None  # what the model read last time
         me = os.getpid()
         while not self.stop.is_set():
             now = time.monotonic()
@@ -124,15 +125,22 @@ class Watcher:
             s = capture(skip=self.policy.settings.no_monitor)
             if s.signature() != last_sig:
                 last_sig, changed_at = s.signature(), now
-            # Ask once the screen has been stable for the debounce window, or on
-            # the heartbeat if nothing changed (a long video, a long read).
-            settled = now - changed_at >= self.debounce and changed_at > last_asked
-            if settled or now - last_asked >= self.heartbeat:
-                last_asked = now
-                self._judge(client, s)
+            # A new screen (app, title or URL): ask once it has been stable for
+            # the debounce window. The same screen whose text changed (a feed
+            # scrolled, the next video loaded in place): ask again, at most once
+            # per recheck. Nothing changed: don't ask; the answer would be the
+            # same. Time caps keep counting from the last answer meanwhile.
+            new_screen = now - changed_at >= self.debounce and changed_at > last_asked
+            state = s.to_state(self.budget)
+            new_text = changed_at <= last_asked and state != judged_state and now - last_asked >= self.recheck
+            if new_screen or new_text:
+                last_asked, judged_state = now, state
+                if not self._judge(client, s):
+                    judged_state = None  # the model didn't answer: ask again next time
             time.sleep(self.interval)
 
-    def _judge(self, client, s: ScreenState) -> None:
+    def _judge(self, client, s: ScreenState) -> bool:
+        """Judge one screen. False if the model couldn't be asked."""
         state = s.to_state(self.budget)
         pre = self.policy.precheck(s.bundle_id, s.url)
         if pre is not None:
@@ -140,14 +148,14 @@ class Watcher:
             shot = self._screenshot(s) if pre.action != "skip" else ""
             ev.id = self.policy.log_judgement(s.as_record(), None, [pre], shot=shot)
             self.on_event(ev)
-            return
+            return True
         shot = self._screenshot(s)
         try:
             reading = ask(client, state, self.policy.rules, self.policy.settings.lang, self.policy.settings.allow)
         except Exception as e:  # server down, timeout: say so, keep watching
             self.on_status(f"model unreachable: {type(e).__name__}")
             time.sleep(5)
-            return
+            return False
         self.on_status("watching")
         decisions = self.policy.decide(state, reading, s.bundle_id)
         for d in decisions:
@@ -160,6 +168,7 @@ class Watcher:
         ev = Event(s, state, reading, decisions)
         ev.id = self.policy.log_judgement(s.as_record(), reading, decisions, state=state, shot=shot)
         self.on_event(ev)
+        return True
 
 
 def go_back(bundle_id: str) -> None:
