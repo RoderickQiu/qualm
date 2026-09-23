@@ -50,6 +50,23 @@ description = "网店：商品页、商品列表、购物车或结算页"
 description_en = "an online store: a product page, product listing, shopping cart or checkout"
 threshold = 0.35  # stores scored 0.42-0.92, every other trial page (stock pages included) 0.18 or less
 
+[[allow]]
+id = "music"
+description = "音乐播放器或音乐网站：歌曲、歌单、专辑、电台"
+description_en = "a music player or music streaming site: songs, playlists, albums, radio"
+threshold = 0.5  # music players scored 0.96-0.97, every trial page (YouTube, Bilibili, Douyin included) 0.16 or less
+# Known music sites and apps: allowed without asking the model.
+patterns = [
+    "^https://music\\.youtube\\.com",
+    "^https://open\\.spotify\\.com",
+    "^https://music\\.apple\\.com",
+    "^https://music\\.163\\.com",
+    "^https://y\\.qq\\.com",
+    "^https://www\\.kugou\\.com",
+    "^https://soundcloud\\.com",
+]
+apps = ["com.netease.163music", "com.spotify.client", "com.apple.Music", "com.tencent.QQMusicMac", "com.kugou.mac"]
+
 [[rules]]
 id = "shortvideo"
 kind = "deny"

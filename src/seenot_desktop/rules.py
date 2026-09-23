@@ -72,9 +72,14 @@ class AllowClass:
     description: str
     description_en: str = ""
     threshold: float = 0.5  # P(yes) at or above this: the page is this class
+    patterns: tuple[str, ...] = ()  # URL regexes known to be this class: allowed without the model
+    apps: tuple[str, ...] = ()  # bundle ids known to be this class
 
     def text(self, lang: str) -> str:
         return self.description_en if lang == "en" and self.description_en else self.description
+
+    def matches(self, bundle_id: str, url: str) -> bool:
+        return bundle_id in self.apps or bool(url) and any(re.search(p, url) for p in self.patterns)
 
 
 @dataclass
@@ -99,7 +104,8 @@ def load_config(path: str | Path) -> tuple[Settings, list[Rule]]:
         no_monitor=tuple(s.get("no_monitor", ())),
         allow_urls=tuple(s.get("allow_urls", ())),
         budgets=bool(s.get("budgets", True)),
-        allow=tuple(AllowClass(**{**a, "id": str(a["id"])}) for a in data.get("allow", ())),
+        allow=tuple(AllowClass(**{**a, "id": str(a["id"]), "patterns": tuple(a.get("patterns", ())),
+                                   "apps": tuple(a.get("apps", ()))}) for a in data.get("allow", ())),
     )
     rules = []
     for r in data["rules"]:

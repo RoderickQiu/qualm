@@ -154,6 +154,8 @@ class Policy:
                 d = Decision("allow", reason="allowed URL")
             elif bundle_id in self._never_apps or host_of(url) in self._never_hosts:
                 d = Decision("allow", reason="you said never here")
+            elif (c := next((c for c in self.settings.allow if c.matches(bundle_id, url)), None)) is not None:
+                d = Decision("allow", reason=f"{c.id} is never flagged")
             else:
                 return None
             self.counting = set()

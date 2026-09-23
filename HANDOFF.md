@@ -172,7 +172,11 @@ Never flagged: `[[allow]]` classes in rules.toml are kinds of page described
 in words (shipped: shopping, "an online store: a product page, listing, cart
 or checkout"); if the model says a page is one, no rule fires there except a
 URL pattern. On the trial pages plus real CMU store pages, stores scored
-0.42-0.92 and every other page 0.18 or less, hence threshold 0.35.
+0.42-0.92 and every other page 0.18 or less, hence threshold 0.35. Music
+ships as a second class (a player scored 0.96-0.97; every trial page,
+YouTube and Douyin included, 0.16 or less), with known music sites and apps
+(YouTube Music, Spotify, NetEase, QQ Music…) listed under `patterns` / `apps`
+so they're allowed without a model call.
 
 The stocks threshold went from 0.13 to 0.3 after real use: WhatsApp chats
 about shopping scored up to 0.27, while trial stock pages mostly score

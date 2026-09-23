@@ -251,3 +251,19 @@ def test_a_work_tool_is_left_alone_even_when_unsure(policy):
     r = reading(page="work", purpose="task", shortvideo=0.9)
     r.page_probs = {"work": 0.4, "single_item": 0.3}
     assert see(policy, "vscode-file://x", r) == [("allow", "shortvideo")]
+
+
+def test_a_known_music_site_or_app_is_allowed_without_the_model(tmp_path):
+    from seenot_desktop.rules import AllowClass
+
+    music = AllowClass("music", "a music player", patterns=(r"^https://music\.youtube\.com",), apps=("com.netease.163music",))
+    p = Policy(Settings(allow=(music,)), RULES, tmp_path)
+    assert p.precheck("com.google.Chrome", "https://music.youtube.com/").reason == "music is never flagged"
+    assert p.precheck("com.netease.163music", "").reason == "music is never flagged"
+    assert p.precheck("com.google.Chrome", "https://www.youtube.com/") is None
+
+
+def test_example_allow_classes_load():
+    settings, _ = load_config("rules.example.toml")
+    ids = {c.id for c in settings.allow}
+    assert ids == {"shopping", "music"} and any(c.matches("", "https://music.youtube.com/x") for c in settings.allow)
