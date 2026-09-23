@@ -129,6 +129,19 @@ pages), `reviews.jsonl` (your answers on the review page),
 `decisions.jsonl` (interventions and your answers), `exceptions.jsonl` ("Not
 this one") and `usage.json` (today's budgets).
 
+Never flagged: `[[allow]]` classes in rules.toml are kinds of page described
+in words (shipped: shopping, "an online store: a product page, listing, cart
+or checkout"); if the model says a page is one, no rule fires there except a
+URL pattern. On the trial pages plus real CMU store pages, stores scored
+0.42-0.92 and every other page 0.18 or less, hence threshold 0.35.
+
+The stocks threshold went from 0.13 to 0.3 after real use: WhatsApp chats
+about shopping scored up to 0.27, while trial stock pages mostly score
+0.27-0.69. Stock forums (Guba, r/wallstreetbets, Stocktwits, Xueqiu), which
+the model scores low, are URL patterns instead. Whole policy on the trial
+set: precision 0.96, recall 1.00 (was 0.96 / 0.92). The pop-up's
+"Never in <app>" / "Never on <site>" does the same for one app or site.
+
 Testing mode: `[settings] budgets = false` (the current default) makes every
 rule hit pop up at once, time caps included. Set it to true for real budgets.
 
@@ -347,6 +360,10 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
   matters for `experiments/collect.py`, which needs the Safari window visible
   (not parked in the Stage Manager strip). The watcher reads the front window,
   which is always rendered.
+- **Chrome's address-bar dropdown is a web area too.** `capture()` used to
+  take it for the page (URL `chrome://omnibox-popup...`), so the model saw a
+  title and nothing else; that's how a CMU store page scored 0.15 for stocks.
+  Chrome's internal URLs are now skipped.
 - **Harvested labels cover one rule each** (the rule that fired), and only hits
   the panel showed. Misses need `label`.
 

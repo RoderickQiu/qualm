@@ -66,7 +66,7 @@ def cmd_ask(args) -> None:
     time.sleep(args.delay)
     state = capture(skip=settings.no_monitor).to_state(args.budget)
     print(json.dumps(state, ensure_ascii=False))
-    _print_reading(ask(make_client(), state, rules, settings.lang))
+    _print_reading(ask(make_client(), state, rules, settings.lang, settings.allow))
 
 
 def cmd_watch(args) -> None:
@@ -277,7 +277,7 @@ def cmd_eval(args) -> None:
     dump = Path(args.dump).open("w", encoding="utf-8") if args.dump else None
     for rec in records:
         state = ScreenState(**rec["screen"]).to_state(args.budget)
-        reading = ask(client, state, rules, settings.lang)
+        reading = ask(client, state, rules, settings.lang, settings.allow)
         lat.append(reading.latency_ms)
         gold = rec["labels"]
         for key, got in (("page_kind", reading.page_kind), ("purpose", reading.purpose),
@@ -291,6 +291,7 @@ def cmd_eval(args) -> None:
                 "page_kind": reading.page_kind, "purpose": reading.purpose,
                 "page_probs": reading.page_probs, "purpose_probs": reading.purpose_probs, "url": state.get("url", ""),
                 "p_hit": {v.rule_id: v.p_hit for v in reading.rules}, "input_tokens": reading.input_tokens,
+                "allow": reading.allow,
             }, ensure_ascii=False) + "\n")
         for v in reading.rules:
             label = gold.get("rules", {}).get(v.rule_id)

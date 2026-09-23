@@ -30,6 +30,8 @@ MAX_NODES = 1500  # breadth-first cap on the accessibility tree walk
 HEADING_LIMIT = 8
 TEXT_LIMIT = 12
 
+BROWSER_UI = ("chrome://", "chrome-extension://", "chrome-untrusted://", "edge://", "about:", "devtools://")
+
 BROWSER_APPLESCRIPT = {
     "com.google.Chrome": 'tell application "Google Chrome" to get URL of active tab of front window',
     "com.apple.Safari": 'tell application "Safari" to get URL of front document',
@@ -101,9 +103,12 @@ def _walk(window, state: ScreenState) -> None:
         seen += 1
         role = _ax(node, "AXRole") or ""
         if role == "AXWebArea" and not state.url:
-            url = _ax(node, "AXURL")
-            if url is not None:
-                state.url = _clean(url)
+            url = _clean(_ax(node, "AXURL"))
+            if url.startswith(BROWSER_UI):
+                # Chrome's own UI (the address-bar dropdown, extension popups)
+                # is a web area too; skip it and keep looking for the page.
+                continue
+            state.url = url
             # The page is what matters; drop the queued tabs and toolbars.
             queue = []
         if role == "AXHeading" and len(state.headings) < HEADING_LIMIT:

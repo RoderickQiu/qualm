@@ -146,7 +146,7 @@ class Controller(NSObject):
 
     @objc.python_method
     def _build_panel(self):
-        w, h = 460, 230
+        w, h = 600, 230
         panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0, 0, w, h), NSWindowStyleMaskTitled, NSBackingStoreBuffered, False
         )
@@ -168,10 +168,12 @@ class Controller(NSObject):
         back.setKeyEquivalent_("\r")
         need = NSButton.buttonWithTitle_target_action_(f"I need it: {SNOOZE_MINUTES} min", self, "need:")
         fine = NSButton.buttonWithTitle_target_action_("Not this one", self, "fine:")
+        self.never = NSButton.buttonWithTitle_target_action_("Never here", self, "never:")
         back.setFrame_(NSMakeRect(w - 150, 16, 130, 32))
         need.setFrame_(NSMakeRect(w - 300, 16, 145, 32))
-        fine.setFrame_(NSMakeRect(20, 16, 120, 32))
-        for v in (self.headline, self.body, self.why, back, need, fine):
+        fine.setFrame_(NSMakeRect(20, 16, 115, 32))
+        self.never.setFrame_(NSMakeRect(140, 16, 150, 32))
+        for v in (self.headline, self.body, self.why, back, need, fine, self.never):
             view.addSubview_(v)
         self.panel = panel
 
@@ -185,6 +187,10 @@ class Controller(NSObject):
             f"{where[:90]}\n\nYour rule: {rule.text(self.policy.settings.lang)}\n({d.reason})"
         )
         self.why.setStringValue_("")
+        from .policy import host_of
+
+        place = host_of(ev.screen.url) or ev.screen.app.strip("\u200e")
+        self.never.setTitle_(f"Never on {place}"[:26] if host_of(ev.screen.url) else f"Never in {place}"[:26])
         self.panel.center()
         NSApp.activateIgnoringOtherApps_(True)
         self.panel.makeKeyAndOrderFront_(None)
@@ -205,6 +211,11 @@ class Controller(NSObject):
         reason = str(self.why.stringValue())
         d, ev = self._close()
         self.policy.snooze(d.rule, SNOOZE_MINUTES, reason, d.id)
+
+    def never_(self, sender):
+        d, ev = self._close()
+        place = self.policy.never_here(ev.screen.bundle_id, ev.screen.app.strip("\u200e"), ev.screen.url, d.id)
+        self.set_status(f"never again: {place} (undo in the review page, Tune rules)")
 
     def fine_(self, sender):
         d, ev = self._close()

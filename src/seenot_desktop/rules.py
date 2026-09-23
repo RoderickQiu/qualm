@@ -64,6 +64,20 @@ class Rule:
 
 
 @dataclass
+class AllowClass:
+    """A kind of page no rule may fire on, in your words ("an online store").
+    Each is one yes/no question per reading."""
+
+    id: str
+    description: str
+    description_en: str = ""
+    threshold: float = 0.5  # P(yes) at or above this: the page is this class
+
+    def text(self, lang: str) -> str:
+        return self.description_en if lang == "en" and self.description_en else self.description
+
+
+@dataclass
 class Settings:
     lang: str = "en"  # which rule description the model reads
     no_monitor: tuple[str, ...] = ()  # bundle ids that are never read at all
@@ -71,6 +85,7 @@ class Settings:
     # False: a time_cap hit steps in at once, like a deny rule, instead of
     # counting minutes and visits. Clearer while testing.
     budgets: bool = True
+    allow: tuple[AllowClass, ...] = ()  # [[allow]]: kinds of page never flagged
 
 
 RULE_FIELDS = set(Rule.__dataclass_fields__)
@@ -84,6 +99,7 @@ def load_config(path: str | Path) -> tuple[Settings, list[Rule]]:
         no_monitor=tuple(s.get("no_monitor", ())),
         allow_urls=tuple(s.get("allow_urls", ())),
         budgets=bool(s.get("budgets", True)),
+        allow=tuple(AllowClass(**{**a, "id": str(a["id"])}) for a in data.get("allow", ())),
     )
     rules = []
     for r in data["rules"]:
@@ -181,8 +197,14 @@ def rule_question(rule: Rule, lang: str = "zh") -> Choice:
     )
 
 
-def build_questions(rules: list[Rule], lang: str = "zh") -> dict:
+def allow_question(c: AllowClass, lang: str = "zh") -> Noul:
+    return Noul(instructions=f"The screen shows {c.text(lang)}.")
+
+
+def build_questions(rules: list[Rule], lang: str = "zh", allow: tuple[AllowClass, ...] = ()) -> dict:
     questions = {"sensitive": SENSITIVE, "page_kind": PAGE_KIND, "purpose": PURPOSE}
+    for c in allow:
+        questions[f"allow_{c.id}"] = allow_question(c, lang)
     for rule in rules:
         questions[f"rule_{rule.id}"] = rule_question(rule, lang)
     return questions

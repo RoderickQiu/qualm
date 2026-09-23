@@ -41,6 +41,15 @@ allow_urls = [
     "^https?://www\\.sec\\.gov/",
 ]
 
+# Kinds of page no rule ever fires on, in your words. Each is one yes/no
+# question per reading; if the model says yes (P >= threshold), the page is
+# left alone even when a rule scores high. Add your own.
+[[allow]]
+id = "shopping"
+description = "网店：商品页、商品列表、购物车或结算页"
+description_en = "an online store: a product page, product listing, shopping cart or checkout"
+threshold = 0.35  # stores scored 0.42-0.92, every other trial page (stock pages included) 0.18 or less
+
 [[rules]]
 id = "shortvideo"
 kind = "deny"
@@ -115,9 +124,11 @@ id = "stocks"
 kind = "time_cap"
 description = "看股票行情、K线和股吧讨论"
 description_en = "stock quotes, candlestick charts and stock-trading discussion"
-threshold = 0.13  # trials: precision 0.92, recall 0.92; held-out sites 0.88 / 0.92
+threshold = 0.3  # real chats about shopping scored up to 0.27; trial stock pages mostly 0.27-0.69
 minutes_per_day = 10
 # One check can be a decision; the twelfth is a habit.
 visits_per_day = 3
+# Stock forums read as discussion, not quotes; the model scores them low.
+patterns = ["guba\\.eastmoney\\.com", "reddit\\.com/r/(wallstreetbets|stocks|investing|StockMarket)", "stocktwits\\.com", "xueqiu\\.com"]
 exceptions = ["company filings, annual reports and earnings reports"]
 # allow_learning stays off: "learning about trading" is how this habit dresses up.

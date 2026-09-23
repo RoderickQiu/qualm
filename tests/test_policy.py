@@ -186,4 +186,31 @@ def test_review_answers_and_tuning(tmp_path):
     rules.write_text(open("rules.example.toml", encoding="utf-8").read(), encoding="utf-8")
     set_threshold(rules, "social", 0.35)
     assert next(r for r in load_config(rules)[1] if r.id == "social").threshold == 0.35
-    assert next(r for r in load_config(rules)[1] if r.id == "stocks").threshold == 0.13
+    assert next(r for r in load_config(rules)[1] if r.id == "stocks").threshold == 0.3
+
+
+def test_a_screen_with_nothing_but_its_name_does_not_pop_up(policy):
+    got = policy.decide({"app": "WhatsApp", "window_title": "WhatsApp"}, reading(stocks=0.9), "net.whatsapp.WhatsApp")
+    assert actions(got) == [("skip", "stocks")] and "too little on screen" in got[0].reason
+
+
+def test_never_here_for_an_app_and_a_site(policy, tmp_path):
+    assert policy.never_here("net.whatsapp.WhatsApp", "WhatsApp", "") == "WhatsApp"
+    assert policy.precheck("net.whatsapp.WhatsApp", "").reason == "you said never here"
+    policy.never_here("com.apple.Safari", "Safari", "https://www.example.com/a/b")
+    assert policy.precheck("com.apple.Safari", "https://example.com/other").action == "allow"
+    assert policy.precheck("com.apple.Safari", "https://other.com/") is None
+    assert Policy(SETTINGS, RULES, tmp_path).precheck("net.whatsapp.WhatsApp", "") is not None  # survives restart
+
+
+def test_an_allow_class_stops_every_rule_but_not_a_url_pattern(tmp_path):
+    from seenot_desktop.rules import AllowClass
+
+    p = Policy(Settings(allow=(AllowClass("shopping", "an online store", threshold=0.35),)), RULES, tmp_path)
+    shop = reading(stocks=0.9)
+    shop.allow = {"shopping": 0.8}
+    got = p.decide({"url": "https://store.example/polo"}, shop)
+    assert actions(got) == [("allow", "stocks")] and got[0].reason == "shopping is never flagged"
+    short = reading(shortvideo=0.9)
+    short.allow = {"shopping": 0.8}
+    assert see(p, "https://www.youtube.com/shorts/x", short) == [("intervene", "shortvideo")]

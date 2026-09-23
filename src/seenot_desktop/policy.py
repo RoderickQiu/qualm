@@ -30,6 +30,12 @@ MAX_EXCEPTIONS = 10  # per rule; the newest "Not this one" titles the model read
 OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge SeeNot itself
 
 
+def host_of(url: str) -> str:
+    """example.com for https://www.example.com/a; "" for non-web URLs."""
+    m = re.match(r"https?://([^/:?#]+)", url or "")
+    return m.group(1).lower().removeprefix("www.") if m else ""
+
+
 @dataclass
 class Decision:
     action: str
@@ -81,6 +87,8 @@ class Policy:
         self._base_rules = rules
         self._allowed: dict[str, set[str]] = {}  # rule id -> URLs marked "Not this one"
         self._titles: dict[str, list[str]] = {}
+        self._never_apps: dict[str, str] = {}  # bundle id -> app name: "Never in WhatsApp"
+        self._never_hosts: set[str] = set()  # "Never on example.com"
         self._load_exceptions()
         self._last_tick: float | None = None
         self._last_save = 0.0
@@ -108,6 +116,16 @@ class Policy:
                 self._add_exception(json.loads(line))
 
     def _add_exception(self, e: dict) -> None:
+        if e.get("never"):
+            n = e["never"]
+            if n.get("app"):
+                if e.get("removed"):
+                    self._never_apps.pop(n["app"], None)
+                else:
+                    self._never_apps[n["app"]] = n.get("name", n["app"])
+            if n.get("host"):
+                (self._never_hosts.discard if e.get("removed") else self._never_hosts.add)(n["host"])
+            return
         if e.get("url"):
             self._allowed.setdefault(e["rule"], set()).add(e["url"])
         if e.get("title"):
@@ -128,6 +146,8 @@ class Policy:
                 d = Decision("skip", reason="SeeNot's own page")
             elif url and any(re.search(p, url) for p in self.settings.allow_urls):
                 d = Decision("allow", reason="allowed URL")
+            elif bundle_id in self._never_apps or host_of(url) in self._never_hosts:
+                d = Decision("allow", reason="you said never here")
             else:
                 return None
             self.counting = set()
@@ -156,6 +176,11 @@ class Policy:
                 self._arrive(key, "other", "task", bundle_id)
                 return [Decision("skip", reason="sensitive page")]
             self._arrive(key, reading.page_kind, reading.purpose, bundle_id)
+            # An app that shows nothing but its name (WhatsApp, games, players)
+            # leaves the model guessing; only a URL pattern may fire then.
+            thin = not url and not state.get("headings") and not state.get("visible_text")
+            # A kind of page you said is never flagged ([[allow]]: shopping, ...).
+            allowed_as = next((c.id for c in self.settings.allow if reading.allow.get(c.id, 0) >= c.threshold), None)
             work = reading.page_kind == "work" and reading.page_probs.get("work", 0) >= WORK_MIN
             learning = reading.page_kind != "feed" and reading.purpose_probs.get("learn", 0) >= LEARN_MIN
             out, counted, now = [], set(), time.time()
@@ -170,9 +195,14 @@ class Policy:
                 # it still counts toward a time budget.
                 if rule.kind == "deny" and rule.target == "content" and reading.page_kind == "feed" and not pattern:
                     continue
+                if thin and not pattern:
+                    out.append(Decision("skip", rule.id, f"too little on screen to judge (p_hit {p:.2f})"))
+                    continue
                 why = ("matches URL pattern" if pattern else f"p_hit {p:.2f} >= {rule.threshold:.2f}" if p >= rule.threshold
                        else "an entertainment feed")
-                if url and url in self._allowed.get(rule.id, ()):
+                if allowed_as and not pattern:
+                    out.append(Decision("allow", rule.id, f"{allowed_as} is never flagged"))
+                elif url and url in self._allowed.get(rule.id, ()):
                     out.append(Decision("allow", rule.id, "you marked this page fine"))
                 elif self.snoozed.get(rule.id, 0) > now:
                     until = datetime.fromtimestamp(self.snoozed[rule.id]).strftime("%H:%M")
@@ -236,6 +266,19 @@ class Policy:
         with self.lock:
             self._add_exception(e)
         self.log_response(decision_id, "fine", rule_id)
+
+    def never_here(self, bundle_id: str, app_name: str, url: str, decision_id: str = "") -> str:
+        """"Never in this app" (or, in a browser, "never on this site"): no rule fires there again."""
+        host = host_of(url)
+        never = {"host": host} if host else {"app": bundle_id, "name": app_name}
+        e = {"never": never, "at": datetime.now().isoformat(timespec="seconds")}
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        with (self.data_dir / "exceptions.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+        with self.lock:
+            self._add_exception(e)
+        self.log_response(decision_id, "never", "", place=never)
+        return host or app_name
 
     def add_exception_text(self, rule_id: str, text: str) -> None:
         """An exception in your own words ("a lecture on YouTube is fine"); the model reads it."""
@@ -306,6 +349,7 @@ class Policy:
                 "p_hit": {v.rule_id: round(v.p_hit, 3) for v in reading.rules},
                 "answers": {v.rule_id: {k: round(x, 3) for k, x in v.probabilities.items()} for v in reading.rules},
                 "latency_ms": round(reading.latency_ms),
+                "allow": {k: round(v, 3) for k, v in reading.allow.items()},
             }
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with (self.data_dir / "judgements.jsonl").open("a", encoding="utf-8") as f:

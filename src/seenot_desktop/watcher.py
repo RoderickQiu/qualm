@@ -143,7 +143,7 @@ class Watcher:
             return
         shot = self._screenshot(s)
         try:
-            reading = ask(client, state, self.policy.rules, self.policy.settings.lang)
+            reading = ask(client, state, self.policy.rules, self.policy.settings.lang, self.policy.settings.allow)
         except Exception as e:  # server down, timeout: say so, keep watching
             self.on_status(f"model unreachable: {type(e).__name__}")
             time.sleep(5)

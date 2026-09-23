@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from typesafe_sdk import TypeSafeClient
 
-from .rules import Rule, build_questions
+from .rules import AllowClass, Rule, build_questions
 
 
 def make_client() -> TypeSafeClient:
@@ -49,14 +49,16 @@ class Reading:
     latency_ms: float
     input_tokens: int | None = None
     raw: dict = field(default_factory=dict)
+    allow: dict[str, float] = field(default_factory=dict)  # [[allow]] class id -> P(the page is that)
 
     def verdict(self, rule_id: str) -> RuleVerdict | None:
         return next((v for v in self.rules if v.rule_id == rule_id), None)
 
 
-def ask(client: TypeSafeClient, state: dict, rules: list[Rule], lang: str = "zh") -> Reading:
+def ask(client: TypeSafeClient, state: dict, rules: list[Rule], lang: str = "zh",
+        allow: tuple[AllowClass, ...] = ()) -> Reading:
     t0 = time.perf_counter()
-    resp = client.system_one(state=state, questions=build_questions(rules, lang))
+    resp = client.system_one(state=state, questions=build_questions(rules, lang, allow))
     latency = (time.perf_counter() - t0) * 1000
     a = resp.answers
     verdicts = []
@@ -76,4 +78,5 @@ def ask(client: TypeSafeClient, state: dict, rules: list[Rule], lang: str = "zh"
         latency_ms=latency,
         input_tokens=getattr(resp.usage, "input_tokens", None),
         raw=resp.model_dump(mode="json"),
+        allow={c.id: float(a[f"allow_{c.id}"].noul) for c in allow},
     )

@@ -190,6 +190,26 @@ def add_exception(data_dir: Path, rule_id: str, text: str) -> None:
         f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
 
+def never_places(data_dir: Path) -> list[dict]:
+    """The apps and sites you said "never here" to, minus the ones you undid."""
+    places: dict[str, dict] = {}
+    for e in exceptions(data_dir):
+        n = e.get("never")
+        if n:
+            key = n.get("host") or n.get("app")
+            if e.get("removed"):
+                places.pop(key, None)
+            else:
+                places[key] = n
+    return list(places.values())
+
+
+def undo_never(data_dir: Path, place: dict) -> None:
+    e = {"never": place, "removed": True, "at": datetime.now().isoformat(timespec="seconds")}
+    with (data_dir / "exceptions.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+
 def exceptions(data_dir: Path) -> list[dict]:
     path = data_dir / "exceptions.jsonl"
     if not path.exists():
@@ -230,7 +250,8 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
             "reviews": load_reviews(data_dir),
             "rules": [{"id": r.id, "kind": r.kind, "text": r.text(settings.lang), "threshold": r.threshold,
                        "exceptions": list(r.exceptions)} for r in rules],
-            "exceptions": exceptions(data_dir),
+            "exceptions": [e for e in exceptions(data_dir) if not e.get("never")],
+            "never": never_places(data_dir),
             "tuning": tuning(data_dir, rules),
             "budgets": settings.budgets,
         }
@@ -274,6 +295,8 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
                         save_review(data_dir, jid, **{k: (dict(v) if isinstance(v, dict) else v) for k, v in body.items()})
                 elif self.path == "/api/threshold":
                     set_threshold(rules_path, body["rule"], float(body["value"]))
+                elif self.path == "/api/never/undo":
+                    undo_never(data_dir, body["place"])
                 elif self.path == "/api/exception":
                     if not body.get("text", "").strip():
                         raise ValueError("empty exception")
@@ -629,6 +652,9 @@ function tuneView() {
     if (xs.length) h += '<div class="small" style="margin-top:10px"><b>' + esc(r.id) + "</b>" + xs.map(x => '<div class="muted">· ' + esc(x) + "</div>").join("") + "</div>";
   });
   h += "</div>";
+  h += '<div class="panel"><h2>Never here</h2><div class="small muted" style="margin-bottom:8px">Apps and sites where no rule fires, from the pop-up’s “Never here” button.</div>' +
+    (D.never.length ? D.never.map((n, i) => '<div style="display:flex;gap:10px;align-items:center;margin:4px 0"><span>' + (n.host ? "on <b>" + esc(n.host) + "</b>" : "in <b>" + esc(n.name || n.app) + "</b>") +
+      '</span><button data-undo="' + i + '">Undo</button></div>').join("") : '<div class="small muted">None yet.</div>') + "</div>";
   h += '<div class="panel small muted">Rules themselves (wording, budgets, URL patterns) are in rules.toml, via “Open rules…” in the SeeNot menu. The app picks up changes without a restart.</div>';
   return h;
 }
@@ -658,6 +684,7 @@ document.addEventListener("click", ev => {
   }
   if (b && b.dataset.apply) { post("/api/threshold", {rule:b.dataset.apply, value:b.dataset.value}).then(ok => { if (ok) { toast("rules.toml updated"); render(); } }); return; }
   if (b && b.dataset.lf) { listFilter = b.dataset.lf; render(); return; }
+  if (b && b.dataset.undo !== undefined) { post("/api/never/undo", {place:D.never[+b.dataset.undo]}).then(ok => { if (ok) { toast("undone"); render(); } }); return; }
   const row = t.closest("tr[data-key]");
   if (row) {
     // Open that screen in the review view, even if it was already reviewed.
