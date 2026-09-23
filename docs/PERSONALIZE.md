@@ -160,6 +160,21 @@ anything. `--prune` removes what's missing. Near the question limit, this
 is how to swap rules: switching one off and adding another in separate
 commands would be refused halfway.
 
+## Focus and pause
+
+```bash
+qualm focus write the report --minutes 50   # every rule hit steps in at once, time caps included;
+                                            # the pop-up says "You're here to: write the report."
+qualm focus                                 # what's running, minutes left
+qualm focus --stop
+qualm pause 30                              # nothing is judged for 30 minutes
+qualm pause --stop
+```
+
+Both live in `data/session.json`, which the running app reloads within a
+second; the menu bar's "Start a focus session…" and "Pause" write the same
+file. They work whether or not the app is running.
+
 ## Is it running
 
 ```bash
@@ -180,5 +195,5 @@ lectures are fine" maps to:
 qualm rules set livestream 'when+=mon-fri 09:00-18:00' allow_learning=true --json
 ```
 
-What the commands don't do yet: pause or snooze the running app (the menu
-and the pop-up do), and anything that needs the review page's screenshots.
+What the commands don't do yet: snooze one rule (the pop-up's "I need it"
+does), and anything that needs the dashboard's screenshots.

@@ -1,11 +1,12 @@
 """The policy, with made-up readings: no model, no screen."""
 
 import json
+import time
 
 import pytest
 
 from qualm.decide import Reading, RuleVerdict
-from qualm.policy import Policy
+from qualm.policy import Decision, Policy
 from qualm.rules import Rule, Settings, load_config
 
 RULES = [
@@ -87,6 +88,40 @@ def test_precheck_skips_unmonitored_apps_and_pause(policy):
     assert policy.precheck("com.apple.Safari", "https://a.com") is None
     policy.pause(5)
     assert policy.precheck("com.apple.Safari", "https://a.com").reason == "paused"
+
+
+def test_a_focus_session_makes_time_caps_step_in_and_is_logged(policy, tmp_path):
+    from qualm.policy import end_focus, start_focus
+
+    assert see(policy, "https://weibo.com/1", reading(social=0.5)) == [("count", "social")]
+    start_focus(tmp_path, "write the report", 50)
+    policy.reload_session()
+    assert policy.focusing()["intent"] == "write the report"
+    assert see(policy, "https://weibo.com/2", reading(social=0.5)) == [("intervene", "social")]
+    jid = policy.log_judgement({"app": "Safari"}, None, [])
+    logged = [json.loads(line) for line in (tmp_path / "judgements.jsonl").open()]
+    assert logged[-1]["id"] == jid and logged[-1]["focus"] == "write the report"
+    end_focus(tmp_path)
+    policy.reload_session()
+    assert policy.focusing() is None
+    kinds = [json.loads(line)["type"] for line in (tmp_path / "decisions.jsonl").open()]
+    assert kinds == ["focus", "focus_end"]
+
+
+def test_an_expired_focus_or_pause_is_gone(tmp_path):
+    from qualm.policy import read_session, write_session
+
+    write_session(tmp_path, paused_until=1.0, focus={"intent": "x", "started": 0.0, "until": 1.0})
+    assert read_session(tmp_path) == {"paused_until": 0.0, "focus": None}
+
+
+def test_focus_needs_words_and_a_sane_length(tmp_path):
+    from qualm.policy import start_focus
+
+    with pytest.raises(ValueError):
+        start_focus(tmp_path, "   ", 30)
+    with pytest.raises(ValueError):
+        start_focus(tmp_path, "read", 0)
 
 
 def test_time_cap_counts_then_intervenes_over_budget(policy):
@@ -224,15 +259,36 @@ def test_an_allow_class_stops_every_rule_but_not_a_url_pattern(tmp_path):
 
 
 def test_explanations_in_words(policy):
-    from qualm.explain import reason
+    from qualm.explain import headline, label, reason
     from qualm.policy import Decision
 
     rule = RULES[0]  # shortvideo, threshold 0.15
     r = reading(shortvideo=0.9)
-    assert reason(Decision("intervene", "shortvideo", "p_hit 0.90 >= 0.15"), r, rule, "en").startswith("Your shortvideo rule, a clear match: short videos.")
-    assert "a close call" in reason(Decision("intervene", "shortvideo", "x"), reading(shortvideo=0.16), rule, "en")
+    assert reason(Decision("intervene", "shortvideo", "p_hit 0.90 >= 0.15"), r, rule, "en").startswith("A clear match for your shortvideo rule.")
+    assert "A close call" in reason(Decision("intervene", "shortvideo", "x"), reading(shortvideo=0.16), rule, "en")
     assert reason(Decision("intervene", "shortvideo", "matches URL pattern"), r, rule, "en").startswith("This address is on your list")
     assert "for entertainment" in reason(Decision("intervene", "shortvideo", "x"), r, rule, "en")
+    long = Rule("shortvideo", "deny", "short videos made for endless swiping, such as Douyin, TikTok")
+    assert label(long) == "short videos made for endless swiping"
+    assert headline(Decision("intervene", "shortvideo", "x"), long, "en") == ("shortvideo", "This looks like short videos made for endless swiping.")
+    videos = Rule("videos", "time_cap", "watching entertainment videos: comedy, gaming", minutes_per_day=45)
+    assert headline(Decision("intervene", "videos", "46 of 45 min today"), videos, "en")[1] == \
+        "That's today's 45 minutes of watching entertainment videos."
+    focus = {"intent": "write the report", "until": time.time() + 20 * 60 + 5}
+    assert headline(Decision("intervene", "videos", "x"), videos, "en", focus) == ("Focus · 20 min left", "You're here to: write the report.")
+
+
+def test_the_context_line_is_neutral_and_echoes_what_you_asked_for(policy):
+    from qualm.explain import context
+
+    assert context([]) == ""
+    assert context(["2026-09-23T14:20:05"]) == "2nd time today · last at 14:20"
+    assert context([], (time.time() - 60, 10, "a recipe")) == "Your 10 minutes for “a recipe” are up"
+    policy.snooze("social", 10, "a recipe", "d1")
+    assert policy.last_snooze("social")[1:] == (10, "a recipe")
+    policy.log_intervention(Decision("intervene", "social", "x", "d2"), {}, reading())
+    policy.log_intervention(Decision("intervene", "social", "x", "d3"), {}, reading())
+    assert len(policy.popups_today("social", but="d3")) == 1
 
 
 def test_snoozes_are_counted_for_the_growing_wait(policy):

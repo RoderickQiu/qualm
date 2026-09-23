@@ -383,7 +383,8 @@ def main() -> None:
 
     sp = add("app", cmd_app)
     sp.add_argument("--data", default=DEFAULT_DATA)
-    sp.add_argument("--demo", action="store_true", help="show the panel once with a made-up hit; no watching")
+    sp.add_argument("--demo", nargs="?", const="deny", choices=("deny", "feed", "budget", "focus", "prompt"),
+                    help="show the panel once with a made-up moment (default: deny); nothing is watched or learned")
 
     sp = add("label", cmd_label)
     sp.add_argument("--delay", type=float, default=5.0)

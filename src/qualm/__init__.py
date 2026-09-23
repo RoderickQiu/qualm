@@ -4,6 +4,9 @@ Jev-style typed decision model (local Kev, or hosted Jev).
     qualm probe              print the screen state on every change, no model
     qualm ask                one reading of the current screen
     qualm app                menu bar app: watch, and step in when a rule is hit
+    qualm app --demo [KIND]  show the pop-up once: deny, feed, budget, focus, or the focus prompt
+    qualm focus WHAT         a focus session: every rule steps in, and the pop-up reminds you; --stop ends it
+    qualm pause [MINUTES]    pause every rule (default 30); --stop resumes
     qualm watch              the same loop in the terminal, printing every judgement
     qualm review             every judgement it made; --fix the wrong ones
     qualm label              capture the screen and record your ground-truth labels

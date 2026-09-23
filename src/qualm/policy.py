@@ -32,6 +32,7 @@ MAX_TICK_S = 5.0  # longer gaps (sleep, a stalled model call) don't count as usa
 MAX_EXCEPTIONS = 10  # per rule; the newest "Not this one" titles the model reads
 OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge Qualm itself
 OWN_TITLES = ("Qualm review", "SeeNot review")  # the same page shown elsewhere (Cursor's browser: a vscode-file:// URL)
+SESSION_FILE = "session.json"  # pause and focus: set from the menu, the dashboard or the CLI
 
 
 def host_of(url: str) -> str:
@@ -73,6 +74,69 @@ def gate(rule: Rule, p: float, state: dict, reading: Reading, settings: Settings
         return "allow", "opened on purpose"
     return "hit", ("matches URL pattern" if pattern else f"p_hit {p:.2f} >= {rule.threshold:.2f}"
                    if p >= rule.threshold else "an entertainment feed")
+
+
+def read_session(data_dir: Path) -> dict:
+    """{"paused_until": wall time, "focus": {"intent", "started", "until"} or None}, expired entries dropped."""
+    path = Path(data_dir) / SESSION_FILE
+    try:
+        s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except ValueError:  # half-written: treat as nothing set
+        s = {}
+    now = time.time()
+    focus = s.get("focus")
+    return {"paused_until": s["paused_until"] if s.get("paused_until", 0) > now else 0.0,
+            "focus": focus if focus and focus.get("until", 0) > now else None}
+
+
+def write_session(data_dir: Path, **changes) -> dict:
+    s = read_session(data_dir) | changes
+    path = Path(data_dir) / SESSION_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)  # the watcher reloads on change; never let it read half a file
+    return s
+
+
+def start_focus(data_dir: Path, intent: str, minutes: float) -> dict:
+    """A focus session: what you're here to do, until when. While it runs,
+    every rule hit steps in at once (budgets don't apply) and the pop-up
+    reminds you what you said: SeeNot's session intents, on the desktop."""
+    intent = " ".join(intent.split())
+    if not intent:
+        raise ValueError("say what you're focusing on, in a few words")
+    if not 0 < minutes <= 12 * 60:
+        raise ValueError("a focus session lasts between 1 minute and 12 hours")
+    now = time.time()
+    focus = {"intent": intent[:120], "started": now, "until": now + minutes * 60}
+    _log_line(data_dir, {"type": "focus", "intent": focus["intent"], "minutes": minutes})
+    write_session(data_dir, focus=focus)
+    return focus
+
+
+def end_focus(data_dir: Path) -> dict | None:
+    focus = read_session(data_dir)["focus"]
+    if focus:
+        _log_line(data_dir, {"type": "focus_end", "intent": focus["intent"],
+                             "minutes": round((time.time() - focus["started"]) / 60, 1)})
+        write_session(data_dir, focus=None)
+    return focus
+
+
+def pause_for(data_dir: Path, minutes: float) -> float:
+    """Pause every rule for `minutes` (0: resume). Returns when it ends (0.0 if not paused)."""
+    until = time.time() + minutes * 60 if minutes > 0 else 0.0
+    write_session(data_dir, paused_until=until)
+    return until
+
+
+def _log_line(data_dir: Path, event: dict) -> None:
+    data_dir = Path(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    event = {"at": datetime.now().isoformat(timespec="seconds"), **event}
+    with (data_dir / "decisions.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
 @dataclass
@@ -127,7 +191,10 @@ class Policy:
         self.lock = threading.RLock()
         self.snoozed: dict[str, float] = {}  # rule id -> wall time the snooze ends
         self._snooze_times: list[float] = []  # when "I need it" was used, for the growing wait
+        self._snoozes: dict[str, tuple[float, float, str]] = {}  # rule id -> (ends at, minutes, what for)
         self.paused_until = 0.0
+        self.focus: dict | None = None  # {"intent", "started", "until"}: see start_focus()
+        self.reload_session()
         self.counting: set[str] = set()  # time_cap rules the current screen counts toward
         self._base_rules = rules
         self._allowed: dict[str, set[str]] = {}  # rule id -> URLs marked "Not this one"
@@ -246,7 +313,7 @@ class Policy:
                 elif self.snoozed.get(rule.id, 0) > now:
                     until = datetime.fromtimestamp(self.snoozed[rule.id]).strftime("%H:%M")
                     out.append(Decision("allow", rule.id, f"snoozed until {until}"))
-                elif rule.kind == "deny" or not self.settings.budgets:
+                elif rule.kind == "deny" or not self.settings.budgets or self.focusing():
                     out.append(Decision("intervene", rule.id, why, uuid.uuid4().hex[:12]))
                 else:
                     counted.add(rule.id)
@@ -290,6 +357,7 @@ class Policy:
         with self.lock:
             self.snoozed[rule_id] = time.time() + minutes * 60
             self._snooze_times.append(time.time())
+            self._snoozes[rule_id] = (self.snoozed[rule_id], minutes, reason)
         self.log_response(decision_id, "snooze", rule_id, reason=reason, minutes=minutes)
 
     def mark_fine(self, rule_id: str, url: str, title: str, decision_id: str = "") -> None:
@@ -300,6 +368,24 @@ class Policy:
         with self.lock:
             self._add_exception(e)
         self.log_response(decision_id, "fine", rule_id)
+
+    def last_snooze(self, rule_id: str) -> tuple[float, float, str] | None:
+        """(ends at, minutes, what for) of this rule's latest "I need it"."""
+        return self._snoozes.get(rule_id)
+
+    def popups_today(self, rule_id: str, but: str = "") -> list[str]:
+        """When this rule popped up today (ISO times, oldest first), leaving out decision `but`."""
+        path = self.data_dir / "decisions.jsonl"
+        if not path.exists():
+            return []
+        today = date.today().isoformat()
+        out = []
+        for line in path.open(encoding="utf-8"):
+            if line.startswith('{"at": "' + today) and '"intervention"' in line:
+                e = json.loads(line)
+                if e.get("type") == "intervention" and e.get("rule") == rule_id and e.get("id") != but:
+                    out.append(e["at"])
+        return out
 
     def snoozes_in_last_hour(self) -> int:
         with self.lock:
@@ -341,8 +427,22 @@ class Policy:
             self.settings, self._base_rules = settings, rules
 
     def pause(self, minutes: float) -> None:
+        pause_for(self.data_dir, minutes)
+        self.reload_session()
+
+    def reload_session(self) -> None:
+        """data/session.json changed (the menu, the dashboard or `qualm pause|focus`)."""
+        s = read_session(self.data_dir)
         with self.lock:
-            self.paused_until = time.time() + minutes * 60 if minutes else 0.0
+            self.paused_until, self.focus = s["paused_until"], s["focus"]
+
+    def focusing(self) -> dict | None:
+        """The focus session running now, if any."""
+        f = self.focus
+        return f if f and f["until"] > time.time() else None
+
+    def paused(self) -> bool:
+        return time.time() < self.paused_until
 
     def usage_summary(self) -> str:
         with self.lock:
@@ -377,6 +477,8 @@ class Policy:
                 "came_from": None if private else self._cur.get("from"),
                 "opened_on_purpose": self._cur["intentional"],
             }
+            if (focus := self.focusing()) is not None:
+                event["focus"] = focus["intent"]
         if shot and not private:
             event["shot"] = shot
         if reading is not None and not private:
@@ -410,7 +512,4 @@ class Policy:
         self._log({"type": "response", "id": decision_id, "rule": rule_id, "response": response, **extra})
 
     def _log(self, event: dict) -> None:
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        event = {"at": datetime.now().isoformat(timespec="seconds"), **event}
-        with (self.data_dir / "decisions.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        _log_line(self.data_dir, event)

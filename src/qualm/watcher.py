@@ -78,6 +78,8 @@ class Watcher:
         self._rules_mtime = self.rules_path.stat().st_mtime if self.rules_path else 0.0
         self._exc_path = policy.data_dir / "exceptions.jsonl"
         self._exc_mtime = self._exc_path.stat().st_mtime if self._exc_path.exists() else 0.0
+        self._session_path = policy.data_dir / "session.json"
+        self._session_mtime = self._mtime(self._session_path)
         self.shots = shots
         self._shot_sig, self._shot = None, ""
         self._cache: OrderedDict[str, Reading] = OrderedDict()
@@ -94,8 +96,17 @@ class Watcher:
         except Exception:  # never let presence detection stop the loop
             return False
 
+    @staticmethod
+    def _mtime(path: Path) -> float:
+        return path.stat().st_mtime if path.exists() else 0.0
+
     def _reload_rules(self) -> None:
-        """Edits to rules.toml and exceptions (by hand or from the review page) apply without a restart."""
+        """Edits to rules.toml and exceptions (by hand or from the review page),
+        and a pause or focus session set from anywhere, apply without a restart."""
+        if (m := self._mtime(self._session_path)) != self._session_mtime:
+            self._session_mtime = m
+            self.policy.reload_session()
+            self.on_status("focus or pause changed")
         if self._exc_path.exists() and self._exc_path.stat().st_mtime != self._exc_mtime:
             self._exc_mtime = self._exc_path.stat().st_mtime
             self.policy.reload_exceptions()

@@ -8,9 +8,18 @@ pop-up, which part of the screen carried the signal: the model is asked
 again with only the title and address, and with only the page text. In
 the spirit of Time2Stop's feature attributions (CHI 2024), where
 explanations raised acceptance of interventions.
+
+The words follow what the research on these pop-ups found: say what the
+page looks like and why, plainly; the option to back out does the work,
+not a lecture. Nothing here counts against you ("again?", "wasted"): the
+context line is neutral, and the time you asked for is echoed back when
+it's up.
 """
 
 from __future__ import annotations
+
+import re
+from datetime import datetime
 
 from .decide import Reading, ask
 from .policy import Decision
@@ -19,27 +28,66 @@ from .rules import Rule
 PAGE_WORDS = {"feed": "a feed of recommendations", "single_item": "a single page or item", "search": "search results",
               "work": "a work tool", "other": "a page"}
 PURPOSE_WORDS = {"learn": "learning", "task": "getting something done", "entertain": "entertainment"}
+ORDINAL = {1: "1st", 2: "2nd", 3: "3rd"}
+
+
+def label(rule: Rule, lang: str = "en") -> str:
+    """The rule's description cut to a phrase: "short videos made for endless
+    swiping, such as Douyin, ..." -> "short videos made for endless swiping"."""
+    what = rule.text(lang)
+    head = re.split(r",? such as |[,:;，：；(（]", what, maxsplit=1)[0].strip()
+    return head or rule.id
+
+
+def headline(d: Decision, rule: Rule, lang: str, focus: dict | None = None) -> tuple[str, str]:
+    """(eyebrow, headline) for the pop-up."""
+    name = rule.id.replace("_", " ")
+    if focus is not None:
+        left = max(1, round((focus["until"] - datetime.now().timestamp()) / 60))
+        return f"Focus · {left} min left", f"You're here to: {focus['intent']}."
+    if "min today" in d.reason or "visit" in d.reason:
+        m = re.search(r"of (\d+(?:\.\d+)?) min today", d.reason)
+        if m and "visit" not in d.reason:
+            return f"{name} · daily limit", f"That's today's {m.group(1)} minutes of {label(rule, lang)}."
+        return f"{name} · daily limit", f"That's today's visits for {label(rule, lang)}."
+    if d.reason == "an entertainment feed":
+        return name, "This is a feed, picked for you."
+    return name, f"This looks like {label(rule, lang)}."
 
 
 def reason(d: Decision, reading: Reading | None, rule: Rule, lang: str) -> str:
-    """One or two sentences, without another model call."""
-    what = rule.text(lang)
+    """One or two sentences on why, without another model call."""
     if d.reason == "matches URL pattern":
         head = f"This address is on your list for {rule.id}."
     elif d.reason == "an entertainment feed":
-        head = "This is a feed of recommendations for entertainment."
+        head = "Nothing on it was your choice yet: it's a feed of recommendations, for entertainment."
+        return head
     elif "min today" in d.reason or "visit" in d.reason:
-        head = f"Over today's limit for {rule.id}: {d.reason}."
+        head = f"Your {rule.id} budget: {d.reason}."
     elif reading is not None and (v := reading.verdict(rule.id)) is not None:
         ratio = v.p_hit / rule.threshold if rule.threshold else 1.0
-        sure = "a clear match" if ratio >= 3 else "a likely match" if ratio >= 1.5 else "a close call"
-        head = f"Your {rule.id} rule, {sure}: {what}."
+        sure = "A clear match" if ratio >= 3 else "A likely match" if ratio >= 1.5 else "A close call"
+        head = f"{sure} for your {rule.id} rule."
     else:
-        head = f"This looks like {what}."
+        head = f"It matches your {rule.id} rule."
     if reading is None:
         return head
     seen = f"Qualm read the screen as {PAGE_WORDS.get(reading.page_kind, 'a page')}, for {PURPOSE_WORDS.get(reading.purpose, 'something')}."
     return f"{head} {seen}"
+
+
+def context(shown_today: list[str], snooze: tuple[float, float, str] | None = None) -> str:
+    """A neutral line: how often today, and the time you asked for, echoed
+    back once it's up. `shown_today` are earlier pop-ups' ISO times;
+    `snooze` is (ended at, minutes, what for) for this rule, if any."""
+    parts = []
+    now = datetime.now().timestamp()
+    if snooze and snooze[2] and 0 <= now - snooze[0] < 30 * 60:
+        parts.append(f"Your {snooze[1]:g} minutes for “{snooze[2]}” are up")
+    n = len(shown_today) + 1
+    if n > 1:
+        parts.append(f"{ORDINAL.get(n, f'{n}th')} time today · last at {shown_today[-1][11:16]}")
+    return " · ".join(parts)
 
 
 def evidence(client, state: dict, rule: Rule, lang: str) -> str:

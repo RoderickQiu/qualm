@@ -508,6 +508,60 @@ def never_remove(args) -> None:
 # -- settings -----------------------------------------------------------------
 
 
+def _session_json(data_dir: Path) -> dict:
+    from .policy import read_session
+
+    s = read_session(data_dir)
+    now = datetime.now().timestamp()
+    focus = s["focus"]
+    return {
+        "paused": bool(s["paused_until"]),
+        "paused_until": datetime.fromtimestamp(s["paused_until"]).isoformat(timespec="minutes") if s["paused_until"] else None,
+        "focus": {"intent": focus["intent"], "until": datetime.fromtimestamp(focus["until"]).isoformat(timespec="minutes"),
+                  "minutes_left": max(0, round((focus["until"] - now) / 60))} if focus else None,
+    }
+
+
+def _session_line(sj: dict) -> str:
+    f = sj["focus"]
+    parts = [f"focus: {f['intent']} until {f['until'][11:]} ({f['minutes_left']} min left)" if f else "no focus session"]
+    parts.append(f"paused until {sj['paused_until'][11:]}" if sj["paused"] else "not paused")
+    return "; ".join(parts)
+
+
+def focus(args) -> None:
+    """Start, show or end a focus session (the running app picks it up within a second)."""
+    from .policy import end_focus, start_focus
+
+    data = Path(args.data)
+    if args.stop:
+        ended = end_focus(data)
+        _out(args, {"ended": ended["intent"] if ended else None, **_session_json(data)},
+             f"ended: {ended['intent']}" if ended else "no focus session was running")
+        return
+    if args.intent:
+        intent = " ".join(args.intent)
+        start_focus(data, intent, args.minutes)
+    sj = _session_json(data)
+    text = _session_line(sj)
+    if args.intent:
+        text = (f"Focus on “{sj['focus']['intent']}” until {sj['focus']['until'][11:]}. Every rule hit steps in at once, "
+                "time caps included, and the pop-up reminds you of this. End it: qualm focus --stop")
+    _out(args, sj, text)
+
+
+def pause(args) -> None:
+    """Pause every rule for a while, or resume."""
+    from .policy import pause_for
+
+    data = Path(args.data)
+    if not args.stop and not 0 < args.minutes <= 24 * 60:
+        _fail("pause for 1 minute to 24 hours (qualm pause --stop resumes)")
+    pause_for(data, 0 if args.stop else args.minutes)
+    sj = _session_json(data)
+    _out(args, sj, f"paused until {sj['paused_until'][11:]}; qualm pause --stop resumes" if sj["paused"] else "resumed: watching")
+
+
 def settings_show(args) -> None:
     settings, _ = config_path(args.rules).load()
     d = {k: v for k, v in asdict(settings).items() if k != "allow"}
@@ -621,12 +675,14 @@ def status(args) -> None:
         out["last_judgement"] = {"at": j["at"], "app": j["screen"].get("app", ""), "title": j["screen"].get("window_title", ""),
                                  "decisions": j["decisions"]}
     out["today"] = _usage_today(Path(args.data))
+    out["session"] = _session_json(Path(args.data))
     m, c = out["model"], out["config"]
     lines = [f"app: {'running' if out['app_running'] else 'not running (qualm app)'}",
              f"model: {'up, ' + m['id'] if m['reachable'] else 'unreachable at ' + m['url'] + ' (HANDOFF.md, Run it)'}",
              f"config: {'ok, ' + _capacity_line(c['capacity']) if c['ok'] else 'broken: ' + c['error']}"]
     if c.get("ok"):
         lines.append(f"on now: {', '.join(c['rules_on_now']) or 'no rules'}; budgets {'on' if c['budgets'] else 'off (testing: every hit pops up)'}")
+    lines.append(_session_line(out["session"]))
     if "last_judgement" in out:
         lj = out["last_judgement"]
         acts = "; ".join(f"{d['action']} {d['rule']}".strip() for d in lj["decisions"]) or "nothing"
@@ -827,6 +883,23 @@ def register(sub, defaults: dict) -> None:
     cmd(g, "check", config_check, "does rules.toml load, and how full is the question budget")
     cmd(g, "undo", config_undo, "back to the version before the last change; again to redo", changes=True)
 
+    sp = sub.add_parser("focus", help="a focus session: say what you're here to do; every rule steps in at once until it ends",
+                        description="Start a focus session (qualm focus write the report --minutes 50), show it (qualm focus), "
+                                    "or end it (--stop). While it runs, every rule hit steps in at once, time caps included, "
+                                    "and the pop-up reminds you what you said.")
+    sp.add_argument("intent", nargs="*", help="what you're here to do, in a few words")
+    sp.add_argument("--minutes", type=float, default=50, help="how long (default 50)")
+    sp.add_argument("--stop", action="store_true", help="end the session now")
+    sp.add_argument("--data", default=defaults["data"])
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(fn=run, cmd_fn=focus)
+    sp = sub.add_parser("pause", help="pause every rule for a while (default 30 min); --stop resumes",
+                        description="Pause every rule for MINUTES (default 30), or resume with --stop.")
+    sp.add_argument("minutes", nargs="?", type=float, default=30)
+    sp.add_argument("--stop", action="store_true", help="resume now")
+    sp.add_argument("--data", default=defaults["data"])
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(fn=run, cmd_fn=pause)
     sp = sub.add_parser("schema", help="every field: type, default, meaning, and the value grammar",
                         description="every field: type, default, meaning, and the value grammar")
     sp.add_argument("--json", action="store_true")

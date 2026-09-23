@@ -147,3 +147,14 @@ def test_owner_matching_ignores_keep_awake_tools(monkeypatch):
 """
     monkeypatch.setattr(pr.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=out))
     assert pr.display_kept_awake_by("Google Chrome") and not pr.display_kept_awake_by("Safari")
+
+
+def test_a_focus_session_started_elsewhere_reaches_the_running_policy(tmp_path):
+    from qualm.policy import start_focus
+
+    policy = Policy(Settings(), [], tmp_path)
+    watcher = w.Watcher(policy, lambda ev: None, presence=False)
+    assert policy.focusing() is None
+    start_focus(tmp_path, "write the report", 30)  # what `qualm focus` does
+    watcher._reload_rules()
+    assert policy.focusing()["intent"] == "write the report"

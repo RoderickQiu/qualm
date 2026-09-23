@@ -56,6 +56,15 @@ are fine" → `rules set livestream 'when+=mon-fri 09:00-18:00' allow_learning=t
 Describe modes, not sites: "short videos made for endless swiping", with
 sites (`douyin.com`, `youtube.com/shorts`) only for what must always count.
 
+## Focus and pause
+
+"I need to write the report for an hour, keep me on it" →
+`uv run qualm focus write the report --minutes 60 --json`: until it ends,
+every rule hit steps in at once (time caps too) and the pop-up names the
+intent. `qualm focus --json` shows it, `--stop` ends it. "Leave me alone
+for 20 minutes" → `uv run qualm pause 20 --json`; `pause --stop` resumes.
+These don't touch rules.toml and need no dry run.
+
 ## A new rule: test before trusting it
 
 A new rule's threshold (0.2) is a guess. Before switching it on:
