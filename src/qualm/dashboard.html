@@ -657,5 +657,8 @@ document.addEventListener("keydown", ev => {
   ev.preventDefault();
 });
 load();
-setInterval(() => { if (pick === null && !document.querySelector("textarea:focus, input:focus, select:focus")) load(); }, 15000);
+// Refresh, but never over something you're typing or choosing.
+const busy = () => pick !== null || document.querySelector("textarea:focus, input:focus, select:focus") ||
+  [...document.querySelectorAll("#intent, #excText")].some(el => el.value.trim());
+setInterval(() => { if (!busy()) load(); }, 15000);
 </script></body></html>

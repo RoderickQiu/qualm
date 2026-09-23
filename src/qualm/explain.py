@@ -28,7 +28,10 @@ from .rules import Rule
 PAGE_WORDS = {"feed": "a feed of recommendations", "single_item": "a single page or item", "search": "search results",
               "work": "a work tool", "other": "a page"}
 PURPOSE_WORDS = {"learn": "learning", "task": "getting something done", "entertain": "entertainment"}
-ORDINAL = {1: "1st", 2: "2nd", 3: "3rd"}
+
+
+def ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
 def label(rule: Rule, lang: str = "en") -> str:
@@ -46,8 +49,8 @@ def headline(d: Decision, rule: Rule, lang: str, focus: dict | None = None) -> t
         left = max(1, round((focus["until"] - datetime.now().timestamp()) / 60))
         return f"Focus · {left} min left", f"You're here to: {focus['intent']}."
     if "min today" in d.reason or "visit" in d.reason:
-        m = re.search(r"of (\d+(?:\.\d+)?) min today", d.reason)
-        if m and "visit" not in d.reason:
+        m = re.search(r"of (\d+(?:\.\d+)?) min today", d.reason)  # the budget's reason names only what ran out
+        if m:
             return f"{name} · daily limit", f"That's today's {m.group(1)} minutes of {label(rule, lang)}."
         return f"{name} · daily limit", f"That's today's visits for {label(rule, lang)}."
     if d.reason == "an entertainment feed":
@@ -86,7 +89,7 @@ def context(shown_today: list[str], snooze: tuple[float, float, str] | None = No
         parts.append(f"Your {snooze[1]:g} minutes for “{snooze[2]}” are up")
     n = len(shown_today) + 1
     if n > 1:
-        parts.append(f"{ORDINAL.get(n, f'{n}th')} time today · last at {shown_today[-1][11:16]}")
+        parts.append(f"{ordinal(n)} time today · last at {shown_today[-1][11:16]}")
     return " · ".join(parts)
 
 

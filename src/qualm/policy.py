@@ -12,7 +12,9 @@ Actions: "skip" (not judged), "allow" (a rule hit, but an exemption applies),
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 import threading
 import time
 import uuid
@@ -81,21 +83,32 @@ def read_session(data_dir: Path) -> dict:
     path = Path(data_dir) / SESSION_FILE
     try:
         s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except ValueError:  # half-written: treat as nothing set
+    except (OSError, ValueError):  # unreadable: treat as nothing set
+        s = {}
+    if not isinstance(s, dict):
         s = {}
     now = time.time()
+    paused = s.get("paused_until")
     focus = s.get("focus")
-    return {"paused_until": s["paused_until"] if s.get("paused_until", 0) > now else 0.0,
-            "focus": focus if focus and focus.get("until", 0) > now else None}
+    # Written by hand or by an agent too: anything malformed counts as not set.
+    ok_focus = (isinstance(focus, dict) and isinstance(focus.get("intent"), str)
+                and all(isinstance(focus.get(k), (int, float)) for k in ("started", "until")))
+    return {"paused_until": float(paused) if isinstance(paused, (int, float)) and paused > now else 0.0,
+            "focus": focus if ok_focus and focus["until"] > now else None}
+
+
+_SESSION_LOCK = threading.Lock()  # the menu, the dashboard and the watcher share the file
 
 
 def write_session(data_dir: Path, **changes) -> dict:
-    s = read_session(data_dir) | changes
     path = Path(data_dir) / SESSION_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)  # the watcher reloads on change; never let it read half a file
+    with _SESSION_LOCK:
+        s = read_session(data_dir) | changes
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".session-", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(s, f, ensure_ascii=False)
+        os.replace(tmp, path)  # the watcher reloads on change; never let it read half a file
     return s
 
 
@@ -106,8 +119,9 @@ def start_focus(data_dir: Path, intent: str, minutes: float) -> dict:
     intent = " ".join(intent.split())
     if not intent:
         raise ValueError("say what you're focusing on, in a few words")
-    if not 0 < minutes <= 12 * 60:
+    if not 1 <= minutes <= 12 * 60:
         raise ValueError("a focus session lasts between 1 minute and 12 hours")
+    end_focus(data_dir)  # a new session replaces the running one: close it in the log
     now = time.time()
     focus = {"intent": intent[:120], "started": now, "until": now + minutes * 60}
     _log_line(data_dir, {"type": "focus", "intent": focus["intent"], "minutes": minutes})
@@ -147,6 +161,14 @@ class Decision:
     id: str = ""  # set on interventions, to join the user's response in the log
 
 
+def _atomic_write(path: Path, text: str) -> None:
+    """The dashboard reads these files while the app writes them: never half a file."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-", suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
 class Usage:
     """Seconds and visits per time_cap rule, for today, kept across restarts."""
 
@@ -175,12 +197,12 @@ class Usage:
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps({"day": self.day, "counts": self.counts}), encoding="utf-8")
-        # Every day's totals, for the review page's weekly summary.
+        _atomic_write(self.path, json.dumps({"day": self.day, "counts": self.counts}))
+        # Every day's totals, for the dashboard's charts.
         hist_path = self.path.with_name("usage_history.json")
         history = json.loads(hist_path.read_text(encoding="utf-8")) if hist_path.exists() else {}
         history[self.day] = self.counts
-        hist_path.write_text(json.dumps(history), encoding="utf-8")
+        _atomic_write(hist_path, json.dumps(history))
 
 
 class Policy:
@@ -325,16 +347,19 @@ class Policy:
 
     def _budget(self, rule: Rule, why: str) -> Decision:
         seconds, visits = self.usage.get(rule.id)
-        parts, over = [], False
+        parts, flags = [], []
         if rule.minutes_per_day:
             parts.append(f"{seconds / 60:.0f} of {rule.minutes_per_day:g} min today")
-            over |= seconds >= rule.minutes_per_day * 60
+            flags.append(seconds >= rule.minutes_per_day * 60)
         if rule.visits_per_day:
             parts.append(f"visit {visits} of {rule.visits_per_day} today")
-            over |= visits > rule.visits_per_day
+            flags.append(visits > rule.visits_per_day)
+        over = any(flags)
         reason = ", ".join(parts) or why
         if over:
-            return Decision("intervene", rule.id, reason, uuid.uuid4().hex[:12])
+            # Only what ran out, so the pop-up names the right limit.
+            spent = [p for p, out in zip(parts, flags) if out]
+            return Decision("intervene", rule.id, ", ".join(spent), uuid.uuid4().hex[:12])
         return Decision("count", rule.id, reason)
 
     def tick(self, now: float | None = None, away: bool = False) -> None:
@@ -499,13 +524,14 @@ class Policy:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
         return event["id"]
 
-    def log_intervention(self, d: Decision, screen: dict, reading: Reading) -> None:
+    def log_intervention(self, d: Decision, screen: dict, reading: Reading | None) -> None:
         """Only interventions are logged with screen content: they are the
-        moments the user's answer turns into a label (`harvest`)."""
+        moments the user's answer turns into a label (`harvest`). No reading:
+        the model was down and a rule's own site fired."""
         self._log({
             "type": "intervention", "id": d.id, "rule": d.rule, "reason": d.reason, "screen": screen,
-            "page_kind": reading.page_kind, "purpose": reading.purpose,
-            "p_hit": {v.rule_id: round(v.p_hit, 4) for v in reading.rules},
+            **({"page_kind": reading.page_kind, "purpose": reading.purpose,
+                "p_hit": {v.rule_id: round(v.p_hit, 4) for v in reading.rules}} if reading is not None else {}),
         })
 
     def log_response(self, decision_id: str, response: str, rule_id: str, **extra) -> None:

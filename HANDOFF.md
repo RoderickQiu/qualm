@@ -148,9 +148,31 @@ copy of the real data and on demo data; its guard (text/plain, a foreign
 Origin and a rebound Host get 403); rule on/off round-trips rules.toml
 byte for byte; `qualm serve` loads 8-bit Kev and answers through the SDK
 (0.58 s warm, 10 questions); focus/pause from the CLI reach a running
-watcher. Not verified: clicking through the new panel by hand for a day;
-the Return key in the "what's it for?" field on a real keyboard (it's
-wired so Return unlocks there, and takes you back otherwise).
+watcher.
+
+Live end-to-end (new app, isolated data, 8-bit server, a test rule on
+example.org so the running old app stayed out of it): Safari opened
+example.org, the screen dimmed and the panel came up with the evidence
+line from the model; Return = Take me back, and **Safari went back** to
+example.com (first time verified; "back" logged). Second visit: I need it
+→ "Unlock 10 min", a reason, Return → snoozed with the reason, Safari
+stayed. The menu bar item opened (visible next to the old one), "Start a
+focus session…" → the menu bar showed "50m"; `qualm focus --stop` and
+`qualm pause 15` from the CLI reached the running app within seconds.
+Not verified: a day of real use with the new panel; typing the reason
+with a Chinese input method active (Return commits the composition first,
+as it should, and the second Return unlocks).
+
+Then an independent review of the whole diff; fixed from it: the
+dashboard answered GETs for any Host (DNS rebinding could read your
+screen log and screenshots); a new focus or pause didn't re-judge the page
+you were on; a second focus session didn't close the first in the log; the
+15 s refresh could wipe what you were typing; with both a minute and a
+visit cap the pop-up could name the wrong one; a malformed session.json
+could stop the watcher; session and usage files are now written
+atomically. Also from the live test: while the model is down or timing
+out (it hit the 30 s timeout under swap), a rule's own sites still step
+in, as `sites` always promised.
 
 ### MVP (built after the trials)
 

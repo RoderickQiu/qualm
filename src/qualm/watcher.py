@@ -27,6 +27,9 @@ from .state import DEFAULT_CHAR_BUDGET, ScreenState, capture
 
 PANEL_TITLE = "Qualm"  # the intervention panel's window title
 OLD_PANEL_TITLES = ("SeeNot",)  # before the rename
+# What the policy gets when the model can't answer: nothing but the URL, so
+# only a rule's own sites and patterns can hit.
+NO_READING = Reading(sensitive=0.0, page_kind="other", page_probs={}, purpose="", purpose_probs={}, rules=[], latency_ms=0.0)
 CACHE_SIZE = 1000  # answers kept, keyed by exactly what the model reads and is asked
 DWELL_S = 4.0  # a pop-up waits until you've been on the page this long
 
@@ -85,6 +88,7 @@ class Watcher:
         self._cache: OrderedDict[str, Reading] = OrderedDict()
         self._pending: dict | None = None  # a judgement with a pop-up, waiting out DWELL_S
         self._changed_at = 0.0  # when the current screen appeared (monotonic)
+        self._rejudge = False  # set when focus or pause changed
         self.dwell = DWELL_S
         self.presence = Presence() if presence else None
 
@@ -106,7 +110,12 @@ class Watcher:
         if (m := self._mtime(self._session_path)) != self._session_mtime:
             self._session_mtime = m
             self.policy.reload_session()
-            self.on_status("focus or pause changed")
+            # Focus or pause changes what the screen you're on means: judge it
+            # again now (from the cache), not when you next move.
+            self._rejudge = True
+            f = self.policy.focusing()
+            self.on_status(f"paused until {time.strftime('%H:%M', time.localtime(self.policy.paused_until))}"
+                           if self.policy.paused() else f"focus: {f['intent']}" if f else "watching")
         if self._exc_path.exists() and self._exc_path.stat().st_mtime != self._exc_mtime:
             self._exc_mtime = self._exc_path.stat().st_mtime
             self.policy.reload_exceptions()
@@ -164,6 +173,9 @@ class Watcher:
             if s.signature() != last_sig:
                 last_sig, changed_at = s.signature(), now
                 self._changed_at = now
+            elif self._rejudge:
+                changed_at = now  # as if the screen had just appeared: judged after the debounce
+            self._rejudge = False
             self._settle_pending(s, now)
             # A new screen (app, title or URL): ask once it has been stable for
             # the debounce window. The same screen whose text changed (a feed
@@ -213,11 +225,17 @@ class Watcher:
             reading = self._ask(client, state)
         except Exception as e:  # server down, timeout: say so, keep watching
             self.on_status(f"model unreachable: {type(e).__name__}")
-            time.sleep(5)
-            return False
-        self.on_status("watching")
-        decisions = self.policy.decide(state, reading, s.bundle_id)
-        if reading.sensitive >= 0.5 and shot:
+            if not any(r.matches_url(s.url) for r in self.policy.active_rules()):
+                time.sleep(5)
+                return False
+            # A rule's own sites are a hit without the model's say, so they
+            # still step in while it's down or swapped out (a 30 s timeout).
+            decisions = self.policy.decide(state, NO_READING, s.bundle_id)
+            reading = None
+        else:
+            self.on_status("watching")
+            decisions = self.policy.decide(state, reading, s.bundle_id)
+        if reading is not None and reading.sensitive >= 0.5 and shot:
             # Taken before the model said it was sensitive: don't keep it.
             (self.policy.data_dir / "shots" / shot).unlink(missing_ok=True)
             self._shot_sig, shot = None, ""
@@ -229,7 +247,7 @@ class Watcher:
             self._pending = pending
         else:
             self._finish(pending, shown=True)
-        return True
+        return reading is not None  # no answer: ask again next time
 
     def _settle_pending(self, s: ScreenState, now: float) -> None:
         p = self._pending

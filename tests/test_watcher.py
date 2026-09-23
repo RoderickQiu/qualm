@@ -63,9 +63,9 @@ def test_a_failed_ask_is_retried(monkeypatch, tmp_path):
     assert asked[:2] == [1.0, 31.0]
 
 
-def judged(monkeypatch, tmp_path, screens):
+def judged(monkeypatch, tmp_path, screens, model_down=False):
     """Like run(), but through the real _judge with a fake model whose answer
-    hits the shortvideo rule. Returns (model calls, events)."""
+    hits the shortvideo rule (or, model_down, which times out). Returns (model calls, events)."""
     from qualm.decide import Reading, RuleVerdict
     from qualm.rules import Rule
 
@@ -73,6 +73,8 @@ def judged(monkeypatch, tmp_path, screens):
 
     def fake_ask(client, state, rules, lang, allow):
         calls.append(state["url"])
+        if model_down:
+            raise TimeoutError("swapped out")
         return Reading(0.0, "single_item", {"single_item": 0.9}, "entertain", {"entertain": 0.9},
                        [RuleVerdict("shortvideo", "violates", 0.9, {})], 100.0)
 
@@ -85,7 +87,7 @@ def judged(monkeypatch, tmp_path, screens):
     monkeypatch.setattr(w, "ask", fake_ask)
     monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
     monkeypatch.setattr(w.time, "sleep", lambda _: clock.__setitem__("t", clock["t"] + 1.0))
-    policy = Policy(Settings(), [Rule("shortvideo", "deny", "short videos", threshold=0.5)], tmp_path)
+    policy = Policy(Settings(), [Rule("shortvideo", "deny", "short videos", threshold=0.5, sites=("tiktok.com",))], tmp_path)
     watcher = w.Watcher(policy, events.append, interval=0, debounce=0.5, recheck=30, shots=False, presence=False)
 
     def capture(skip=()):
@@ -115,6 +117,14 @@ def test_a_popup_is_dropped_if_you_leave_first(monkeypatch, tmp_path):
 def test_going_back_to_a_page_uses_the_cache(monkeypatch, tmp_path):
     calls, events = judged(monkeypatch, tmp_path, [page("a")] * 6 + [page("b")] * 6 + [page("a")] * 6)
     assert calls == ["a", "b"] and events[-1].reading.cached
+
+
+def test_a_rules_own_site_still_steps_in_while_the_model_is_down(monkeypatch, tmp_path):
+    calls, events = judged(monkeypatch, tmp_path, [page("https://www.tiktok.com/@a/video/1")] * 10, model_down=True)
+    assert events and events[0].reading is None
+    assert [(d.action, d.reason) for d in events[0].decisions] == [("intervene", "matches URL pattern")]
+    calls, events = judged(monkeypatch, tmp_path / "b", [page("https://example.com/")] * 10, model_down=True)
+    assert calls and not events  # no site of its own: nothing to go on
 
 
 def test_another_panel_is_never_judged(monkeypatch, tmp_path):
@@ -158,3 +168,28 @@ def test_a_focus_session_started_elsewhere_reaches_the_running_policy(tmp_path):
     start_focus(tmp_path, "write the report", 30)  # what `qualm focus` does
     watcher._reload_rules()
     assert policy.focusing()["intent"] == "write the report"
+
+
+def test_starting_focus_rejudges_the_screen_you_are_on(monkeypatch, tmp_path):
+    from qualm.policy import start_focus
+
+    clock = {"t": 0.0}
+    asked = []
+    front = types.SimpleNamespace(processIdentifier=lambda: -1)
+    monkeypatch.setattr(w, "NSWorkspace", types.SimpleNamespace(sharedWorkspace=lambda: types.SimpleNamespace(frontmostApplication=lambda: front)))
+    monkeypatch.setattr(w, "make_client", lambda: None)
+    monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
+    watcher = w.Watcher(Policy(Settings(), [], tmp_path), lambda ev: None, interval=0, debounce=0.5, recheck=30, presence=False)
+
+    def sleep(_):
+        clock["t"] += 1.0
+        if clock["t"] == 10:
+            start_focus(tmp_path, "write", 30)  # from the CLI, mid-page
+        if clock["t"] >= 20:
+            watcher.stop.set()
+
+    monkeypatch.setattr(w, "capture", lambda skip=(): page("a"))
+    monkeypatch.setattr(w.time, "sleep", sleep)
+    watcher._judge = lambda client, s: asked.append(clock["t"]) or True
+    watcher.run()
+    assert asked == [1.0, 11.0]

@@ -246,7 +246,7 @@ def insights(data_dir: Path, rules: list[Rule], days: int = 14, weeks: int = 8) 
     budgets = [{"rule": r.id, "minutes_per_day": r.minutes_per_day, "visits_per_day": r.visits_per_day,
                 "minutes": [round(history.get(d, {}).get(r.id, {}).get("seconds", 0) / 60, 1) for d in span],
                 "visits": [history.get(d, {}).get(r.id, {}).get("visits", 0) for d in span]}
-               for r in rules if r.kind == "time_cap"]
+               for r in rules if r.kind == "time_cap" and r.enabled]
     reflections = {}
     for e in _lines(data_dir / "reflections.jsonl"):
         reflections[e["week"]] = e
@@ -355,6 +355,8 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
             "budgets": settings.budgets,
         }
 
+    ok_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # quiet
             pass
@@ -370,6 +372,8 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
             self._send(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8")
 
         def do_GET(self):
+            if not self._our_host():
+                return self._send(403, b"", "text/plain")
             if self.path == "/":
                 self._send(200, PAGE_FILE.read_bytes(), "text/html; charset=utf-8")
             elif self.path == "/api/data":
@@ -387,14 +391,17 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
             else:
                 self._send(404, b"", "text/plain")
 
+        def _our_host(self) -> bool:
+            """A page on another domain that resolves to 127.0.0.1 (DNS rebinding)
+            sends its own name as Host: it may not read, let alone change, anything."""
+            return self.headers.get("Host") in ok_hosts
+
         def _trusted(self) -> bool:
             """Only this page may change things. A site open in your browser can
             send a request to 127.0.0.1 too; it can't send JSON without asking
-            first (CORS), and can't pass for this host (DNS rebinding)."""
-            ok_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+            first (CORS), and can't pass for this host."""
             origin = self.headers.get("Origin")
-            return (self.headers.get("Host") in ok_hosts
-                    and (origin is None or origin.removeprefix("http://") in ok_hosts)
+            return (self._our_host() and (origin is None or origin.removeprefix("http://") in ok_hosts)
                     and self.headers.get("Content-Type", "").startswith("application/json"))
 
         def do_POST(self):
@@ -433,6 +440,8 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
                 elif self.path == "/api/reflect":
                     reflect(data_dir, str(body["week"]), str(body["answer"]), str(body.get("note", "")))
                 elif self.path == "/api/exception":
+                    if body.get("rule") not in {r.id for r in load_config(rules_path)[1]}:
+                        raise ValueError(f"no rule {body.get('rule')!r}")
                     if not body.get("text", "").strip():
                         raise ValueError("empty exception")
                     add_exception(data_dir, body["rule"], body["text"])

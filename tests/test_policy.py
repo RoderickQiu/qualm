@@ -352,3 +352,53 @@ def test_insights_join_pop_ups_to_answers_and_focus_sessions(tmp_path):
     f = got["focus"][-1]
     assert f["intent"] == "write the report" and f["running"] and f["popups"] == 2 and f["back"] == 1 and f["minutes"] == 0
     assert sum(map(sum, got["heat"])) == 2
+
+
+def test_review_fixes_session_and_budget(tmp_path):
+    from qualm.explain import headline, ordinal
+    from qualm.policy import read_session, start_focus
+
+    # A new focus session closes the running one in the log.
+    start_focus(tmp_path, "a", 50)
+    start_focus(tmp_path, "b", 25)
+    kinds = [(e["type"], e["intent"]) for e in map(json.loads, (tmp_path / "decisions.jsonl").open())]
+    assert kinds == [("focus", "a"), ("focus_end", "a"), ("focus", "b")]
+    # A hand-written or broken session file counts as nothing set.
+    for bad in ('{"paused_until": null}', "[1, 2]", '{"focus": {"intent": 3}}', "{half"):
+        (tmp_path / "session.json").write_text(bad)
+        assert read_session(tmp_path) == {"paused_until": 0.0, "focus": None}
+    # With both limits, the pop-up names the one that ran out.
+    both = Rule("videos", "time_cap", "videos", minutes_per_day=45, visits_per_day=5)
+    p = Policy(Settings(), [both], tmp_path)
+    p.usage.add("videos", seconds=46 * 60, visits=3)
+    d = p._budget(both, "x")
+    assert d.reason == "46 of 45 min today" and headline(d, both, "en")[1].startswith("That's today's 45 minutes")
+    assert [ordinal(n) for n in (2, 3, 11, 21, 22, 112)] == ["2nd", "3rd", "11th", "21st", "22nd", "112th"]
+
+
+def test_the_dashboard_answers_only_to_its_own_host(tmp_path):
+    import threading
+    import urllib.request
+
+    from qualm.review import start_server
+
+    rules = tmp_path / "rules.toml"
+    rules.write_text(open("rules.example.toml", encoding="utf-8").read(), encoding="utf-8")
+    server = start_server(tmp_path, rules, 0)
+    port = server.server_address[1]
+    server.server_close()
+    server = start_server(tmp_path, rules, port)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def get(host):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/data", headers={"Host": host})
+        try:
+            return urllib.request.urlopen(req).status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    try:
+        assert get(f"127.0.0.1:{port}") == 200 and get(f"localhost:{port}") == 200
+        assert get(f"evil.example:{port}") == 403
+    finally:
+        server.shutdown()

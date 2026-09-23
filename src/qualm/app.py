@@ -335,7 +335,9 @@ class Controller(NSObject):
         checking = ev.reading is not None and not self.demo
         self.evidence_text = "Checking which part of the screen triggered it…" if checking else ""
         self.why.setStringValue_("")
+        self.why.setPlaceholderString_("What's it for? A few words.")
         self.back.setKeyEquivalent_("\r")
+        self.panel.setDefaultButtonCell_(self.back.cell())
         self.need.setKeyEquivalent_("")
         self.snooze_minutes = FOCUS_SNOOZE_MINUTES if focus else SNOOZE_MINUTES
         self.back.setTitle_("Back to it" if focus else "Take me back")
@@ -431,6 +433,7 @@ class Controller(NSObject):
             self.need.setEnabled_(True)
             self.back.setKeyEquivalent_("")  # Return now means "unlock", from the field or the button
             self.need.setKeyEquivalent_("\r")
+            self.panel.setDefaultButtonCell_(self.need.cell())
             self._layout()
             self.panel.makeFirstResponder_(self.why)
             return
