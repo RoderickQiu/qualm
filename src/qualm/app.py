@@ -74,7 +74,9 @@ class Controller(NSObject):
     @objc.python_method
     def setup(self, policy: Policy, rules_path: str, demo: str | None = None):
         self.policy, self.rules_path, self.demo = policy, rules_path, demo
-        self.server = None  # the local model server this app started (localmodel.ManagedServer)
+        self.server = None  # the local model server (localmodel.ManagedServer)
+        self.watcher = None  # set by run_app, to judge the screen again after a switch
+        self.last_reading = None  # (backend, seconds) of the last model answer, for the Model menu
         self.current: tuple[Decision, Event] | None = None
         self.last: Event | None = None  # the latest judged screen, for "This should have been blocked"
         # The panel: "ask" -> "why" (what do you need it for) -> "done" (a short
@@ -125,10 +127,35 @@ class Controller(NSObject):
         self.pause_item.setSubmenu_(pause_menu)
         self.resume_item = self._item("Resume", "resume:")
         self.block_item = self._item("Pop-ups block clicks behind them", "toggleBlock:")
+
+        # Where the model runs: both choices, the one in use ticked; switching
+        # is one click once both are set up (a key for hosted).
+        self.model_menu = NSMenu.alloc().init()
+        self.model_menu.setAutoenablesItems_(False)
+        self.model_local = self._item("On this Mac (Kev)", "pickModel:", tag=0)
+        self.model_hosted = self._item("Hosted by TypeSafe (Jev)", "pickModel:", tag=1)
+        self.model_note = self._item("")
+        for item in (self.model_local, self.model_hosted, NSMenuItem.separatorItem(), self.model_note):
+            self.model_menu.addItem_(item)
+        self.model_item = self._item("Model")
+        self.model_item.setEnabled_(True)
+        self.model_item.setSubmenu_(self.model_menu)
+        # Each rule on or off.
+        self.rules_menu = NSMenu.alloc().init()
+        self.rules_menu.setAutoenablesItems_(False)
+        self.rules_item = self._item("Watch for")
+        self.rules_item.setEnabled_(True)
+        self.rules_item.setSubmenu_(self.rules_menu)
+        # From Qualm.app only: a checkout's login item would start without Accessibility.
+        from . import paths
+
+        self.login_item = self._item("Open at login", "toggleLogin:") if paths.bundle() else None
+        menu.setDelegate_(self)
         for item in (self.status_line, self.usage_line, NSMenuItem.separatorItem(),
                      self.focus_line, self.focus_item, self.end_focus_item, self.pause_item, self.resume_item,
                      NSMenuItem.separatorItem(),
-                     self.block_item,
+                     self.model_item, self.rules_item, self.block_item, *([self.login_item] if self.login_item else []),
+                     NSMenuItem.separatorItem(),
                      self._item("This should have been blocked", "flagMiss:"),
                      self._item("Open dashboard", "openReview:", "d"),
                      self._item("Edit rules…", "openRules:"), NSMenuItem.separatorItem(),
@@ -168,6 +195,109 @@ class Controller(NSObject):
         usage = self.policy.usage_summary()
         self.usage_line.setTitle_(usage)
         self.usage_line.setHidden_(not usage)
+
+    def menuWillOpen_(self, menu):
+        self._refresh_menus()
+
+    @objc.python_method
+    def _refresh_menus(self):
+        """The Model and Watch for submenus, as they are right now (read when the menu opens)."""
+        import os
+
+        from . import autostart, keychain, localmodel
+        from .decide import backend
+        from .setup import rule_name
+
+        name = backend(self.policy.settings)
+        forced = bool(os.environ.get("QUALM_BACKEND"))
+        has_key = name == "jev" or bool(keychain.api_key())
+        self.model_item.setTitle_(f"Model: {'on this Mac' if name == 'kev' else 'hosted by TypeSafe'}")
+        self.model_local.setState_(1 if name == "kev" else 0)
+        self.model_hosted.setState_(1 if name == "jev" else 0)
+        self.model_local.setEnabled_(localmodel.apple_silicon() and not forced)
+        self.model_hosted.setEnabled_(has_key and not forced)
+        self.model_hosted.setTitle_("Hosted by TypeSafe (Jev)" + ("" if has_key else ": needs a key, `qualm setup`"))
+        self.model_hosted.setToolTip_("About 0.2 s per reading; the text of each new screen is sent to TypeSafe.")
+        self.model_local.setToolTip_("About 1 s per reading, 6-7 GB of memory; nothing leaves this Mac.")
+        if forced:
+            note = f"Set by QUALM_BACKEND={os.environ['QUALM_BACKEND']}"
+        elif self.last_reading:
+            who, secs = self.last_reading
+            note = f"Last reading: {secs:.1f} s ({'on this Mac' if who == 'kev' else 'hosted'})"
+        else:
+            note = "No reading yet"
+        self.model_note.setTitle_(note)
+
+        self.rules_menu.removeAllItems()
+        from .rules import load_config
+
+        try:
+            every = load_config(self.rules_path)[1]  # the policy keeps only the rules that are on
+        except Exception:
+            every = self.policy.rules
+        for r in every:
+            item = self._item(rule_name(r.id), "toggleRule:")
+            item.setRepresentedObject_(r.id)
+            item.setState_(1 if r.enabled else 0)
+            item.setToolTip_(r.description_en or r.description)
+            self.rules_menu.addItem_(item)
+        if self.login_item:
+            self.login_item.setState_(1 if autostart.installed() else 0)
+
+    @objc.python_method
+    def _saved(self, change) -> bool:
+        """One edit to rules.toml, then the policy reloaded from it; False (and why, in the menu) if refused."""
+        from .config import Config
+        from .rules import load_config
+
+        try:
+            change(Config(self.rules_path))
+        except Exception as e:  # over the question limit, a file that doesn't load
+            self.set_status(f"couldn't save: {e}"[:80])
+            return False
+        self.policy.reload(*load_config(self.rules_path))
+        if self.watcher is not None:
+            self.watcher._rejudge = True  # the screen you're on, judged again under the change
+        return True
+
+    def pickModel_(self, sender):
+        from .decide import backend
+
+        want = "kev" if sender.tag() == 0 else "jev"
+        if want == backend(self.policy.settings):
+            return
+        if not self._saved(lambda c: c.edit_settings({"backend": "jev"} if want == "jev" else {},
+                                                     [] if want == "jev" else ["backend"])):
+            return
+        if want == "jev" and self.server is not None:
+            self.server.stop()  # only a server this app started; one from `qualm serve` is left running
+            self.server = None
+        self.ensure_server()
+        self.set_status("model: hosted by TypeSafe" if want == "jev" else "model: on this Mac")
+        self._refresh_menus()
+
+    def toggleRule_(self, sender):
+        from .rules import load_config
+
+        rid = sender.representedObject()
+        rule = next((r for r in load_config(self.rules_path)[1] if r.id == rid), None)
+        if rule is None:
+            return
+        on = not rule.enabled
+        if self._saved(lambda c: c.edit("rules", rid, {} if on else {"enabled": False}, ["enabled"] if on else [])):
+            from .setup import rule_name
+
+            self.set_status(f"{rule_name(rid)}: {'on' if on else 'off'}")
+        self._refresh_menus()
+
+    def toggleLogin_(self, sender):
+        from . import autostart
+
+        try:
+            autostart.uninstall(quiet=True) if autostart.installed() else autostart.install(quiet=True)
+        except Exception as e:
+            self.set_status(f"couldn't change it: {e}"[:80])
+        self._refresh_menus()
 
     @objc.python_method
     def ensure_server(self):
@@ -265,6 +395,10 @@ class Controller(NSObject):
         summary = ", ".join(f"{d.action} {d.rule}".strip() for d in shown) or "nothing"
         if ev.reading is not None:
             self.last = ev
+            if not ev.reading.cached:
+                from .decide import backend
+
+                self.last_reading = (backend(self.policy.settings), ev.reading.latency_ms / 1000)
         self.set_status(f"{ev.screen.app.strip(chr(0x200e))}: {summary}")
         hit = next((d for d in ev.decisions if d.action == "intervene"), None)
         if hit and not self.panel.isVisible():
@@ -786,6 +920,7 @@ def run_app(policy: Policy | None, rules_path: str, budget: int, demo: str | Non
         else:
             ctrl.ensure_server()
             watcher = Watcher(policy, on_event, on_status, budget=budget, rules_path=rules_path)
+            ctrl.watcher = watcher
             threading.Thread(target=watcher.run, daemon=True).start()
         if review:
             from .review import PORT, start_server

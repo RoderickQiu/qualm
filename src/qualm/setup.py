@@ -22,6 +22,21 @@ from . import autostart, keychain, localmodel, paths
 from .config import EXAMPLE, Config
 from .rules import load_config
 
+# The starter rules, as a person would name them (the setup window, the menu);
+# the sentence the model reads stays in rules.toml.
+RULE_LOOK = {
+    "shortvideo": ("Short videos", "play.rectangle.on.rectangle"),
+    "feeds": ("Recommendation feeds", "square.grid.2x2"),
+    "livestream": ("Livestreams", "dot.radiowaves.left.and.right"),
+    "videos": ("Entertainment videos", "tv"),
+    "social": ("Social media", "bubble.left.and.bubble.right"),
+}
+
+
+def rule_name(rule_id: str) -> str:
+    return RULE_LOOK.get(rule_id, (rule_id.replace("_", " ").capitalize(), ""))[0]
+
+
 ACCESSIBILITY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 
 

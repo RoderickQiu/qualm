@@ -295,6 +295,20 @@ terminals, everything relative to the checkout, "16 GB" as the bar.
   the same minute (both lines removed, .bak reset), and `setup.apply` now
   only ever writes the per-user copy.
 
+- **Menu bar toggles**: *Model* (On this Mac / Hosted, ticked; hosted
+  clickable once a key is saved; the last reading's time, to compare) switches
+  `[settings] backend`, judges the current screen again, and stops a server
+  the app started when going hosted (one from `qualm serve` is left alone).
+  *Watch for* turns each rule on or off (read from rules.toml, so rules that
+  are off stay listed). *Open at login* only in Qualm.app. The watcher's
+  answer cache is keyed by backend too, so a switch really asks the other
+  model. Tested by building the real menu in a throwaway home and clicking
+  through (hosted, a rule off, back, on).
+- **Jev's cost, from real use** ($0.042 per million input tokens, output
+  free; early-access pricing): a call is ~1,500 input tokens (5 rules, 2
+  allow classes); the two logged days made 339 and 877 model calls over
+  ~7-8 active hours: ~$0.02-0.06 a day, ~$0.50-1.25 a month.
+
 93 tests.
 
 ### MVP (built after the trials)
@@ -711,6 +725,9 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    (copies rules.toml and data/ to Application Support, asks the four
    questions; on this Mac it recommends hosted, because of swap), then
    `uv run qualm app`, or open dist/Qualm.app (then grant it Accessibility).
+   Done 2026-09-23 on this Mac: data copied home, the app runs from the
+   checkout (nohup, log in ~/Library/Logs/Qualm/app.log) against the
+   existing 8-bit server; readings 3-20 s from swap.
    With the local model, the first start builds Kev-4B's 8-bit cache: it
    loads bf16 once more (~11 GB peak), so stop the old server first. Not
    verified yet: Qualm.app opened from Finder, the permission prompt's name,

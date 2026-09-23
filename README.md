@@ -120,7 +120,8 @@ asks four things:
 4. **Open at login.**
 
 Your rules and data live in `~/Library/Application Support/Qualm`. The app starts the local model itself
-and stops it when you quit. The app is ad-hoc signed, not notarized: on a Mac that didn't build it, the
+and stops it when you quit. From the menu bar you can switch the model, turn each rule on or off, pause,
+and start a focus session. Hosted Jev costs about $0.02–0.06 a workday at TypeSafe's early-access price. The app is ad-hoc signed, not notarized: on a Mac that didn't build it, the
 first open needs right-click → Open ([packaging/README.md](packaging/README.md)).
 
 **From source** (a Mac with Apple silicon and [uv](https://docs.astral.sh/uv/); tested on macOS 27, M5 Pro, 24 GB):

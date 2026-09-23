@@ -218,7 +218,8 @@ class Watcher:
         rules = self.policy.rules
         questions = build_questions(rules, settings.lang, settings.allow)
         key = hashlib.sha1(json.dumps(
-            [state, {k: q.model_dump(mode="json", exclude_none=True) for k, q in questions.items()}],
+            [getattr(client, "backend", ""), state,  # a different model is a different answer
+             {k: q.model_dump(mode="json", exclude_none=True) for k, q in questions.items()}],
             sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         if key in self._cache:
             self._cache.move_to_end(key)

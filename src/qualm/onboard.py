@@ -68,16 +68,6 @@ BAR_H = 64.0
 KEY_URL = "https://console.typesafe.ai"
 ICON = Path(__file__).resolve().parent / "icon.png"
 
-# The starter rules, as a person would name them; the sentence the model reads stays in rules.toml.
-RULE_LOOK = {
-    "shortvideo": ("Short videos", "play.rectangle.on.rectangle"),
-    "feeds": ("Recommendation feeds", "square.grid.2x2"),
-    "livestream": ("Livestreams", "dot.radiowaves.left.and.right"),
-    "videos": ("Entertainment videos", "tv"),
-    "social": ("Social media", "bubble.left.and.bubble.right"),
-}
-
-
 # -- small builders ---------------------------------------------------------------
 
 def _fixed(view, width=None, height=None):
@@ -368,7 +358,7 @@ class Onboarding(NSObject):
         rows, self.rule_switches = [], []
         starters = s.starters()
         for i, x in enumerate(starters):
-            title, symbol = RULE_LOOK.get(x["id"], (x["what"].split(",")[0].capitalize(), "circle"))
+            title, symbol = s.RULE_LOOK.get(x["id"], (x["what"].split(",")[0].capitalize(), "circle"))
             what = x["what"]
             examples = what.split("such as ", 1)[1] if "such as " in what else what.split(": ", 1)[-1]
             words = _stack([_text(title, 13, 0.3),
@@ -414,7 +404,7 @@ class Onboarding(NSObject):
     def _fill_summary(self):
         for v in list(self.summary.views()):
             self.summary.removeView_(v)
-        on = [RULE_LOOK.get(i, (i, ""))[0] for i, sw in self.rule_switches if sw.state()]
+        on = [s.RULE_LOOK.get(i, (i, ""))[0] for i, sw in self.rule_switches if sw.state()]
         lines = [
             ("laptopcomputer" if self.backend == "kev" else "cloud",
              "The model runs on this Mac" if self.backend == "kev" else "The model is hosted by TypeSafe",
