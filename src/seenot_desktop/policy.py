@@ -238,12 +238,12 @@ class Policy:
             return Decision("intervene", rule.id, reason, uuid.uuid4().hex[:12])
         return Decision("count", rule.id, reason)
 
-    def tick(self, now: float | None = None) -> None:
+    def tick(self, now: float | None = None, away: bool = False) -> None:
         """Call on every loop: adds the time since the last tick to the rules
-        the current screen counts toward."""
+        the current screen counts toward, unless you're away (presence.py)."""
         now = time.time() if now is None else now
         with self.lock:
-            if self._last_tick is not None:
+            if self._last_tick is not None and not away:
                 elapsed = min(now - self._last_tick, MAX_TICK_S)
                 for rule_id in self.counting:
                     self.usage.add(rule_id, seconds=elapsed)

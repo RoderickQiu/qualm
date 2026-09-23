@@ -18,7 +18,7 @@ def run(monkeypatch, tmp_path, screens, fail_first=False):
     monkeypatch.setattr(w, "NSWorkspace", types.SimpleNamespace(sharedWorkspace=lambda: workspace))
     monkeypatch.setattr(w, "make_client", lambda: None)
     monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
-    watcher = w.Watcher(Policy(Settings(), [], tmp_path), lambda ev: None, interval=0, debounce=0.5, recheck=30)
+    watcher = w.Watcher(Policy(Settings(), [], tmp_path), lambda ev: None, interval=0, debounce=0.5, recheck=30, presence=False)
 
     def capture(skip=()):
         try:
@@ -86,7 +86,7 @@ def judged(monkeypatch, tmp_path, screens):
     monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
     monkeypatch.setattr(w.time, "sleep", lambda _: clock.__setitem__("t", clock["t"] + 1.0))
     policy = Policy(Settings(), [Rule("shortvideo", "deny", "short videos", threshold=0.5)], tmp_path)
-    watcher = w.Watcher(policy, events.append, interval=0, debounce=0.5, recheck=30, shots=False)
+    watcher = w.Watcher(policy, events.append, interval=0, debounce=0.5, recheck=30, shots=False, presence=False)
 
     def capture(skip=()):
         try:
@@ -120,3 +120,29 @@ def test_going_back_to_a_page_uses_the_cache(monkeypatch, tmp_path):
 def test_another_seenot_panel_is_never_judged(monkeypatch, tmp_path):
     panel = ScreenState(app="python3", bundle_id="", window_title="SeeNot", text=["feeds, Weibo hot search"])
     assert run(monkeypatch, tmp_path, [panel] * 5) == []
+
+
+def test_presence(monkeypatch):
+    from seenot_desktop import presence as pr
+
+    p = pr.Presence(idle_s=120)
+    monkeypatch.setattr(pr, "screen_locked", lambda: False)
+    monkeypatch.setattr(pr, "idle_seconds", lambda: 10)
+    assert not p.away("Safari")
+    monkeypatch.setattr(pr, "idle_seconds", lambda: 600)
+    monkeypatch.setattr(pr, "display_kept_awake_by", lambda app: app == "Google Chrome")
+    assert p.away("Safari")  # idle, nothing playing
+    assert not p.away("Google Chrome")  # idle, but a video is playing in the front app
+    monkeypatch.setattr(pr, "screen_locked", lambda: True)
+    assert p.away("Google Chrome")
+
+
+def test_owner_matching_ignores_keep_awake_tools(monkeypatch):
+    from seenot_desktop import presence as pr
+
+    out = """Listed by owning process:
+   pid 1534(Caffeine): [0x1] 00:00:03 PreventUserIdleDisplaySleep named: "Caffeine prevents sleep"
+   pid 99(Google Chrome Helper (Renderer)): [0x2] 00:01:00 PreventUserIdleDisplaySleep named: "Video Wake Lock"
+"""
+    monkeypatch.setattr(pr.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=out))
+    assert pr.display_kept_awake_by("Google Chrome") and not pr.display_kept_awake_by("Safari")

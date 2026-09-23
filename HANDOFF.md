@@ -62,7 +62,6 @@ Not built:
   players, canvases).
 - Event-driven triggers (currently a 0.5 s poll of the front window; the model is
   asked only when the screen changes, or its text changes, at most every 30 s).
-- Idle detection: time caps keep counting while you're away from the keyboard.
 - A signed .app bundle or launch at login (it runs from the terminal).
 
 ## Run it
@@ -320,7 +319,6 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    description in rules.toml.
 3. **Fix what the trials showed is weak:**
    - Feeds on sites that look like single items (X profiles, Guba lists).
-   - Idle detection, so a Weibo tab left open overnight doesn't eat the budget.
 4. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
    your own labels:
    `seenot-desktop export --lang en --labels data/labels.jsonl --out train.jsonl`, then

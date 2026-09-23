@@ -332,6 +332,7 @@ source = { editable = "." }
 dependencies = [
     { name = "pyobjc-framework-applicationservices" },
     { name = "pyobjc-framework-cocoa" },
+    { name = "pyobjc-framework-quartz" },
     { name = "typesafe-sdk" },
 ]
 
@@ -344,6 +345,7 @@ dev = [
 requires-dist = [
     { name = "pyobjc-framework-applicationservices", specifier = ">=12.2.2" },
     { name = "pyobjc-framework-cocoa", specifier = ">=12.2.2" },
+    { name = "pyobjc-framework-quartz", specifier = ">=12.2.2" },
     { name = "typesafe-sdk", specifier = ">=0.7.1" },
 ]
 

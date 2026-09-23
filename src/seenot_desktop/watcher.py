@@ -21,6 +21,7 @@ from AppKit import NSRunningApplication, NSWorkspace
 
 from .decide import Reading, ask, make_client
 from .policy import Decision, Policy
+from .presence import Presence
 from .rules import build_questions, load_config
 from .state import DEFAULT_CHAR_BUDGET, ScreenState, capture
 
@@ -67,6 +68,7 @@ class Watcher:
         recheck: float = 30.0,
         rules_path: str | None = None,
         shots: bool = True,
+        presence: bool = True,
     ):
         self.policy, self.on_event, self.on_status = policy, on_event, on_status
         self.budget, self.interval, self.debounce, self.recheck = budget, interval, debounce, recheck
@@ -81,6 +83,15 @@ class Watcher:
         self._pending: dict | None = None  # a judgement with a pop-up, waiting out DWELL_S
         self._changed_at = 0.0  # when the current screen appeared (monotonic)
         self.dwell = DWELL_S
+        self.presence = Presence() if presence else None
+
+    def _away(self, front) -> bool:
+        if self.presence is None:
+            return False
+        try:
+            return self.presence.away(str(front.localizedName() or "") if front is not None else "")
+        except Exception:  # never let presence detection stop the loop
+            return False
 
     def _reload_rules(self) -> None:
         """Edits to rules.toml and exceptions (by hand or from the review page) apply without a restart."""
@@ -127,8 +138,8 @@ class Watcher:
         while not self.stop.is_set():
             now = time.monotonic()
             self._reload_rules()
-            self.policy.tick()
             front = NSWorkspace.sharedWorkspace().frontmostApplication()
+            self.policy.tick(away=self._away(front))
             if front is None or front.processIdentifier() == me:
                 # Our own panel is in front: keep judging the screen behind it.
                 time.sleep(self.interval)

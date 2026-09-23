@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "pyobjc-framework-applicationservices>=12.2.2",
     "pyobjc-framework-cocoa>=12.2.2",
+    "pyobjc-framework-quartz>=12.2.2",
     "typesafe-sdk>=0.7.1",
 ]
 

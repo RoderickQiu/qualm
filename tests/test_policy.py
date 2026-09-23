@@ -233,3 +233,11 @@ def test_snoozes_are_counted_for_the_growing_wait(policy):
     policy.snooze("shortvideo", 10, "a")
     policy.snooze("shortvideo", 10, "b")
     assert policy.snoozes_in_last_hour() == 2
+
+
+def test_time_away_does_not_count(policy):
+    see(policy, "https://weibo.com/1", reading(social=0.5))
+    policy.tick(0.0)
+    policy.tick(5.0, away=True)
+    policy.tick(10.0)
+    assert policy.usage.get("social")[0] == 5.0
