@@ -190,6 +190,36 @@ def add_exception(data_dir: Path, rule_id: str, text: str) -> None:
         f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
 
+def week(data_dir: Path, days: int = 7) -> dict:
+    """The last `days` days: pop-ups shown per rule, what you did with them,
+    minutes and visits per time-capped rule."""
+    from datetime import date, timedelta
+
+    today = date.today()
+    span = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+    popups = {d: {} for d in span}
+    for j in load_judgements(data_dir):
+        day = j["at"][:10]
+        if day in popups:
+            for d in j["decisions"]:
+                if d["action"] == "intervene":
+                    popups[day][d["rule"]] = popups[day].get(d["rule"], 0) + 1
+    answers = {"back": 0, "snooze": 0, "fine": 0, "never": 0}
+    reasons = []
+    path = data_dir / "decisions.jsonl"
+    if path.exists():
+        for line in path.open(encoding="utf-8"):
+            e = json.loads(line)
+            if e.get("type") == "response" and e["at"][:10] in popups and e.get("response") in answers:
+                answers[e["response"]] += 1
+                if e.get("reason"):
+                    reasons.append({"at": e["at"], "rule": e.get("rule", ""), "reason": e["reason"]})
+    hist_path = data_dir / "usage_history.json"
+    history = json.loads(hist_path.read_text(encoding="utf-8")) if hist_path.exists() else {}
+    usage = {d: history.get(d, {}) for d in span}
+    return {"days": span, "popups": popups, "answers": answers, "reasons": reasons[-20:], "usage": usage}
+
+
 def never_places(data_dir: Path) -> list[dict]:
     """The apps and sites you said "never here" to, minus the ones you undid."""
     places: dict[str, dict] = {}
@@ -252,6 +282,7 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
                        "exceptions": list(r.exceptions)} for r in rules],
             "exceptions": [e for e in exceptions(data_dir) if not e.get("never")],
             "never": never_places(data_dir),
+            "week": week(data_dir),
             "tuning": tuning(data_dir, rules),
             "budgets": settings.budgets,
         }
@@ -400,6 +431,7 @@ textarea { width:100%; }
   <b>SeeNot</b>
   <a data-tab="review">Review <span id="nleft"></span></a>
   <a data-tab="all">All screens</a>
+  <a data-tab="week">This week</a>
   <a data-tab="tune">Tune rules</a>
   <span class="right" id="mode"></span>
 </nav>
@@ -644,6 +676,35 @@ function allView() {
   return h;
 }
 
+// ---- this week ----------------------------------------------------------
+function weekView() {
+  const W = D.week, rules = D.rules.map(r => r.id);
+  const total = W.days.reduce((n, d) => n + Object.values(W.popups[d]).reduce((a, b) => a + b, 0), 0);
+  const a = W.answers, answered = a.back + a.snooze + a.fine + a.never;
+  const pct = n => answered ? Math.round(100 * n / answered) + "%" : "–";
+  const byRule = {};
+  W.days.forEach(d => { for (const r in W.popups[d]) byRule[r] = (byRule[r] || 0) + W.popups[d][r]; });
+  const top = Object.entries(byRule).sort((x, y) => y[1] - x[1])[0];
+  let h = '<div class="panel"><h2>The last 7 days</h2><div style="font-size:16px">' + total + " pop-ups" +
+    (top ? ", most for <b>" + esc(top[0]) + "</b> (" + top[1] + ")" : "") + ".</div>" +
+    '<div class="small muted" style="margin-top:6px">You went back ' + a.back + "× (" + pct(a.back) + "), said you needed it " + a.snooze + "× (" + pct(a.snooze) +
+    "), said it was wrong " + (a.fine + a.never) + "× (" + pct(a.fine + a.never) + ")." +
+    (a.snooze > a.back ? " You snoozed more than you went back: maybe a rule is too strict, or a budget too small." : "") +
+    ((a.fine + a.never) > answered / 3 && answered >= 6 ? " A third or more were wrong: review them and let the thresholds re-tune." : "") + "</div></div>";
+  h += '<div class="panel"><h2>Pop-ups per day</h2><table class="tune"><tr><th>Day</th>' + rules.map(r => "<th>" + esc(r) + "</th>").join("") + "</tr>" +
+    W.days.map(d => "<tr><td>" + d.slice(5) + "</td>" + rules.map(r => "<td>" + (W.popups[d][r] || "") + "</td>").join("") + "</tr>").join("") + "</table></div>";
+  const capped = D.rules.filter(r => r.kind === "time_cap").map(r => r.id);
+  if (capped.length) {
+    h += '<div class="panel"><h2>Time on time-capped rules (minutes)</h2><div class="small muted" style="margin-bottom:6px">' +
+      (D.budgets ? "" : "Testing mode is on, so these don't count yet: every hit pops up instead. ") + "Time away from the screen isn't counted.</div>" +
+      '<table class="tune"><tr><th>Day</th>' + capped.map(r => "<th>" + esc(r) + "</th>").join("") + "</tr>" +
+      W.days.map(d => "<tr><td>" + d.slice(5) + "</td>" + capped.map(r => { const u = W.usage[d][r]; return "<td>" + (u && u.seconds ? Math.round(u.seconds / 60) : "") + "</td>"; }).join("") + "</tr>").join("") + "</table></div>";
+  }
+  if (W.reasons.length) h += '<div class="panel"><h2>What you needed it for</h2>' + W.reasons.slice().reverse().map(x =>
+    '<div class="small"><span class="muted">' + x.at.slice(5, 16).replace("T", " ") + " · " + esc(x.rule) + "</span> " + esc(x.reason) + "</div>").join("") + "</div>";
+  return h;
+}
+
 // ---- tune tab -----------------------------------------------------------
 function tuneView() {
   let h = '<div class="panel"><h2>Thresholds, from your answers</h2><div class="small muted" style="margin-bottom:8px">A rule fires when its score reaches the threshold. ' +
@@ -681,7 +742,7 @@ function render() {
   $("#mode").textContent = D.budgets ? "budgets on" : "testing mode: every hit pops up";
   const n = queue().length;
   $("#nleft").textContent = n ? "(" + n + ")" : "";
-  $("#view").innerHTML = tab === "review" ? reviewView() : tab === "all" ? allView() : tuneView();
+  $("#view").innerHTML = tab === "review" ? reviewView() : tab === "all" ? allView() : tab === "week" ? weekView() : tuneView();
   const s = $("#search"); if (s && document.activeElement !== s && search) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
 }
 document.addEventListener("click", ev => {

@@ -73,6 +73,11 @@ class Usage:
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps({"day": self.day, "counts": self.counts}), encoding="utf-8")
+        # Every day's totals, for the review page's weekly summary.
+        hist_path = self.path.with_name("usage_history.json")
+        history = json.loads(hist_path.read_text(encoding="utf-8")) if hist_path.exists() else {}
+        history[self.day] = self.counts
+        hist_path.write_text(json.dumps(history), encoding="utf-8")
 
 
 class Policy:
