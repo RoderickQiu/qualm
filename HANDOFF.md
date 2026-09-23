@@ -236,6 +236,64 @@ demo data. Not verified: the live loop in a browser with the new code
 (the user was at the Mac; the demo pop-ups already interrupted them), and a
 day of real use.
 
+### The afternoon pass (2026-09-23): sections 1-3 of "what's left"
+
+The user: "for feed, low false positive is more important", then do the rest
+of correctness, engineering and interventions autonomously. Two forks did
+capture (state.py, ocr.py) and housekeeping (retention.py, uninstall,
+keychain); the rest in the main thread.
+
+- **Feeds, precision first**: in real use every feeds pop-up that fired on
+  the score alone (0.35-0.40: Slack's activity inbox, a claude.ai artifact,
+  Qualm's old page) was wrong, and every right one came from a site pattern
+  or feed_hit. Threshold 0.3 -> 0.5, plus weibo.com/ and m.weibo.cn/ as
+  sites. Replaying the real log: 10 pop-ups on 9 pages -> 5 on 4, all
+  Xiaohongshu feeds. Trials: precision 1.00 for Kev and Jev, recall Kev
+  0.60 -> 0.67, Jev 0.67. Applied to the user's rules.toml too.
+- **"Sensitive" audited**: 125 skipped of 1,933 judgements: 51 lock screen,
+  4 Touch ID, 69 Chrome, 1 other. The Chrome ones had no content logged; by
+  the pages before and after: checkouts, CMU/Duo sign-in, a password
+  manager, mail, ad consoles; none entertainment. Private pages now keep
+  their site (host only) and score, never title, text or screenshot.
+- **The shift on real screens**: 250 of the user's own screens (messaging
+  and mail left out) re-asked to Jev: the same decision as Kev on all 250;
+  none taken for private; page kind agrees 86%, purpose 78%; 0.19 s p50.
+- **Capture** (fork): Safari's AutoFill popover no longer leaks into later
+  pages (the walk drops what it read before the page, and skips menus and
+  popovers outside it); Chromium's empty first read is retried once per
+  process (0.3 s); **OCR** (Vision, zh-Hans + en-US, accurate) when a
+  non-browser window has under 20 characters of AX text and no text area
+  (so terminals, editors and notes are never pictured): ~70 ms warm.
+  `ScreenState.ocr` marks it. Not verified live: a real AutoFill popover, a
+  real Chromium first read.
+- **Event-driven watching** (`events.py`): AX observers on the front app
+  (focused/main window, title) and app activation wake the watcher; idle, it
+  reads every 3 s instead of 0.5 s (settling screens and waiting pop-ups
+  stay at 0.5 s). The app used ~2% CPU polling. Verified live: events
+  arrive and follow app switches.
+- **Retention** (fork): `keep_days` 90 (judgements, decisions; reviewed ones
+  kept), `keep_shots_days` 30; run at start and daily; the dashboard shows
+  "no screenshot" for pruned ones. **`qualm uninstall --all`** (`--dry-run`,
+  `--yes`): login item, keychain key, shim, Application Support, logs; the
+  Hugging Face downloads are listed with the command to remove them.
+- **Keychain**: the key moved from .env (Qualm.app reads no .env).
+- **Friction**: returning within 30 min after "Take me back" doubles the
+  "I need it" wait per return (with the snooze doubling, capped by
+  max_wait_s); in a focus session the first hit gets a corner nudge ("You're
+  here to: ...", Take me back / Not now), no dim, keyboard not taken, and the
+  full panel if still there 20 s later; the headline rotates between three
+  wordings per kind (a tooltip says so); focus words never rotate.
+- **The managed server, live**: the user's hand-started server stopped; the
+  app started its own from kev-env: the first start (building the 8-bit
+  copy, 4.2 GB) took 100 s and peaked at 16 GB; a later start from the copy
+  11 s and 4.8 GB. It restarts a server that stops (theirs or its own)
+  within ~5 s: verified by killing it. Readings 2-3 s after (was 3-20 s).
+- **Qualm.app, live**: `open` like Finder: the process is
+  Qualm.app/Contents/MacOS/Qualm, macOS names it "Qualm" (com.qualm.app,
+  with its icon), the setup assistant shows; the user's app didn't judge it.
+  Not done: granting it Accessibility (the user's click) and switching the
+  daily app to it.
+
 ### Setup, Qualm.app, the local model managed (day of 2026-09-23)
 
 Asked to make setup easier and more universal. Before: two repos, two
@@ -333,16 +391,8 @@ work tools, search, sensitive pages and anything opened on purpose.
 Verified working on this Mac (M5 Pro, 24 GB, macOS 27): `probe`, `ask`, `watch`,
 `eval`, `export`, `app --demo`. Not exercised: `label` and `harvest` (they need you).
 
-Not built:
-- Loading the 8-bit model without the bf16 peak: it loads bf16, merges the
-  LoRA, then quantizes, so the first minute needs the full 11 GB (and on a
-  swapped Mac, 1-5 minutes). Saving the quantized weights once would fix it.
-- OCR fallback for apps whose text isn't in the Accessibility tree (video
-  players, canvases).
-- Event-driven triggers (currently a 0.5 s poll of the front window; the model is
-  asked only when the screen changes, or its text changes, at most every 30 s).
-- A signed .app bundle: the menu bar item still shows as "python3" in menu bar
-  managers.
+Not built: a Developer ID signature (Qualm.app is ad-hoc signed, so each
+rebuild asks for Accessibility again).
 
 ## Run it
 
@@ -722,7 +772,10 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 
 ## Next steps, in order
 
-0. **Switch to the new version.** Quit the running `qualm app` (it
+0. **Move to Qualm.app** when convenient: quit the running copy (menu:
+   Quit), open dist/Qualm.app (or drag it to Applications), turn on "Qualm"
+   in System Settings > Privacy & Security > Accessibility. Its data folder
+   is already the one in use. Earlier step, done the same day: quit the running `qualm app` (it
    predates check-ins and setup), then in the checkout: `uv run qualm setup`
    (copies rules.toml and data/ to Application Support, asks the four
    questions; on this Mac it recommends hosted, because of swap), then
@@ -743,42 +796,23 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    the wording of a rule is the problem: `rules set ID what="..."`, then
    `rules test ID` and `rules tune`. Not run yet: the CLI loop on a rule
    someone new writes from scratch, with real answers.
-3. **Audit "sensitive"**: 60 Chrome pages were skipped as sensitive on day
-   one, unaudited. A false positive there hides a page from every rule.
-   (Sensitive judgements keep no content by design, so this needs `label`
-   or a temporary debug log.)
-4. **Fix what the trials showed is weak:** feeds on sites that look like
-   single items (X profiles, Guba lists).
-5. **Publish Kev-4B's 8-bit weights** (with Jared's say), so a first start
+3. **Publish Kev-4B's 8-bit weights** (with Jared's say), so a first start
    downloads ~4.5 GB instead of 9 and never loads bf16; and ask whether
    PyTorch can be optional for MLX serving (it's most of the 1 GB runtime).
-6. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
+4. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
    your own labels:
    `qualm export --lang en --labels data/labels.jsonl --out train.jsonl`, then
    `uv run python -m kev.train --data train.jsonl --init_from jaredpalmer/kev-4b --base Qwen/Qwen3.5-4B-Base --epochs 2 --lr 2e-5 --batch 1 --accum 8 --dtype bf16 --device cuda`.
    `--base` is required with `--init_from`; the default base is Qwen3-0.6B.
-7. **Make the watcher cheaper and wider:**
-   - Replace polling with an `AXObserver` (focused-window and title-changed
-     notifications) plus `NSWorkspace.didActivateApplicationNotification`.
-   - Add a Vision OCR fallback (`VNRecognizeTextRequest`, zh-Hans) when the
-     Accessibility tree yields no text.
-8. **Ship it:** Qualm.app exists (ad-hoc signed); left: a Developer ID and
+5. **Ship it:** Qualm.app exists (ad-hoc signed; opens and names itself "Qualm", verified); left: a Developer ID and
    notarization if it's to be shared widely, a license (none chosen yet), a
    public repository (the README is written for one).
-9. **Graded friction past the pop-up** (InteractOut, CHI 2024: slowing
-   interaction beat lockouts): when you keep going back to a page after
-   "Take me back", slow it down rather than block harder. In a focus
-   session, a small corner nudge before the full panel (the research found
-   frequent full alerts disruptive).
-10. **Vary the pop-up's words now and then**, and say so (Kovacs CSCW 2018:
-   a fixed intervention wears off; rotating ones work, if explained).
-
 ## Known problems and gotchas
 
 - **Chromium/Electron** only build the web Accessibility tree after a client
   sets `AXManualAccessibility`. `capture()` does this every time. The set call
   itself returns -25205, but the tree still appears, so a very first capture
-  may come back without page text.
+  may come back without page text: retried once, 0.3 s later (2026-09-23).
 - **Kev's own caveats** (README):
   - 4.0% of answers get ≥ 0.9 confidence while wrong.
   - The order of options can change the answer.
@@ -791,10 +825,10 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 - **Memory.** Kev-4B + a second Kev server + normal apps overflows 24 GB. Run
   one server, with `serve_capped.py`. Swapping shows up as multi-second latency
   and SDK timeouts, not as errors.
-- **Safari's AutoFill popover leaks into later captures.** After a sign-in page,
+- **Fixed 2026-09-23: Safari's AutoFill popover leaked into later captures.** After a sign-in page,
   "Apple Account / Continue with Touch ID / <your name>" stayed in the window's
   AX tree for the next 11 pages, which makes ordinary pages look like login
-  pages. Stripped from the trial data; `capture()` doesn't filter it yet.
+  pages. Stripped from the trial data; `capture()` now drops it (fork A).
 - **Background Safari windows in Stage Manager have no web AX tree.** Only
   matters for `experiments/collect.py`, which needs the Safari window visible
   (not parked in the Stage Manager strip). The watcher reads the front window,

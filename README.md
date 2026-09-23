@@ -28,7 +28,9 @@ search is on purpose. The fifth thread opened from a feed is drift.
 ## What it does
 
 - **Reads the front window as text** through the macOS Accessibility API: title, address,
-  headings, some visible text. It takes no screenshots to judge, and nothing leaves the Mac.
+  headings, some visible text. For an app that draws its text as pixels (a video player, a
+  canvas), it reads the window with macOS's own text recognition instead, never for windows
+  where you type. With the local model, nothing leaves the Mac.
 - **Asks a local model typed questions** ([Kev](https://github.com/jaredpalmer/kev), an open
   "System One" model on Qwen3.5-4B, running on Apple silicon with MLX). What kind of page is
   this? Is it for learning, a task, or entertainment? Is it private? Does it break each of your
@@ -39,8 +41,9 @@ search is on purpose. The fifth thread opened from a feed is drift.
 - **Steps in gently.** A dark, blurred panel dims the screen and says why; until you answer, clicks
   behind it don't go through (switch that off in the menu bar). *Take me back* is the
   default: it goes back off the site (to the lecture before the Shorts, not the next feed), or to
-  a new tab if there's nothing to go back to. *I need it* unlocks after a short wait that grows each time you use it, and asks what
-  for. *Not this one* teaches the rule an exception, and *Never here* silences an app or site.
+  a new tab if there's nothing to go back to. *I need it* unlocks after a short wait that grows each time you use it, and each
+  time you come back after going back, and asks what for. The wording changes now and then, on purpose, so it doesn't turn
+  into wallpaper. *Not this one* teaches the rule an exception, and *Never here* silences an app or site.
 - **Checks in instead of counting a daily budget.** For entertainment video and social media,
   it asks on arrival: what are you here for, and for 5, 15 or 30 minutes? Then it stays quiet
   until that time is up, and *Done* takes you back. Each session today makes the next one wait
@@ -56,7 +59,9 @@ search is on purpose. The fifth thread opened from a feed is drift.
 
 Say what you're here to do: *write the pitch deck, 50 minutes*. Until the session ends, every rule
 steps in at once, and the pop-up reminds you of your own words instead of a rule. Start one from
-the menu bar, the dashboard, or `qualm focus write the pitch deck`.
+the menu bar, the dashboard, or `qualm focus write the pitch deck`. In a session, the first
+step-in is a small note in the corner that leaves your keyboard alone; the full pop-up comes if
+you're still there 20 seconds later.
 
 <p align="center">
 <img src="docs/assets/focus-prompt.png" width="360" alt="What are you here to do?">
@@ -191,8 +196,10 @@ This is the whole policy (thresholds, exemptions, patterns), with each page judg
 
 - With the local model, the page text is read, judged and logged on your Mac only, in
   `~/Library/Application Support/Qualm`.
-- Private pages (logins, payments, banking) are not judged, not logged with content, and no
-  screenshot of them is kept. Password managers are never read at all, and you can add any app to that list.
+- Private pages (logins, payments, banking) are not judged, not logged with content (only the
+  site's name, so a mistake can be found), and no screenshot of them is kept. Judgements are kept
+  90 days and screenshots 30 (`keep_days`, `keep_shots_days`); `qualm uninstall --all` removes
+  everything Qualm wrote. Password managers are never read at all, and you can add any app to that list.
 - The dashboard listens on 127.0.0.1 only, and only the page itself can change settings.
 - The hosted option, TypeSafe's Jev, is yours to choose in setup, never a fallback: if the local model
   is down, Qualm doesn't quietly switch to it. With it, the text of each new screen goes to TypeSafe;

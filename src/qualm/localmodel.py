@@ -3,13 +3,13 @@
     runtime    ~/Library/Application Support/Qualm/kev-env: Python with Kev,
                PyTorch and MLX (~1 GB), installed with uv on first use
     weights    Kev-4B's adapter and its Qwen3.5-4B base from Hugging Face
-               (~9 GB, once), then an 8-bit copy in models/ (~4.5 GB), so
+               (~9 GB, once), then an 8-bit copy in models/ (4.2 GB), so
                later starts never load the 9 GB bf16 weights
     server     started and stopped by the app (ManagedServer), or in a
                terminal with `qualm serve`; http://127.0.0.1:8009
 
 Memory, measured (HANDOFF, Measured): the server holds 6.1-7.1 GB while it
-answers (the weights ~4.5 GB, the rest MLX's buffers, capped at 1 GB, and
+answers (the weights 4.2 GB, the rest MLX's buffers, capped at 1 GB, and
 the Python around it). What matters is whether your Mac has that to spare
 next to what you run, not its total: `memory()` says both.
 """

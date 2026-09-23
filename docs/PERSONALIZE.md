@@ -146,6 +146,9 @@ qualm settings set extensions=0                  # no "5 more" when a check-in's
 qualm settings set block_clicks=false            # the dim behind a pop-up lets clicks through (also in the menu bar)
 qualm settings set no_monitor+=com.tencent.xinWeChat   # never read at all
 qualm settings set allow_sites+=gitlab.com       # never judged; links from it count as on purpose
+qualm settings set backend=jev                   # the model hosted by TypeSafe; kev: on this Mac (also in the menu bar)
+qualm settings set keep_days=30                  # judgements kept 30 days (default 90; 0 keeps everything)
+qualm settings set keep_shots_days=7             # screenshots kept 7 days (default 30)
 ```
 
 ## Many changes at once

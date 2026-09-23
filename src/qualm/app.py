@@ -319,10 +319,11 @@ class Controller(NSObject):
             return
         if self.server is not None:
             s = self.server
-            if s.proc is None and s.ready.is_set() and not listening(s.port):
-                self.server = None  # a server we didn't start (`qualm serve`) went away: start our own
-            else:
+            gone_theirs = s.proc is None and s.ready.is_set() and not listening(s.port)  # `qualm serve` stopped
+            gone_ours = s.proc is not None and s.proc.poll() is not None  # ours crashed or was killed
+            if not (gone_theirs or gone_ours):
                 return
+            self.server = None  # start one again
         self.server = ManagedServer(lambda text: AppHelper.callAfter(self.set_status, text))
         self.server.start()
 

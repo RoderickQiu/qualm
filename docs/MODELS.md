@@ -20,7 +20,7 @@ measured on a Mac with an M5 Pro and 24 GB, running macOS 27, in September
 |---|---|---|
 | Time per reading | ~1.1 s with memory to spare (p95 1.6 s); 3–20 s when the Mac is swapping | ~0.2 s (p90 0.8 s) |
 | Memory | 6.1–7.1 GB for the model server, plus 88 MB for the app | 88 MB for the app |
-| Disk | ~15 GB: runtime 1.1 GB, weights 9 GB, 8-bit copy ~4.5 GB | none |
+| Disk | ~14 GB: runtime 1.1 GB, weights 9 GB, 8-bit copy 4.2 GB | none |
 | Money | none | ~$0.02–0.06 per workday (see below) |
 | Privacy | nothing leaves the Mac | the text of each new screen goes to TypeSafe |
 | Accuracy (119 trial pages, the whole policy) | the reference | the same or better on every rule |
@@ -112,7 +112,7 @@ the 119 trial pages:
 | **8-bit (the default)** | **6.1–7.1 GB** | the same: equal AUC on every rule, the same page kind on all 119 pages, scores within 0.04 |
 | 4-bit | 4.1 GB | worse: social recall fell from 0.95 to 0.85; not offered |
 
-Roughly 4.5 GB of the 8-bit footprint is the weights. The rest is MLX's
+Roughly 4.2 GB of the 8-bit footprint is the weights. The rest is MLX's
 buffers, capped at 1 GB (`MLX_CACHE_GB`), and the Python around it. Without
 the cap, the bf16 server grew to 17 GB and swapped a 24 GB Mac.
 
@@ -138,16 +138,27 @@ why that matters:
 
 The first start downloads Kev-4B's adapter (0.3 GB) and its Qwen3.5-4B base
 (8.7 GB). It then merges the adapter, quantizes to 8 bits, and saves that copy
-in `models/`. Every later start loads the saved copy. On Kev-0.8B:
+in `models/` (4.2 GB). Every later start loads the saved copy. Measured on
+this Mac on 2026-09-23, with 22 GB already in swap, by the app's own managed
+server:
 
-- The saved copy gives the same answers exactly (max difference 0 across 15
-  pages × 11 questions).
-- It settles at the same 2.6 GB either way.
-- It peaks at 3.4 GB instead of 3.6 GB.
+| Start | Ready after | Memory peak | Then |
+|---|---|---|---|
+| First (build the 8-bit copy) | 100 s | 16 GB | 6–7 GB |
+| Every later one (the saved copy) | 11 s | 4.8 GB | ~5–7 GB |
 
-So the saved copy mostly saves the conversion work at each start; it barely
-lowers the peak. Kev-4B's start-up peak with and without the saved copy
-hasn't been measured separately.
+So the saved copy matters: a start no longer needs 16 GB for a minute and a
+half. On Kev-0.8B the effect was small (peak 3.6 → 3.4 GB), because its bf16
+weights are small next to the Python around them. Answers from the saved copy
+are identical to freshly quantized ones (max difference 0 on 15 pages × 11
+questions).
+
+A fresh server also answers faster on a swapped Mac: readings went from 3–20 s
+(the old server, mostly swapped out) to 2–3 s right after the restart.
+
+The app starts the server when nothing answers on :8009, and starts it again
+within ~5 s if it stops or crashes. Quit (in the menu) stops it too. A server
+from `qualm serve` is used and left alone.
 
 ### Questions per reading
 
