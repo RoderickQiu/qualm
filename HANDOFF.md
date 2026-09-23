@@ -307,7 +307,8 @@ terminals, everything relative to the checkout, "16 GB" as the bar.
 - **Jev's cost, from real use** ($0.042 per million input tokens, output
   free; early-access pricing): a call is ~1,500 input tokens (5 rules, 2
   allow classes); the two logged days made 339 and 877 model calls over
-  ~7-8 active hours: ~$0.02-0.06 a day, ~$0.50-1.25 a month.
+  ~7-8 active hours: ~$0.02-0.06 a day, ~$0.50-1.25 a month. Each rule adds
+  ~127 Jev tokens (measured). All of it, with Kev's memory, in docs/MODELS.md.
 
 93 tests.
 
@@ -411,6 +412,7 @@ prompt per browser the first time.
 | `src/qualm/rules.example.toml` | The starter rules and allow classes, in English, with measured thresholds and why in `note` |
 | `docs/PERSONALIZE.md` | Every personalization command, the question limit, and the test-then-tune loop for a new rule |
 | `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user |
+| `docs/MODELS.md` | On this Mac vs hosted: speed, memory, disk, Jev's usage and cost, from measurements |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
 | `tests/test_policy.py` | The policy with made-up readings |
 | `experiments/` | `demo_data.py` (made-up weeks for screenshots); trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |

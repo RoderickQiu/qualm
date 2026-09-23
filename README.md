@@ -121,7 +121,8 @@ asks four things:
 
 Your rules and data live in `~/Library/Application Support/Qualm`. The app starts the local model itself
 and stops it when you quit. From the menu bar you can switch the model, turn each rule on or off, pause,
-and start a focus session. Hosted Jev costs about $0.02–0.06 a workday at TypeSafe's early-access price. The app is ad-hoc signed, not notarized: on a Mac that didn't build it, the
+and start a focus session. Hosted Jev costs about $0.02–0.06 a workday at TypeSafe's early-access price; [docs/MODELS.md](docs/MODELS.md)
+compares the two: speed, memory, disk, cost and what leaves the Mac. The app is ad-hoc signed, not notarized: on a Mac that didn't build it, the
 first open needs right-click → Open ([packaging/README.md](packaging/README.md)).
 
 **From source** (a Mac with Apple silicon and [uv](https://docs.astral.sh/uv/); tested on macOS 27, M5 Pro, 24 GB):
