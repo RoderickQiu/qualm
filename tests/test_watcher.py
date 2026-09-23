@@ -2,10 +2,10 @@
 
 import types
 
-from seenot_desktop import watcher as w
-from seenot_desktop.policy import Policy
-from seenot_desktop.rules import Settings
-from seenot_desktop.state import ScreenState
+from qualm import watcher as w
+from qualm.policy import Policy
+from qualm.rules import Settings
+from qualm.state import ScreenState
 
 
 def run(monkeypatch, tmp_path, screens, fail_first=False):
@@ -66,8 +66,8 @@ def test_a_failed_ask_is_retried(monkeypatch, tmp_path):
 def judged(monkeypatch, tmp_path, screens):
     """Like run(), but through the real _judge with a fake model whose answer
     hits the shortvideo rule. Returns (model calls, events)."""
-    from seenot_desktop.decide import Reading, RuleVerdict
-    from seenot_desktop.rules import Rule
+    from qualm.decide import Reading, RuleVerdict
+    from qualm.rules import Rule
 
     calls, events = [], []
 
@@ -117,13 +117,14 @@ def test_going_back_to_a_page_uses_the_cache(monkeypatch, tmp_path):
     assert calls == ["a", "b"] and events[-1].reading.cached
 
 
-def test_another_seenot_panel_is_never_judged(monkeypatch, tmp_path):
-    panel = ScreenState(app="python3", bundle_id="", window_title="SeeNot", text=["feeds, Weibo hot search"])
-    assert run(monkeypatch, tmp_path, [panel] * 5) == []
+def test_another_panel_is_never_judged(monkeypatch, tmp_path):
+    for title in ("Qualm", "SeeNot"):  # a second copy, or one from before the rename
+        panel = ScreenState(app="python3", bundle_id="", window_title=title, text=["feeds, Weibo hot search"])
+        assert run(monkeypatch, tmp_path, [panel] * 5) == []
 
 
 def test_presence(monkeypatch):
-    from seenot_desktop import presence as pr
+    from qualm import presence as pr
 
     p = pr.Presence(idle_s=120)
     monkeypatch.setattr(pr, "screen_locked", lambda: False)
@@ -138,7 +139,7 @@ def test_presence(monkeypatch):
 
 
 def test_owner_matching_ignores_keep_awake_tools(monkeypatch):
-    from seenot_desktop import presence as pr
+    from qualm import presence as pr
 
     out = """Listed by owning process:
    pid 1534(Caffeine): [0x1] 00:00:03 PreventUserIdleDisplaySleep named: "Caffeine prevents sleep"

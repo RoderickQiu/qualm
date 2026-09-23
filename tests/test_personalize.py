@@ -9,10 +9,10 @@ from datetime import datetime
 
 import pytest
 
-from seenot_desktop.config import Config, apply_assignments
-from seenot_desktop.decide import Reading, RuleVerdict
-from seenot_desktop.policy import Policy
-from seenot_desktop.rules import Rule, Settings, in_window, site_pattern
+from qualm.config import Config, apply_assignments
+from qualm.decide import Reading, RuleVerdict
+from qualm.policy import Policy
+from qualm.rules import Rule, Settings, in_window, site_pattern
 
 
 @pytest.fixture
@@ -135,7 +135,7 @@ def test_a_removed_exception_is_forgotten(tmp_path):
 def test_cli_round_trip(tmp_path):
     """The commands an agent would run, end to end, with --json."""
     def run(*args):
-        out = subprocess.run([sys.executable, "-m", "seenot_desktop.cli", *args, "--rules", str(tmp_path / "r.toml"),
+        out = subprocess.run([sys.executable, "-m", "qualm.cli", *args, "--rules", str(tmp_path / "r.toml"),
                               "--data", str(tmp_path / "d")], capture_output=True, text=True)
         return out
 
@@ -179,7 +179,7 @@ def test_cli_round_trip(tmp_path):
 def test_question_limit(tmp_path):
     """Rules on at the same moment + allow classes + 3 shared questions <= max_questions,
     checked over the whole week, and a change past it is refused whole."""
-    from seenot_desktop.rules import OverLimit, capacity, parse_config
+    from qualm.rules import OverLimit, capacity, parse_config
 
     def cfg(n, when=None, limit=10):
         rules = "".join(f'[[rules]]\nid = "r{i}"\nkind = "deny"\ndescription = "x"\n'

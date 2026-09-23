@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from seenot_desktop.decide import Reading, RuleVerdict
-from seenot_desktop.policy import Policy
-from seenot_desktop.rules import Rule, Settings, load_config
+from qualm.decide import Reading, RuleVerdict
+from qualm.policy import Policy
+from qualm.rules import Rule, Settings, load_config
 
 RULES = [
     Rule("shortvideo", "deny", "short videos", threshold=0.15, patterns=(r"youtube\.com/shorts/",), allow_intentional=True),
@@ -161,14 +161,14 @@ def test_every_judgement_is_logged_but_private_ones_without_content(policy, tmp_
 
 
 def test_review_answers_and_tuning(tmp_path):
-    from seenot_desktop.review import rule_answers, save_review, set_threshold, tuning
+    from qualm.review import rule_answers, save_review, set_threshold, tuning
 
     j = {"id": "a", "p_hit": {"shortvideo": 0.9, "social": 0.1, "stocks": 0.5},
          "decisions": [{"action": "intervene", "rule": "shortvideo", "reason": ""},
                        {"action": "allow", "rule": "stocks", "reason": "opened on purpose"}]}
     # "Right" confirms the pop-up and every quiet rule; the exempted one stays open.
     save_review(tmp_path, "a", verdict="right")
-    from seenot_desktop.review import load_reviews
+    from qualm.review import load_reviews
     assert rule_answers(j, load_reviews(tmp_path)["a"]) == {"shortvideo": True, "social": False}
     save_review(tmp_path, "a", rules={"social": "yes"})
     assert rule_answers(j, load_reviews(tmp_path)["a"])["social"] is True
@@ -204,7 +204,7 @@ def test_never_here_for_an_app_and_a_site(policy, tmp_path):
 
 
 def test_an_allow_class_stops_every_rule_but_not_a_url_pattern(tmp_path):
-    from seenot_desktop.rules import AllowClass
+    from qualm.rules import AllowClass
 
     p = Policy(Settings(allow=(AllowClass("shopping", "an online store", threshold=0.35),)), RULES, tmp_path)
     shop = reading(stocks=0.9)
@@ -217,8 +217,8 @@ def test_an_allow_class_stops_every_rule_but_not_a_url_pattern(tmp_path):
 
 
 def test_explanations_in_words(policy):
-    from seenot_desktop.explain import reason
-    from seenot_desktop.policy import Decision
+    from qualm.explain import reason
+    from qualm.policy import Decision
 
     rule = RULES[0]  # shortvideo, threshold 0.15
     r = reading(shortvideo=0.9)
@@ -243,8 +243,10 @@ def test_time_away_does_not_count(policy):
     assert policy.usage.get("social")[0] == 5.0
 
 
-def test_seenot_review_page_is_never_judged_wherever_it_is_open(policy):
-    assert policy.precheck("com.todesktop.230313mzl4w4u92", "vscode-file://x", "SeeNot review — seenot-desktop").action == "skip"
+def test_own_review_page_is_never_judged_wherever_it_is_open(policy):
+    assert policy.precheck("com.todesktop.230313mzl4w4u92", "vscode-file://x", "Qualm review — qualm").action == "skip"
+    # Its title before the rename.
+    assert policy.precheck("com.todesktop.230313mzl4w4u92", "vscode-file://x", "SeeNot review — seenot").action == "skip"
 
 
 def test_a_work_tool_is_left_alone_even_when_unsure(policy):
@@ -254,7 +256,7 @@ def test_a_work_tool_is_left_alone_even_when_unsure(policy):
 
 
 def test_a_known_music_site_or_app_is_allowed_without_the_model(tmp_path):
-    from seenot_desktop.rules import AllowClass
+    from qualm.rules import AllowClass
 
     music = AllowClass("music", "a music player", patterns=(r"^https://music\.youtube\.com",), apps=("com.netease.163music",))
     p = Policy(Settings(allow=(music,)), RULES, tmp_path)

@@ -1,6 +1,6 @@
-# seenot-desktop
+# Qualm
 
-SeeNot's intent-aware screen intervention, on macOS, decided by a Jev-style
+Intent-aware screen intervention on macOS, ported from the Android app SeeNot, decided by a Jev-style
 typed decision model: local [Kev](https://github.com/jaredpalmer/kev) by
 default, TypeSafe's hosted Jev optionally.
 

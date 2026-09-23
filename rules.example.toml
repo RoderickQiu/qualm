@@ -1,12 +1,12 @@
-# SeeNot's starter rules. The app copies this to rules.toml (git-ignored)
+# Qualm's starter rules. The app copies this to rules.toml (git-ignored)
 # the first time it runs; from then on that file is yours.
 #
 # Easiest from a terminal, and what an agent should use (every command has
 # --help; the ones that show something have --json):
-#   seenot-desktop rules list                 every rule in a sentence
-#   seenot-desktop rules add NAME --what "..."  a rule in your own words
-#   seenot-desktop rules test NAME            what it would do on your recent screens
-#   seenot-desktop rules set NAME key=value   change anything below
+#   qualm rules list                 every rule in a sentence
+#   qualm rules add NAME --what "..."  a rule in your own words
+#   qualm rules test NAME            what it would do on your recent screens
+#   qualm rules set NAME key=value   change anything below
 # docs/PERSONALIZE.md walks through it; docs/POLICY.md explains the defaults:
 # block the mechanism (endless short video, feeds, live rooms), not the site.
 #

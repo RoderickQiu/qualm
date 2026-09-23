@@ -3,7 +3,7 @@ trials can run while you keep working. Same walk as state.capture()."""
 import time
 from AppKit import NSWorkspace
 from ApplicationServices import AXUIElementCreateApplication, AXUIElementSetAttributeValue
-from seenot_desktop.state import ScreenState, _ax, _clean, _short_url, _walk
+from qualm.state import ScreenState, _ax, _clean, _short_url, _walk
 
 
 def app_by_bundle(bundle_id):

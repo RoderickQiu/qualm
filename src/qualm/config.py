@@ -1,4 +1,4 @@
-"""Edit rules.toml from code: what every `seenot-desktop rules|allow|settings`
+"""Edit rules.toml from code: what every `qualm rules|allow|settings`
 command, and the review page, goes through.
 
 Edits are surgical: only the keys you change are rewritten, so comments and

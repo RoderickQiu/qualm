@@ -36,7 +36,7 @@ def recent_screens(data_dir: Path, last: int) -> list[dict]:
     for j in reversed(load_judgements(data_dir)):
         s = j["screen"]
         if not j.get("state") or s.get("url", "").startswith(OWN_URLS) or s.get("window_title", "").startswith(OWN_TITLES):
-            continue  # SeeNot's own review page, logged before it was skipped
+            continue  # our own review page, logged before it was skipped
         key = json.dumps(j["state"], sort_keys=True, ensure_ascii=False)
         if key not in seen:
             seen.add(key)

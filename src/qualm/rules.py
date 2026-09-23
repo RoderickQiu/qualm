@@ -1,4 +1,4 @@
-"""SeeNot rules, and the typed questions they become.
+"""Qualm rules, and the typed questions they become.
 
 The Android ScreenAnalyzer prompt asks one model call for everything in
 prose: page type, sensitivity, a decision per constraint, and a 0-100
@@ -33,7 +33,7 @@ PAGE_KINDS = ("feed", "single_item", "search", "work", "other")
 PURPOSES = ("learn", "task", "entertain")
 # "rule" asks whether the screen breaks the user's rule; "direct" asks what
 # the screen is. See rule_question(). Trials: "rule" is better on Kev-4B.
-QUESTION_STYLE = os.environ.get("SEENOT_QUESTION_STYLE", "rule")
+QUESTION_STYLE = os.environ.get("QUALM_QUESTION_STYLE", "rule")
 
 
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")

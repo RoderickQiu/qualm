@@ -1,6 +1,6 @@
 """The loop: screen -> precheck or model -> policy -> callbacks.
 
-Shared by `seenot-desktop watch` (prints) and `seenot-desktop app` (menu bar
+Shared by `qualm watch` (prints) and `qualm app` (menu bar
 and intervention panel). Runs on its own thread in the app.
 """
 
@@ -25,7 +25,8 @@ from .presence import Presence
 from .rules import build_questions, load_config
 from .state import DEFAULT_CHAR_BUDGET, ScreenState, capture
 
-PANEL_TITLE = "SeeNot"  # the intervention panel's window title
+PANEL_TITLE = "Qualm"  # the intervention panel's window title
+OLD_PANEL_TITLES = ("SeeNot",)  # before the rename
 CACHE_SIZE = 1000  # answers kept, keyed by exactly what the model reads and is asked
 DWELL_S = 4.0  # a pop-up waits until you've been on the page this long
 
@@ -145,8 +146,8 @@ class Watcher:
                 time.sleep(self.interval)
                 continue
             s = capture(skip=self.policy.settings.no_monitor)
-            if s.window_title == PANEL_TITLE:
-                # Another SeeNot's panel (a demo, a second copy): never judge ourselves.
+            if s.window_title in (PANEL_TITLE, *OLD_PANEL_TITLES):
+                # Another Qualm's panel (a demo, a second copy): never judge ourselves.
                 time.sleep(self.interval)
                 continue
             if s.signature() != last_sig:

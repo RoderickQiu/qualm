@@ -1,10 +1,10 @@
-"""Every way to make SeeNot yours, as commands: rules, allowed kinds of page,
+"""Every way to make Qualm yours, as commands: rules, allowed kinds of page,
 exceptions, never-here places and settings, plus `config` (the whole thing
 as data), `schema` (what every field means) and `status` (is it running).
 The review page and the pop-up change the same files, so any of them can
 undo the others.
 
-Built to be driven by an agent (Claude Code: .claude/skills/seenot) as well
+Built to be driven by an agent (Claude Code: .claude/skills/qualm) as well
 as by hand:
 - every command takes --json, errors included: {"error": {"code", "message"}};
 - exit codes: 0 ok, 2 invalid, 3 not found, 4 over the question limit,
@@ -155,7 +155,7 @@ def rules_list(args) -> None:
         today = f"  today: {d['today']['minutes']:g} min, {d['today']['visits']} visits" if "today" in d else ""
         lines.append(f"{r.id:<12} [{state}] threshold {r.threshold:g}{today}\n    {d['summary']}")
     if not rules:
-        lines.append("no rules. `seenot-desktop rules starters` lists ready-made ones; `rules add` makes your own.")
+        lines.append("no rules. `qualm rules starters` lists ready-made ones; `rules add` makes your own.")
     _out(args, {"capacity": cap, "rules": rows}, "\n".join(lines))
 
 
@@ -211,7 +211,7 @@ def rules_add(args) -> None:
     settings, rules = cfg.load()
     r = _find(rules, args.id, "rule")
     _changed(args, {"added": _rule_json(r, settings, {})}, f"added {r.id}: {summary(r, settings)}\n"
-             f"Untested: see what it would catch with `seenot-desktop rules test {r.id}`.")
+             f"Untested: see what it would catch with `qualm rules test {r.id}`.")
 
 
 def _assignments(args, table: str, cls, id: str, pairs: list[str]) -> tuple[dict, list[str]]:
@@ -263,7 +263,7 @@ def rules_starters(args) -> None:
                      "have": id in have})
     text = "\n".join(f"{'✓' if r['have'] else ' '} {r['id']:<12} {'rule' if r['table'] == 'rules' else 'allow'}: {r['description']}"
                      for r in rows)
-    _out(args, rows, text + "\n\nAdd one: seenot-desktop rules add ID --from-starter (allow classes: allow add ID --from-starter)")
+    _out(args, rows, text + "\n\nAdd one: qualm rules add ID --from-starter (allow classes: allow add ID --from-starter)")
 
 
 def rules_test(args) -> None:
@@ -292,9 +292,9 @@ def rules_test(args) -> None:
     try:
         rows = run(make_client(), data, r, settings, last=args.last, on_progress=progress)
     except Exception as e:  # the server is down or slow
-        _fail(f"couldn't ask the model ({type(e).__name__}: {e}). Is the Kev server running? `seenot-desktop status`", "unreachable")
+        _fail(f"couldn't ask the model ({type(e).__name__}: {e}). Is the Kev server running? `qualm status`", "unreachable")
     if not rows:
-        _fail(f"no screens in {data}/judgements.jsonl yet: run `seenot-desktop app` for a while first", "not_found")
+        _fail(f"no screens in {data}/judgements.jsonl yet: run `qualm app` for a while first", "not_found")
     fires = [x for x in rows if x["does"] in ("pops up", "counts")]
     lines = [f"{r.id}{' (draft, not saved)' if draft else ''} on your last {len(rows)} distinct screens, at threshold "
              f"{r.threshold:g}: {len(fires)} would {'pop up' if r.kind == 'deny' else 'count'}.", ""]
@@ -308,8 +308,8 @@ def rules_test(args) -> None:
     if draft:
         lines += ["", "Keep this wording: `rules add` (new) or `rules set ID what=...` (existing), then label and tune."]
     else:
-        lines += ["", f"Tell it which are right:  seenot-desktop rules label {r.id} --yes ID ... --no ID ...",
-                  f"Then:                     seenot-desktop rules tune {r.id} --apply"]
+        lines += ["", f"Tell it which are right:  qualm rules label {r.id} --yes ID ... --no ID ...",
+                  f"Then:                     qualm rules tune {r.id} --apply"]
     _out(args, {"rule": r.id, "draft": draft, "reads": r.text(settings.lang), "threshold": r.threshold,
                 "would_fire": len(fires), "screens": rows}, "\n".join(lines))
 
@@ -353,7 +353,7 @@ def rules_tune(args) -> None:
             t["applied"] = True
             lines.append("  applied: rules.toml updated; the app picks it up without a restart")
         elif not args.apply:
-            lines.append(f"  apply it: seenot-desktop rules tune {r.id} --apply")
+            lines.append(f"  apply it: qualm rules tune {r.id} --apply")
     _out(args, t, "\n".join(lines))
 
 
@@ -575,7 +575,7 @@ def schema(args) -> None:
             out[table][f.name] = {"type": {list: "list of strings", str: "string", bool: "bool", int: "int", float: "number"}[t],
                                   "required": f.default is MISSING, "default": default, "help": _help_of(cls, f.name)}
     out["grammar"] = GRAMMAR
-    out["commands"] = "seenot-desktop --help; every command: --help, --json; every change: --dry-run"
+    out["commands"] = "qualm --help; every command: --help, --json; every change: --dry-run"
     text = []
     for table in ("rules", "allow", "settings"):
         text.append(f"[{table}]")
@@ -622,7 +622,7 @@ def status(args) -> None:
                                  "decisions": j["decisions"]}
     out["today"] = _usage_today(Path(args.data))
     m, c = out["model"], out["config"]
-    lines = [f"app: {'running' if out['app_running'] else 'not running (seenot-desktop app)'}",
+    lines = [f"app: {'running' if out['app_running'] else 'not running (qualm app)'}",
              f"model: {'up, ' + m['id'] if m['reachable'] else 'unreachable at ' + m['url'] + ' (HANDOFF.md, Run it)'}",
              f"config: {'ok, ' + _capacity_line(c['capacity']) if c['ok'] else 'broken: ' + c['error']}"]
     if c.get("ok"):

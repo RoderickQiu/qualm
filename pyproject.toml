@@ -1,7 +1,7 @@
 [project]
-name = "seenot-desktop"
+name = "qualm-desktop"
 version = "0.1.0"
-description = "SeeNot on macOS, decided by a Jev-style typed decision model (local Kev or hosted Jev)"
+description = "Qualm: intent-aware screen intervention on macOS (after SeeNot), decided by a Jev-style typed decision model (local Kev or hosted Jev)"
 readme = "README.md"
 authors = [
     { name = "Tianrun Qiu", email = "scrisqiu@hotmail.com" }
@@ -15,7 +15,11 @@ dependencies = [
 ]
 
 [project.scripts]
-seenot-desktop = "seenot_desktop:main"
+qualm = "qualm:main"
+
+[tool.uv.build-backend]
+# "qualm" on PyPI is an unrelated esolang; the import package and the command are still `qualm`.
+module-name = "qualm"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

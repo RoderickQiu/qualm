@@ -9,11 +9,11 @@ Accessibility tree, so live background capture isn't reliable.
 """
 import json, tempfile
 
-from seenot_desktop.decide import make_client
-from seenot_desktop.policy import Policy
-from seenot_desktop.rules import load_config
-from seenot_desktop.state import ScreenState
-from seenot_desktop.watcher import Watcher
+from qualm.decide import make_client
+from qualm.policy import Policy
+from qualm.rules import load_config
+from qualm.state import ScreenState
+from qualm.watcher import Watcher
 
 STEPS = [
     ("a web search", "https://www.google.com/search?q=macos+accessibility+api"),

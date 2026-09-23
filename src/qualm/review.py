@@ -1,8 +1,8 @@
-"""Your verdicts on what SeeNot did, and a local page to give them.
+"""Your verdicts on what Qualm did, and a local page to give them.
 
-`seenot-desktop review --web` serves http://127.0.0.1:8765: one card per
-screen with its screenshot, what SeeNot did and why, what the model read,
-and each rule's score against its threshold. You answer "was SeeNot right?"
+`qualm review --web` serves http://127.0.0.1:8765: one card per
+screen with its screenshot, what Qualm did and why, what the model read,
+and each rule's score against its threshold. You answer "was Qualm right?"
 and, per rule, "is this X?". From those answers the page suggests
 thresholds (from the logged scores, no model calls) and applies them to
 rules.toml, which the running app reloads.
@@ -319,7 +319,7 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
 
 
 PAGE = r"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>SeeNot review</title>
+<html lang="en"><head><meta charset="utf-8"><title>Qualm review</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root { --bg:#f5f5f3; --card:#fff; --ink:#1d1d1f; --mute:#6e6e73; --line:#e2e2de;
@@ -405,7 +405,7 @@ textarea { width:100%; }
 .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:8px 14px; border-radius:8px; font-size:13px; display:none; z-index:20; }
 </style></head><body>
 <nav>
-  <b>SeeNot</b>
+  <b>Qualm</b>
   <a data-tab="review">Review <span id="nleft"></span></a>
   <a data-tab="all">All screens</a>
   <a data-tab="week">This week</a>
@@ -458,7 +458,7 @@ function nearMiss(j) {
 function screens() {
   const by = new Map();
   for (const j of D.judgements) {
-    if (j.screen.window_title === "SeeNot" && !j.screen.url) continue;  // SeeNot's own panel
+    if ((j.screen.window_title === "Qualm" || j.screen.window_title === "SeeNot") && !j.screen.url) continue;  // our own panel
     const key = j.screen.url || (j.screen.app + "|" + (j.screen.window_title || ""));
     const e = by.get(key) || {key, items:[]};
     e.items.push(j);
@@ -533,16 +533,16 @@ function said(j) {
   const ds = j.decisions.filter(d => d.action === o);
   const rules = ds.map(d => "<b>" + esc(d.rule) + "</b>").join(", ");
   const why = ds.map(d => esc(d.reason)).filter(Boolean).join("; ");
-  if (o === "intervene") return {cls:"intervene", text:"SeeNot popped up: this looks like " + rules, why:"because " + why};
+  if (o === "intervene") return {cls:"intervene", text:"Qualm popped up: this looks like " + rules, why:"because " + why};
   if (o === "allow") {
     let w = why;
     if (why.includes("opened on purpose") && j.came_from) w += " (you came from a " + esc(j.came_from.page_kind) + " page)";
-    return {cls:"allow", text:"SeeNot let it through: it matched " + rules + " but an exemption applied", why:w};
+    return {cls:"allow", text:"Qualm let it through: it matched " + rules + " but an exemption applied", why:w};
   }
-  if (o === "count") return {cls:"count", text:"SeeNot counted time toward " + rules, why:why};
+  if (o === "count") return {cls:"count", text:"Qualm counted time toward " + rules, why:why};
   if (o === "skip") return {cls:"none", text:"Not judged", why:why};
   const top = j.p_hit ? Object.entries(j.p_hit).sort((a, b) => b[1] - a[1])[0] : null;
-  return {cls:"none", text:"SeeNot did nothing", why: top ? "closest rule: " + esc(top[0]) + " at " + top[1].toFixed(2) + " (needs " + ((j.thresholds || {})[top[0]]) + ")" : ""};
+  return {cls:"none", text:"Qualm did nothing", why: top ? "closest rule: " + esc(top[0]) + " at " + top[1].toFixed(2) + " (needs " + ((j.thresholds || {})[top[0]]) + ")" : ""};
 }
 function flagged(j) { return new Set(j.decisions.filter(d => d.action === "intervene" || d.action === "count" || d.action === "allow").map(d => d.rule)); }
 
@@ -553,7 +553,7 @@ function reviewView() {
   if (!q.length) {
     return '<div class="done"><h2>Nothing left to review</h2><div class="muted">New screens show up here as you browse.</div>' +
       '<div style="margin-top:14px"><label class="small"><input type="checkbox" id="quiet" ' + (quiet ? "checked" : "") +
-      '> also review screens where SeeNot stayed quiet</label></div></div>';
+      '> also review screens where Qualm stayed quiet</label></div></div>';
   }
   if (pos >= q.length) pos = q.length - 1;
   if (pos < 0) pos = 0;
@@ -588,7 +588,7 @@ function reviewView() {
         esc(r.id) + '</span> <span class="desc">' + esc(ruleName(r)) + "</span></span></button>";
     });
     h += '<button class="chip none ' + (pick.size === 0 ? "sel" : "") + '" data-pick=""><kbd>0</kbd><span><span class="name">None of these</span> ' +
-      '<span class="desc">SeeNot should leave this page alone</span></span></button></div>' +
+      '<span class="desc">Qualm should leave this page alone</span></span></button></div>' +
       '<div class="save"><button class="go" data-act="save">Save <kbd>Enter</kbd></button><button data-act="cancel">Cancel <kbd>Esc</kbd></button></div>';
   }
   h += '<details id="det" ' + (showDetails ? "open" : "") + '><summary>Details: scores and what the model read <kbd>D</kbd></summary>' + detailsHtml(j) + "</details>";
@@ -711,7 +711,7 @@ function tuneView() {
   h += '<div class="panel"><h2>Never here</h2><div class="small muted" style="margin-bottom:8px">Apps and sites where no rule fires, from the pop-up’s “Never here” button.</div>' +
     (D.never.length ? D.never.map((n, i) => '<div style="display:flex;gap:10px;align-items:center;margin:4px 0"><span>' + (n.host ? "on <b>" + esc(n.host) + "</b>" : "in <b>" + esc(n.name || n.app) + "</b>") +
       '</span><button data-undo="' + i + '">Undo</button></div>').join("") : '<div class="small muted">None yet.</div>') + "</div>";
-  h += '<div class="panel small muted">Rules themselves (wording, budgets, URL patterns) are in rules.toml, via “Open rules…” in the SeeNot menu. The app picks up changes without a restart.</div>';
+  h += '<div class="panel small muted">Rules themselves (wording, budgets, URL patterns) are in rules.toml, via “Open rules…” in the Qualm menu. The app picks up changes without a restart.</div>';
   return h;
 }
 

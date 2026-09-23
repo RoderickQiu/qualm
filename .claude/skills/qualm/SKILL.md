@@ -1,11 +1,11 @@
 ---
-name: seenot
-description: Set up, change or check SeeNot's rules for the user - what it blocks or time-limits, when, exceptions, apps and sites it leaves alone, settings. Use when the user asks to block, limit, allow, pause-by-schedule or stop flagging something, asks why SeeNot popped up, or asks what their rules are. Drives the `seenot-desktop` CLI; never edits rules.toml by hand.
+name: qualm
+description: Set up, change or check Qualm's rules for the user - what it blocks or time-limits, when, exceptions, apps and sites it leaves alone, settings. Use when the user asks to block, limit, allow, pause-by-schedule or stop flagging something, asks why Qualm popped up, or asks what their rules are. Drives the `qualm` CLI; never edits rules.toml by hand.
 ---
 
-# Driving SeeNot for the user
+# Driving Qualm for the user
 
-Everything goes through `uv run seenot-desktop …` in the seenot-desktop repo.
+Everything goes through `uv run qualm …` in the qualm repo.
 Always pass `--json` and read the result; errors come back as
 `{"error": {"code", "message"}}` with exit codes 2 invalid, 3 not found,
 4 over the question limit, 5 app or model down. Don't edit rules.toml
@@ -15,9 +15,9 @@ never saved) and keep a backup.
 ## Start here
 
 ```bash
-uv run seenot-desktop status --json        # app running? model up? config ok? question budget
-uv run seenot-desktop rules list --json    # {"capacity": {...}, "rules": [...]}, each with a one-line summary
-uv run seenot-desktop schema --json        # every field: type, default, meaning; the grammar of sites and when
+uv run qualm status --json        # app running? model up? config ok? question budget
+uv run qualm rules list --json    # {"capacity": {...}, "rules": [...]}, each with a one-line summary
+uv run qualm schema --json        # every field: type, default, meaning; the grammar of sites and when
 ```
 
 ## The question limit
@@ -61,12 +61,12 @@ sites (`douyin.com`, `youtube.com/shorts`) only for what must always count.
 A new rule's threshold (0.2) is a guess. Before switching it on:
 
 ```bash
-uv run seenot-desktop rules test NAME --what "…" --json     # a draft: nothing saved
-uv run seenot-desktop rules add NAME --what "…" --off --json
-uv run seenot-desktop rules test NAME --json                # rows: id, p_hit, does, title, url
-uv run seenot-desktop rules label NAME --yes ID… --no ID… --json
-uv run seenot-desktop rules tune NAME --apply --json        # needs >= 3 yes and 3 no
-uv run seenot-desktop rules on NAME --json
+uv run qualm rules test NAME --what "…" --json     # a draft: nothing saved
+uv run qualm rules add NAME --what "…" --off --json
+uv run qualm rules test NAME --json                # rows: id, p_hit, does, title, url
+uv run qualm rules label NAME --yes ID… --no ID… --json
+uv run qualm rules tune NAME --apply --json        # needs >= 3 yes and 3 no
+uv run qualm rules on NAME --json
 ```
 
 Judge rows from their title and URL; when unsure, show the user the top

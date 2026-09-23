@@ -1,14 +1,14 @@
 """How many tokens the state alone costs, at several --budget values.
 
 Step 1 (this env):  uv run python experiments/state_tokens.py dump data/auto_labels.jsonl > /tmp/states.json
-Step 2 (Kev env):   cd ~/Documents/kev && uv run python ~/Documents/seenot-desktop/experiments/state_tokens.py count /tmp/states.json
+Step 2 (Kev env):   cd ~/Documents/kev && uv run python ~/Documents/qualm/experiments/state_tokens.py count /tmp/states.json
 """
 import json, sys
 
 BUDGETS = (300, 500, 700, 1000, 1500)
 
 if sys.argv[1] == "dump":
-    from seenot_desktop.state import ScreenState
+    from qualm.state import ScreenState
     recs = [json.loads(l) for l in open(sys.argv[2])]
     print(json.dumps({b: [ScreenState(**r["screen"]).to_state(b) for r in recs] for b in BUDGETS}, ensure_ascii=False))
 else:

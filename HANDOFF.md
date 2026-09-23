@@ -1,4 +1,4 @@
-# Handoff: seenot-desktop
+# Handoff: qualm
 
 Written 2026-09-22; updated the same day after the trials, and again after
 the MVP was built. This is the working
@@ -6,7 +6,8 @@ document: update the Status and Measured sections as you go.
 
 ## What this is
 
-A macOS version of SeeNot. SeeNot's model call is already a typed decision:
+Qualm is a macOS take on SeeNot, the Android app (it was called seenot-desktop
+until 2026-09-23). SeeNot's model call is already a typed decision:
 every 5 s the Android app asks a vision LLM for one `decision` per rule from a
 fixed set, a `sensitive` flag, and a 0–100 `confidence`. That is the job Jev
 (TypeSafe AI's "System One" model, released 2026-09-15) is built for. Jev
@@ -18,7 +19,7 @@ The backend is anything that speaks TypeSafe's System One API:
 - **Kev**, local (default): open-source Jev-style models on Qwen3.5, 0.8B/4B/9B,
   Apache-2.0. It runs through MLX on this Mac, and screen content stays on the
   machine.
-- **Jev**, hosted: set `SEENOT_BACKEND=jev` and `TYPESAFE_API_KEY`. There is no
+- **Jev**, hosted: set `QUALM_BACKEND=jev` and `TYPESAFE_API_KEY`. There is no
   key on this machine yet; early access is waitlisted at console.typesafe.ai.
 
 ## Status
@@ -63,13 +64,14 @@ research on digital self-control tools:
 - **`install`**: LaunchAgents for the model server and the app, restarted on crash.
   Not run yet: under launchd, macOS asks for Accessibility and Screen
   Recording for the Python binary itself.
-- **Never judge SeeNot**: a running copy had judged a demo panel, and the review
+- **Never judge Qualm**: a running copy had judged a demo panel, and the review
   page opened inside Cursor (a `vscode-file://` URL) had popped up as stocks.
-  SeeNot now skips its own panel and any window titled "SeeNot review".
+  Qualm now skips its own panel and any window titled "Qualm review" (or, in
+  logs from before the rename, "SeeNot review").
 - **Work tools are left alone** whenever the model's best guess is "work", not
   only when it's 60% sure: code and notes are full of words any rule matches.
 - **Stocks removed from the shipped rules**: a niche habit that, in real use,
-  fired on shopping chats and on SeeNot's own review page. The trial numbers
+  fired on shopping chats and on Qualm's own review page. The trial numbers
   below still include it.
 - **[[allow]] classes, never here, thin screens, Chrome capture**: see below.
 - **Personalizing is all commands** (`personalize.py`, `config.py`, `trial.py`;
@@ -91,12 +93,12 @@ research on digital self-control tools:
   Every command takes `--json` (errors too, with exit codes 2/3/4/5), every
   change `--dry-run`; `config export|apply|undo` changes many things in one
   checked step (`--prune` to remove); `schema`, `status`; `rules test --what`
-  tries wording as a draft. `.claude/skills/seenot/SKILL.md` tells Claude
+  tries wording as a draft. `.claude/skills/qualm/SKILL.md` tells Claude
   Code how to use it.
 
 ### MVP (built after the trials)
 
-`seenot-desktop app` is a menu bar app (Python + PyObjC) that watches the
+`qualm app` is a menu bar app (Python + PyObjC) that watches the
 front window, and a floating panel that steps in with three answers: **Take me
 back**, **I need it: 10 min** (asks why), and **Not this one** (teaches the rule an
 exception). The policy follows docs/POLICY.md: block the mechanism (short
@@ -109,7 +111,7 @@ work tools, search, sensitive pages and anything opened on purpose.
   (`experiments/scenario.py`, see Measured).
 - Not verified: the app over a real day; "Take me back" (Cmd-[ via System
   Events) in each browser; whether the menu bar item shows on this Mac. The
-  "SeeNot" item wasn't visible in a screenshot with a full menu bar and Thaw
+  "Qualm" item wasn't visible in a screenshot with a full menu bar and Thaw
   running.
 
 Verified working on this Mac (M5 Pro, 24 GB, macOS 27): `probe`, `ask`, `watch`,
@@ -128,7 +130,7 @@ Not built:
 ```bash
 # 1. Model server (Kev is cloned at ~/Documents/kev, commit 08ab0b8)
 cd ~/Documents/kev
-KEV_DTYPE=bf16 uv run --extra serve python ~/Documents/seenot-desktop/experiments/serve_capped.py \
+KEV_DTYPE=bf16 uv run --extra serve python ~/Documents/qualm/experiments/serve_capped.py \
     --run jaredpalmer/kev-4b --port 8009
 #    serve_capped.py = kev.serve with MLX's buffer cache capped at 1 GB. Plain
 #    `python -m kev.serve` holds 17 GB for 4B and swaps a 24 GB Mac.
@@ -136,28 +138,28 @@ KEV_DTYPE=bf16 uv run --extra serve python ~/Documents/seenot-desktop/experiment
 #    Run one server at a time.
 
 # 2. This repo
-cd ~/Documents/seenot-desktop
-uv run seenot-desktop rules list         # your rules (rules.toml is created from rules.example.toml if missing)
-uv run seenot-desktop rules --help       # add / set / on / off / test / tune …; docs/PERSONALIZE.md
-uv run seenot-desktop probe              # state only, no model; Ctrl-C to stop
-uv run seenot-desktop ask --delay 3      # switch windows within 3 s, get one reading
-uv run seenot-desktop label              # capture + label one moment -> data/labels.jsonl
-uv run seenot-desktop eval               # precision/recall per threshold, latency
-uv run seenot-desktop install            # or: start model server + app at every login (uninstall to undo)
-uv run seenot-desktop app                # the MVP: menu bar + intervention panel
-uv run seenot-desktop app --demo         # show the panel once, learn nothing
-uv run seenot-desktop watch              # the same loop in the terminal, every judgement printed
+cd ~/Documents/qualm
+uv run qualm rules list         # your rules (rules.toml is created from rules.example.toml if missing)
+uv run qualm rules --help       # add / set / on / off / test / tune …; docs/PERSONALIZE.md
+uv run qualm probe              # state only, no model; Ctrl-C to stop
+uv run qualm ask --delay 3      # switch windows within 3 s, get one reading
+uv run qualm label              # capture + label one moment -> data/labels.jsonl
+uv run qualm eval               # precision/recall per threshold, latency
+uv run qualm install            # or: start model server + app at every login (uninstall to undo)
+uv run qualm app                # the MVP: menu bar + intervention panel
+uv run qualm app --demo         # show the panel once, learn nothing
+uv run qualm watch              # the same loop in the terminal, every judgement printed
 open http://127.0.0.1:8765/              # review page (the app serves it; or `review --web`)
-uv run seenot-desktop review             # the same judgements in the terminal
-uv run seenot-desktop review --fix <id> stocks=no   # answer one from the terminal
-uv run seenot-desktop eval --reviews --suggest      # re-ask the model on everything you reviewed
-uv run seenot-desktop harvest            # your answers to the panel -> data/labels.jsonl
-uv run seenot-desktop eval --suggest     # thresholds from your labels, for rules.toml
-uv run seenot-desktop export --lang en   # labels -> Kev training JSONL (data/train.jsonl)
+uv run qualm review             # the same judgements in the terminal
+uv run qualm review --fix <id> stocks=no   # answer one from the terminal
+uv run qualm eval --reviews --suggest      # re-ask the model on everything you reviewed
+uv run qualm harvest            # your answers to the panel -> data/labels.jsonl
+uv run qualm eval --suggest     # thresholds from your labels, for rules.toml
+uv run qualm export --lang en   # labels -> Kev training JSONL (data/train.jsonl)
 ```
 
 Env knobs: `KEV_URL`, `KEV_TIMEOUT` (default 30 s; the SDK's 10 s is shorter
-than 4B's warm-up), `SEENOT_QUESTION_STYLE=rule|direct` (see Measured).
+than 4B's warm-up), `QUALM_QUESTION_STYLE=rule|direct` (see Measured).
 
 Permissions: the terminal app needs **Accessibility** (System Settings →
 Privacy & Security). It already has it on this Mac. The AppleScript URL
@@ -167,20 +169,20 @@ fallback may trigger an **Automation** prompt per browser the first time.
 
 | File | What it does |
 |---|---|
-| `src/seenot_desktop/state.py` | Front window → `ScreenState` → compact `state` dict, cut to a character budget |
-| `src/seenot_desktop/rules.py` | Rules from `rules.toml` (checked on load: fields, sites, `when`, regexes); builds the typed questions |
-| `src/seenot_desktop/config.py` | Edits rules.toml in place, one key at a time; refuses a file that wouldn't load |
-| `src/seenot_desktop/personalize.py` | The `rules` / `allow` / `except` / `never` / `settings` commands |
-| `src/seenot_desktop/trial.py` | `rules test` / `label` / `tune`: a rule on your recent screens, and its threshold from your answers |
-| `src/seenot_desktop/decide.py` | TypeSafe SDK client (Kev or Jev) and `ask()` |
-| `src/seenot_desktop/policy.py` | Reading -> skip / allow / count / intervene: thresholds, URL patterns, exemptions, "opened on purpose", budgets, snoozes, user exceptions, the decision log |
-| `src/seenot_desktop/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
-| `src/seenot_desktop/app.py` | Menu bar item and intervention panel (PyObjC); serves the review page |
-| `src/seenot_desktop/review.py` | Review page (http://127.0.0.1:8765): your verdicts, threshold suggestions from them, applying thresholds and exceptions |
-| `src/seenot_desktop/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export`, plus the commands above |
+| `src/qualm/state.py` | Front window → `ScreenState` → compact `state` dict, cut to a character budget |
+| `src/qualm/rules.py` | Rules from `rules.toml` (checked on load: fields, sites, `when`, regexes); builds the typed questions |
+| `src/qualm/config.py` | Edits rules.toml in place, one key at a time; refuses a file that wouldn't load |
+| `src/qualm/personalize.py` | The `rules` / `allow` / `except` / `never` / `settings` commands |
+| `src/qualm/trial.py` | `rules test` / `label` / `tune`: a rule on your recent screens, and its threshold from your answers |
+| `src/qualm/decide.py` | TypeSafe SDK client (Kev or Jev) and `ask()` |
+| `src/qualm/policy.py` | Reading -> skip / allow / count / intervene: thresholds, URL patterns, exemptions, "opened on purpose", budgets, snoozes, user exceptions, the decision log |
+| `src/qualm/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
+| `src/qualm/app.py` | Menu bar item and intervention panel (PyObjC); serves the review page |
+| `src/qualm/review.py` | Review page (http://127.0.0.1:8765): your verdicts, threshold suggestions from them, applying thresholds and exceptions |
+| `src/qualm/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export`, plus the commands above |
 | `rules.example.toml` | The starter rules and allow classes, in English, with measured thresholds and why in `note` |
 | `docs/PERSONALIZE.md` | Every personalization command, the question limit, and the test-then-tune loop for a new rule |
-| `.claude/skills/seenot/SKILL.md` | How Claude Code should drive the CLI for a user |
+| `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
 | `tests/test_policy.py` | The policy with made-up readings |
 | `experiments/` | Trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |
@@ -213,7 +215,7 @@ set: precision 0.96, recall 1.00 (was 0.96 / 0.92). The pop-up's
 "Never in <app>" / "Never on <site>" does the same for one app or site.
 
 Testing mode: `[settings] budgets = false` (the current default) makes every
-rule hit pop up at once, time caps included. `seenot-desktop settings set
+rule hit pop up at once, time caps included. `qualm settings set
 budgets=true` for real budgets.
 
 ## Design decisions, and why
@@ -288,7 +290,7 @@ recall is much lower; see below.
 Best setup: **Kev-4B, rule style, English rule text.** Thresholds that reach
 precision >= 0.9 there: shortvideo 0.15, stocks 0.06, social 0.20.
 
-"direct" (`SEENOT_QUESTION_STYLE=direct`) asks "Is the open content X?"
+"direct" (`QUALM_QUESTION_STYLE=direct`) asks "Is the open content X?"
 instead of "the user forbids X: violates/safe?". It rescues 0.8B (stocks 0.12
 -> 1.00 recall) but makes 4B slightly worse, so the default stays "rule".
 
@@ -403,9 +405,9 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 
 ## Next steps, in order
 
-1. **Use the app for a few days, and review.** Run `seenot-desktop app`
+1. **Use the app for a few days, and review.** Run `qualm app`
    (Kev-4B server up first), browse normally, then go through the review page:
-   "Was SeeNot right?" per card; for wrong ones, "Is this X?" per rule. Use
+   "Was Qualm right?" per card; for wrong ones, "Is this X?" per rule. Use
    the menu's "This should have been blocked" for misses as they happen.
 2. **Re-tune from your answers** on the same page (suggested thresholds, Apply;
    exceptions in your own words), or `rules tune ID --apply`. The app reloads
@@ -417,7 +419,7 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    - Feeds on sites that look like single items (X profiles, Guba lists).
 4. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
    your own labels:
-   `seenot-desktop export --lang en --labels data/labels.jsonl --out train.jsonl`, then
+   `qualm export --lang en --labels data/labels.jsonl --out train.jsonl`, then
    `uv run python -m kev.train --data train.jsonl --init_from jaredpalmer/kev-4b --base Qwen/Qwen3.5-4B-Base --epochs 2 --lr 2e-5 --batch 1 --accum 8 --dtype bf16 --device cuda`.
    `--base` is required with `--init_from`; the default base is Qwen3-0.6B.
 5. **Make the watcher cheaper and wider:**
@@ -428,7 +430,7 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 6. **Personalizing, the rest:** `pause` / `snooze` commands (they need the
    running app; the review server on 8765 could take them), and the review
    page's Tune tab on top of `config.py` (add / edit / test a rule there too).
-7. **Ship it:** a signed `SeeNot.app` (Swift `MenuBarExtra`, or py2app) with its own
+7. **Ship it:** a signed `Qualm.app` (Swift `MenuBarExtra`, or py2app) with its own
    name and permissions; `install` covers start-at-login meanwhile. Port
    SeeNot's session intents: "I'm here to do X for 20 minutes" before a
    session, in place of the per-rule snooze.

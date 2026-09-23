@@ -1,7 +1,7 @@
-"""Why SeeNot stepped in, in words.
+"""Why Qualm stepped in, in words.
 
 Kev answers with probabilities only; it can't say why. So the explanation
-is built from what SeeNot does know: which signal fired (a URL pattern,
+is built from what Qualm does know: which signal fired (a URL pattern,
 the score, an entertainment feed, a budget), how far past the threshold
 the score was, what the model took the page to be, and, asked once per
 pop-up, which part of the screen carried the signal: the model is asked
@@ -38,7 +38,7 @@ def reason(d: Decision, reading: Reading | None, rule: Rule, lang: str) -> str:
         head = f"This looks like {what}."
     if reading is None:
         return head
-    seen = f"SeeNot read the screen as {PAGE_WORDS.get(reading.page_kind, 'a page')}, for {PURPOSE_WORDS.get(reading.purpose, 'something')}."
+    seen = f"Qualm read the screen as {PAGE_WORDS.get(reading.page_kind, 'a page')}, for {PURPOSE_WORDS.get(reading.purpose, 'something')}."
     return f"{head} {seen}"
 
 

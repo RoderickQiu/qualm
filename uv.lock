@@ -326,7 +326,7 @@ wheels = [
 ]
 
 [[package]]
-name = "seenot-desktop"
+name = "qualm-desktop"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

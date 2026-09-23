@@ -73,7 +73,7 @@ class Controller(NSObject):
         # A stable identity across launches, so macOS and menu bar managers
         # (Thaw, Bartender) remember where you put it instead of treating each
         # launch as a new item.
-        self.status_item.setAutosaveName_("SeeNot")
+        self.status_item.setAutosaveName_("Qualm")
         self.status_item.setVisible_(True)
         self._set_icon(paused=False)
         menu = NSMenu.alloc().init()
@@ -85,7 +85,7 @@ class Controller(NSObject):
                      self._item("This should have been blocked", "flagMiss:"),
                      self._item("Open review page", "openReview:"), NSMenuItem.separatorItem(),
                      self.pause_item, self._item("Open rules…", "openRules:"), NSMenuItem.separatorItem(),
-                     self._item("Quit SeeNot", "quit:", "q")):
+                     self._item("Quit Qualm", "quit:", "q")):
             menu.addItem_(item)
         self.status_item.setMenu_(menu)
 
@@ -94,11 +94,11 @@ class Controller(NSObject):
         # An SF Symbol, so menu bar managers (Thaw, Bartender) can show it;
         # they list the item as "python3" because it isn't an app bundle.
         name = "pause.circle" if paused else "eye"
-        image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, "SeeNot")
+        image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, "Qualm")
         image.setTemplate_(True)
         button = self.status_item.button()
         button.setImage_(image)
-        button.setToolTip_("SeeNot" + (" (paused)" if paused else ""))
+        button.setToolTip_("Qualm" + (" (paused)" if paused else ""))
 
     @objc.python_method
     def set_status(self, text):
@@ -190,7 +190,7 @@ class Controller(NSObject):
         rule = self.policy.rule(d.rule)
         lang = self.policy.settings.lang
         where = ev.screen.window_title or ev.screen.app
-        self.headline.setStringValue_(f"SeeNot: {rule.id}")
+        self.headline.setStringValue_(f"Qualm: {rule.id}")
         self._text = f"{where[:90]}\n\n{reason(d, ev.reading, rule, lang)}"
         checking = ev.reading is not None and not self.demo
         self.body.setStringValue_(self._text + ("\n\nChecking which part of the screen triggered it…" if checking else ""))
@@ -290,11 +290,11 @@ def run_app(policy: Policy, rules_path: str, budget: int, demo: bool = False, re
     from ApplicationServices import AXIsProcessTrusted
 
     if not AXIsProcessTrusted():
-        print("! No Accessibility permission: SeeNot can only see app names. Grant it in System Settings >"
+        print("! No Accessibility permission: Qualm can only see app names. Grant it in System Settings >"
               " Privacy & Security > Accessibility, then restart.", flush=True)
         AppHelper.callAfter(ctrl.set_status, "needs Accessibility permission (see System Settings)")
     mode = "budgets on: time caps count first" if policy.settings.budgets else "budgets off: every hit pops up"
-    print(f"SeeNot watching ({mode}). Ctrl-C to stop.", flush=True)
+    print(f"Qualm watching ({mode}). Ctrl-C to stop.", flush=True)
 
     if demo:
         from .state import ScreenState
@@ -317,6 +317,6 @@ def run_app(policy: Policy, rules_path: str, budget: int, demo: bool = False, re
             threading.Thread(target=server.serve_forever, daemon=True).start()
             print(f"review page: http://127.0.0.1:{PORT}/", flush=True)
         except OSError:
-            print(f"review page: port {PORT} is taken; `seenot-desktop review --web` is probably running", flush=True)
+            print(f"review page: port {PORT} is taken; `qualm review --web` is probably running", flush=True)
     AppHelper.runEventLoop(installInterrupt=True)
 

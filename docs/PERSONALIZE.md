@@ -1,4 +1,4 @@
-# Making SeeNot yours, from the command line
+# Making Qualm yours, from the command line
 
 Everything you can personalize is a command. The commands edit the same
 files the app, the pop-up and the review page use: `rules.toml` for rules,
@@ -6,7 +6,7 @@ allow classes and settings, and `data/exceptions.jsonl` for what you taught
 it at runtime. The running app picks up changes without a restart.
 
 The commands are written to be driven by an agent as well as by hand
-(Claude Code picks up `.claude/skills/seenot` in this repo):
+(Claude Code picks up `.claude/skills/qualm` in this repo):
 
 - every command takes `--json`, errors included:
   `{"error": {"code": "over_limit", "message": "..."}}`;
@@ -27,21 +27,21 @@ first time any command or the app runs.
 ## Rules
 
 ```bash
-seenot-desktop rules list                   # every rule in a sentence: on/off, active now, today's usage
-seenot-desktop rules show social --json     # every field, plus exceptions learned from the pop-up
-seenot-desktop rules starters               # the ready-made rules, and which you have
+qualm rules list                   # every rule in a sentence: on/off, active now, today's usage
+qualm rules show social --json     # every field, plus exceptions learned from the pop-up
+qualm rules starters               # the ready-made rules, and which you have
 
-# A rule in your own words. With --minutes or --visits it's a budget; without, SeeNot steps in.
-seenot-desktop rules add news --what "reading news: news sites, articles and headlines" \
+# A rule in your own words. With --minutes or --visits it's a budget; without, Qualm steps in.
+qualm rules add news --what "reading news: news sites, articles and headlines" \
     --minutes 15 --when "mon-fri 09:00-18:00" --site nytimes.com --on-purpose-ok
-seenot-desktop rules add feeds --from-starter
+qualm rules add feeds --from-starter
 
 # Change anything: key=value sets, key+=item / key-=item edit a list, key= removes a key.
-seenot-desktop rules set news threshold=0.25 sites+=bbc.com 'what=news articles and headlines'
-seenot-desktop rules set shortvideo 'when+=mon-fri 09:00-18:00'   # a creator: only during work hours
-seenot-desktop rules off videos                                    # kept, but never asked
-seenot-desktop rules on videos
-seenot-desktop rules remove news
+qualm rules set news threshold=0.25 sites+=bbc.com 'what=news articles and headlines'
+qualm rules set shortvideo 'when+=mon-fri 09:00-18:00'   # a creator: only during work hours
+qualm rules off videos                                    # kept, but never asked
+qualm rules on videos
+qualm rules remove news
 ```
 
 `what=` edits whichever description the model reads. The fields, as in
@@ -83,7 +83,7 @@ but its scores run low (the tuned thresholds are 0.15-0.5), so the default
 0.2 is a guess. Try it on screens you've actually had:
 
 ```bash
-seenot-desktop rules test news              # asks the model this one rule on your last 100 distinct screens
+qualm rules test news              # asks the model this one rule on your last 100 distinct screens
 ```
 
 ```
@@ -97,12 +97,12 @@ news on your last 25 distinct screens, at threshold 0.2: 0 would pop up.
 Each row is a screen from `data/judgements.jsonl`, highest score first,
 with what the rule would do there through the same exemptions as the live
 policy (work tool, learning, opened on purpose, allow classes). Then say
-which really are the rule, and let SeeNot pick the threshold:
+which really are the rule, and let Qualm pick the threshold:
 
 ```bash
-seenot-desktop rules label news --yes 6d159df9 0f437a14 --no 52a39a64 c1d80582 d4f385bc
-seenot-desktop rules tune news              # the threshold that's right on 90% of hits, from your answers
-seenot-desktop rules tune news --apply      # write it to rules.toml
+qualm rules label news --yes 6d159df9 0f437a14 --no 52a39a64 c1d80582 d4f385bc
+qualm rules tune news              # the threshold that's right on 90% of hits, from your answers
+qualm rules tune news --apply      # write it to rules.toml
 ```
 
 Try wording before saving anything: `rules test news --what "news
@@ -123,36 +123,36 @@ order.
 
 ```bash
 # Kinds of page no rule fires on, in your words
-seenot-desktop allow list
-seenot-desktop allow add games --what "a video game or game launcher" --app com.valvesoftware.steam
-seenot-desktop allow set music sites+=music.amazon.com
-seenot-desktop allow off shopping
+qualm allow list
+qualm allow add games --what "a video game or game launcher" --app com.valvesoftware.steam
+qualm allow set music sites+=music.amazon.com
+qualm allow off shopping
 
 # Things that look like a rule but are fine
-seenot-desktop except list                  # typed ones, and those learned from "Not this one"
-seenot-desktop except add videos "a lecture or conference talk"
-seenot-desktop except remove shortvideo "How to fix a bike chain"   # the text, page title or URL
+qualm except list                  # typed ones, and those learned from "Not this one"
+qualm except add videos "a lecture or conference talk"
+qualm except remove shortvideo "How to fix a bike chain"   # the text, page title or URL
 
 # Apps and sites where no rule ever fires ("Never here" on the pop-up)
-seenot-desktop never list
-seenot-desktop never add --app net.whatsapp.WhatsApp --name WhatsApp
-seenot-desktop never remove --site example.com
+qualm never list
+qualm never add --app net.whatsapp.WhatsApp --name WhatsApp
+qualm never remove --site example.com
 
 # Settings
-seenot-desktop settings show
-seenot-desktop settings set budgets=true                  # count time caps; step in only over budget
-seenot-desktop settings set no_monitor+=com.tencent.xinWeChat   # never read at all
-seenot-desktop settings set allow_sites+=gitlab.com       # never judged; links from it count as on purpose
+qualm settings show
+qualm settings set budgets=true                  # count time caps; step in only over budget
+qualm settings set no_monitor+=com.tencent.xinWeChat   # never read at all
+qualm settings set allow_sites+=gitlab.com       # never judged; links from it count as on purpose
 ```
 
 ## Many changes at once
 
 ```bash
-seenot-desktop config export > cfg.json          # settings, allow classes and rules, as written
+qualm config export > cfg.json          # settings, allow classes and rules, as written
 # edit cfg.json
-seenot-desktop config apply cfg.json --dry-run   # the diff
-seenot-desktop config apply cfg.json             # all of it, checked together, or nothing
-seenot-desktop config undo                       # changed your mind
+qualm config apply cfg.json --dry-run   # the diff
+qualm config apply cfg.json             # all of it, checked together, or nothing
+qualm config undo                       # changed your mind
 ```
 
 Entries missing from the file are kept: a partial list never deletes
@@ -163,21 +163,21 @@ commands would be refused halfway.
 ## Is it running
 
 ```bash
-seenot-desktop status            # app, model, config and question budget, what it judged last (exit 5 if down)
-seenot-desktop config check      # does rules.toml load
-seenot-desktop schema            # every field and its grammar
+qualm status            # app, model, config and question budget, what it judged last (exit 5 if down)
+qualm config check      # does rules.toml load
+qualm schema            # every field and its grammar
 ```
 
 ## For an agent
 
-`.claude/skills/seenot/SKILL.md` is the operating guide for Claude Code:
+`.claude/skills/qualm/SKILL.md` is the operating guide for Claude Code:
 start with `status`, `rules list` and `schema`, map the user's words onto
 fields, dry-run, respect the question limit, and test a new rule before
 switching it on. A user saying "stop me watching streams during work, but
 lectures are fine" maps to:
 
 ```bash
-seenot-desktop rules set livestream 'when+=mon-fri 09:00-18:00' allow_learning=true --json
+qualm rules set livestream 'when+=mon-fri 09:00-18:00' allow_learning=true --json
 ```
 
 What the commands don't do yet: pause or snooze the running app (the menu

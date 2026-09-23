@@ -93,7 +93,7 @@ def cmd_app(args) -> None:
 
     settings, rules = _config(args)
     # The demo must not teach your real rules anything.
-    data = tempfile.mkdtemp(prefix="seenot-demo-") if args.demo else args.data
+    data = tempfile.mkdtemp(prefix="qualm-demo-") if args.demo else args.data
     run_app(Policy(settings, rules, data), args.rules, args.budget, demo=args.demo, review=not args.demo)
 
 
@@ -154,7 +154,7 @@ def cmd_harvest(args) -> None:
     kinds = {r.id: r.kind for r in rules}
     path = Path(args.data) / "decisions.jsonl"
     if not path.exists():
-        sys.exit(f"{path} not found: run `seenot-desktop app` first.")
+        sys.exit(f"{path} not found: run `qualm app` first.")
     events = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
     shown = {e["id"]: e for e in events if e["type"] == "intervention"}
     have = set()
@@ -191,7 +191,7 @@ def cmd_review(args) -> None:
         return
     events = load_judgements(data)
     if not events:
-        sys.exit(f"no judgements in {data}: run `seenot-desktop app` or `watch` first.")
+        sys.exit(f"no judgements in {data}: run `qualm app` or `watch` first.")
 
     if args.fix:
         jid, *pairs = args.fix
@@ -231,7 +231,7 @@ def cmd_review(args) -> None:
             cells = [f"{rid} {p:.2f}{'*' if p >= (by_id[rid].threshold if rid in by_id else 1) else ''}"
                      for rid, p in e["p_hit"].items()]
             print("    p_hit: " + "  ".join(cells) + "   (* = at or over the rule's threshold)")
-    print(f"\n{len(shown)} judgements. Easier: seenot-desktop review --web")
+    print(f"\n{len(shown)} judgements. Easier: qualm review --web")
 
 
 def _suggest(rule_id: str, pts: list[tuple[float, bool]], target: float) -> str:
@@ -358,7 +358,7 @@ def main() -> None:
     from . import __doc__ as doc
     from .state import DEFAULT_CHAR_BUDGET
 
-    p = argparse.ArgumentParser(prog="seenot-desktop", description=doc, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(prog="qualm", description=doc, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def add(name, fn, model=True):

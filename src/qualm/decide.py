@@ -2,7 +2,7 @@
 
 The backend is anything that speaks TypeSafe's System One API: a local Kev
 server by default, or TypeSafe's hosted Jev when TYPESAFE_API_KEY is set and
-SEENOT_BACKEND=jev.
+QUALM_BACKEND=jev.
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ from .rules import AllowClass, Rule, build_questions
 
 
 def make_client() -> TypeSafeClient:
-    backend = os.environ.get("SEENOT_BACKEND", "kev")
+    backend = os.environ.get("QUALM_BACKEND", "kev")
     if backend == "jev":
-        return TypeSafeClient(model=os.environ.get("SEENOT_MODEL", "jev-1.13.0"))
+        return TypeSafeClient(model=os.environ.get("QUALM_MODEL", "jev-1.13.0"))
     return TypeSafeClient(
         api_key=os.environ.get("KEV_API_KEY", "local"),
         base_url=os.environ.get("KEV_URL", "http://127.0.0.1:8009"),
-        model=os.environ.get("SEENOT_MODEL", "kev-latest"),
+        model=os.environ.get("QUALM_MODEL", "kev-latest"),
         # Kev-4B's first call on MLX takes ~25 s; the SDK default of 10 s times
         # out and retries, queueing duplicate work on a one-request-at-a-time server.
         timeout=float(os.environ.get("KEV_TIMEOUT", "30")),

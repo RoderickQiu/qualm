@@ -40,7 +40,7 @@ These are the things that should be stopped, whatever site they appear on:
    check can be a decision; the twelfth is a habit. This is a visit limit
    (`visits_per_day`), not a ban. The shipped rules don't include stocks any
    more: it's a niche habit, and in real use it fired on shopping chats and on
-   SeeNot's own review page. Add it back if it's yours.
+   Qualm's own review page. Add it back if it's yours.
 5. **Unbounded entertainment video and social browsing.** Not bad in itself.
    These get a daily time budget, not a block.
 
@@ -124,11 +124,11 @@ It also learns from you over time:
 1. Each decision and your response is logged to `data/decisions.jsonl`.
 2. "Not this one" and "Take me back" are labels, so the log turns into
    `labels.jsonl` records without a separate labeling session
-   (`seenot-desktop harvest`).
-3. `seenot-desktop eval --suggest` re-picks each rule's threshold from your
+   (`qualm harvest`).
+3. `qualm eval --suggest` re-picks each rule's threshold from your
    own labels.
 4. With a few hundred of your own labels, fine-tune Kev on them
-   (`seenot-desktop export`; see HANDOFF.md).
+   (`qualm export`; see HANDOFF.md).
 
 Who you are changes the defaults a lot. A trader would never add a stocks rule, a video
 creator needs `shortvideo` off during work hours (`rules set shortvideo

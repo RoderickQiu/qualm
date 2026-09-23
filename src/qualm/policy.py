@@ -26,8 +26,8 @@ from .rules import Rule, Settings
 LEARN_MIN = 0.6  # P(purpose = learn) needed for the learning exemption
 MAX_TICK_S = 5.0  # longer gaps (sleep, a stalled model call) don't count as usage
 MAX_EXCEPTIONS = 10  # per rule; the newest "Not this one" titles the model reads
-OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge SeeNot itself
-OWN_TITLES = ("SeeNot review",)  # the same page shown elsewhere (Cursor's browser: a vscode-file:// URL)
+OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge Qualm itself
+OWN_TITLES = ("Qualm review", "SeeNot review")  # the same page shown elsewhere (Cursor's browser: a vscode-file:// URL)
 
 
 def host_of(url: str) -> str:
@@ -193,7 +193,7 @@ class Policy:
             elif bundle_id in self.settings.no_monitor:
                 d = Decision("skip", reason="app not monitored")
             elif url.startswith(OWN_URLS) or title.startswith(OWN_TITLES):
-                d = Decision("skip", reason="SeeNot's own page")
+                d = Decision("skip", reason="Qualm's own page")
             elif self.settings.allowed_url(url):
                 d = Decision("allow", reason="allowed URL")
             elif bundle_id in self._never_apps or host_of(url) in self._never_hosts:
@@ -358,7 +358,7 @@ class Policy:
 
     def log_judgement(self, screen: dict, reading: Reading | None, decisions: list[Decision],
                       state: dict | None = None, shot: str = "") -> str:
-        """Every judgement, to data/judgements.jsonl, for `seenot-desktop review`:
+        """Every judgement, to data/judgements.jsonl, for `qualm review`:
         what was on screen, exactly what the model read, every answer's
         probabilities, the screen before, and what the policy did and why.
         Sensitive pages and unmonitored apps are logged without their content."""

@@ -10,9 +10,9 @@ applies, and time caps count as a hit whether or not the budget is spent.
 import argparse, json, sys, tempfile
 from dataclasses import replace
 
-from seenot_desktop.decide import Reading, RuleVerdict
-from seenot_desktop.policy import Policy
-from seenot_desktop.rules import HIT_LABELS, load_config
+from qualm.decide import Reading, RuleVerdict
+from qualm.policy import Policy
+from qualm.rules import HIT_LABELS, load_config
 
 ap = argparse.ArgumentParser()
 ap.add_argument("dump"); ap.add_argument("--labels", required=True); ap.add_argument("--rules", default="rules.example.toml")
