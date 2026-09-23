@@ -1,8 +1,10 @@
 # Handoff: qualm
 
-Written 2026-09-22; updated the same day after the trials, and again after
-the MVP was built. This is the working
-document: update the Status and Measured sections as you go.
+Written 2026-09-22; updated the same day after the trials, again after
+the MVP was built, and on the night of 2026-09-23 (pop-up, focus sessions,
+dashboard, 8-bit model, `serve` / `doctor`). This is the working
+document: update the Status and Measured sections as you go. README.md is
+the public face: what it is, screenshots, getting started.
 
 ## What this is
 
@@ -96,6 +98,60 @@ research on digital self-control tools:
   tries wording as a draft. `.claude/skills/qualm/SKILL.md` tells Claude
   Code how to use it.
 
+### The night of 2026-09-23
+
+From a day of real use (1,242 judgements) and a pass over the research on
+these interventions (one sec PNAS 2023, Time2Stop and InteractOut CHI 2024,
+Lyngs CHI 2019/2020, WellScreen CHI 2026):
+
+- **Feeds must be clearly for entertainment.** `feed_hit` needs
+  P(entertain) >= 0.6 (`ENTERTAIN_MIN`), not just the argmax. It had fired
+  on an Apple Ads "recommendations" page at 0.41; every trial feed scores
+  0.82+, and the trial simulation is unchanged.
+- **Titles lose browser noise**: the browser's name, Chrome's "High memory
+  usage - 1.2 GB" (on 89 judgements; its number changing looked like a new
+  page and re-asked the model) and unread counts ("(3) Inbox").
+- **The pop-up, redesigned** (`ui.py`, `app.py`): a dark blurred HUD over a
+  soft dim of every screen; the rule as a phrase ("This looks like short
+  videos made for endless swiping."), the page with its app icon, why, and
+  a neutral context line ("2nd time today · last at 14:20"; "Your 10
+  minutes for 'a recipe' are up"). Take me back is the default; I need it
+  counts down, then asks what for; Not this one / Never here are quiet
+  links; each answer ends with a short "got it". Nothing shames ("again?").
+- **Focus sessions** (SeeNot's session intents): menu, dashboard or `qualm
+  focus write the report --minutes 50`. Every rule steps in at once, time
+  caps included, and the pop-up says "You're here to: write the report."
+  `qualm pause 30` too. Both live in `data/session.json`, which the running
+  app reloads, so menu, CLI, dashboard and agents share one state.
+- **Dashboard** (`dashboard.html`, served by `review.py`): Today (focus,
+  pause, the day's pop-ups and budgets), Review, All screens, Insights (how
+  pop-ups ended per day, per week, hour x weekday heatmap, what you unlocked
+  time for, focus sessions, budgets, how often your reviews said it was
+  right, one question a week: was the time worth it?), Rules (on/off
+  switches through `config.py`, thresholds, exceptions, never-here). No
+  score, no streaks. Light and dark.
+- **The dashboard only takes changes from itself**: POSTs need a JSON body,
+  this Host and no foreign Origin. Before, any site open in the browser
+  could post a text/plain form to 127.0.0.1:8765 and change thresholds.
+- **8-bit Kev-4B by default** (see Measured), and **`qualm serve`** runs the
+  server from this checkout in one command; `install` uses the same.
+- **`qualm doctor`**: the Mac, memory, swap, Accessibility, rules.toml, the
+  Kev repo, the model server (quantized or not), the app, start-at-login;
+  the fix for each.
+- **`qualm app --demo deny|feed|budget|focus|prompt`**, and
+  `experiments/demo_data.py` (three made-up weeks, for screenshots: your own
+  logs are personal and must not go in a README).
+
+Verified: 65 tests; every panel state rendered and screenshotted (README
+images); the dashboard's tabs in headless Chrome, light and dark, on a
+copy of the real data and on demo data; its guard (text/plain, a foreign
+Origin and a rebound Host get 403); rule on/off round-trips rules.toml
+byte for byte; `qualm serve` loads 8-bit Kev and answers through the SDK
+(0.58 s warm, 10 questions); focus/pause from the CLI reach a running
+watcher. Not verified: clicking through the new panel by hand for a day;
+the Return key in the "what's it for?" field on a real keyboard (it's
+wired so Return unlocks there, and takes you back otherwise).
+
 ### MVP (built after the trials)
 
 `qualm app` is a menu bar app (Python + PyObjC) that watches the
@@ -118,6 +174,9 @@ Verified working on this Mac (M5 Pro, 24 GB, macOS 27): `probe`, `ask`, `watch`,
 `eval`, `export`, `app --demo`. Not exercised: `label` and `harvest` (they need you).
 
 Not built:
+- Loading the 8-bit model without the bf16 peak: it loads bf16, merges the
+  LoRA, then quantizes, so the first minute needs the full 11 GB (and on a
+  swapped Mac, 1-5 minutes). Saving the quantized weights once would fix it.
 - OCR fallback for apps whose text isn't in the Accessibility tree (video
   players, canvases).
 - Event-driven triggers (currently a 0.5 s poll of the front window; the model is
@@ -128,17 +187,16 @@ Not built:
 ## Run it
 
 ```bash
-# 1. Model server (Kev is cloned at ~/Documents/kev, commit 08ab0b8)
-cd ~/Documents/kev
-KEV_DTYPE=bf16 uv run --extra serve python ~/Documents/qualm/experiments/serve_capped.py \
-    --run jaredpalmer/kev-4b --port 8009
-#    serve_capped.py = kev.serve with MLX's buffer cache capped at 1 GB. Plain
-#    `python -m kev.serve` holds 17 GB for 4B and swaps a 24 GB Mac.
-#    Kev-0.8B: --run jaredpalmer/kev-0.8b (fast, but too weak; see Measured)
+# 1. Model server (Kev cloned at ~/Documents/kev: git clone https://github.com/jaredpalmer/kev)
+uv run qualm serve              # Kev-4B, 8-bit, MLX cache capped, on :8009; --bits 16 for bf16
+#    = cd ~/Documents/kev && KEV_DTYPE=bf16 KEV_QUANT_BITS=8 uv run --extra serve \
+#        python ~/Documents/qualm/experiments/serve_capped.py --run jaredpalmer/kev-4b --port 8009
+#    Plain `python -m kev.serve` holds 17 GB for 4B and swaps a 24 GB Mac.
 #    Run one server at a time.
 
 # 2. This repo
 cd ~/Documents/qualm
+uv run qualm doctor             # everything checked, with fixes
 uv run qualm rules list         # your rules (rules.toml is created from rules.example.toml if missing)
 uv run qualm rules --help       # add / set / on / off / test / tune …; docs/PERSONALIZE.md
 uv run qualm probe              # state only, no model; Ctrl-C to stop
@@ -147,9 +205,11 @@ uv run qualm label              # capture + label one moment -> data/labels.json
 uv run qualm eval               # precision/recall per threshold, latency
 uv run qualm install            # or: start model server + app at every login (uninstall to undo)
 uv run qualm app                # the MVP: menu bar + intervention panel
-uv run qualm app --demo         # show the panel once, learn nothing
+uv run qualm app --demo         # show the panel once, learn nothing (deny|feed|budget|focus|prompt)
+uv run qualm focus write the report --minutes 50   # --stop ends it
+uv run qualm pause 30           # --stop resumes
 uv run qualm watch              # the same loop in the terminal, every judgement printed
-open http://127.0.0.1:8765/              # review page (the app serves it; or `review --web`)
+open http://127.0.0.1:8765/              # dashboard (the app serves it; or `review --web`)
 uv run qualm review             # the same judgements in the terminal
 uv run qualm review --fix <id> stocks=no   # answer one from the terminal
 uv run qualm eval --reviews --suggest      # re-ask the model on everything you reviewed
@@ -177,15 +237,20 @@ fallback may trigger an **Automation** prompt per browser the first time.
 | `src/qualm/decide.py` | TypeSafe SDK client (Kev or Jev) and `ask()` |
 | `src/qualm/policy.py` | Reading -> skip / allow / count / intervene: thresholds, URL patterns, exemptions, "opened on purpose", budgets, snoozes, user exceptions, the decision log |
 | `src/qualm/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
-| `src/qualm/app.py` | Menu bar item and intervention panel (PyObjC); serves the review page |
-| `src/qualm/review.py` | Review page (http://127.0.0.1:8765): your verdicts, threshold suggestions from them, applying thresholds and exceptions |
+| `src/qualm/app.py` | Menu bar item (focus, pause), the intervention panel and the focus prompt (PyObjC); serves the dashboard |
+| `src/qualm/ui.py` | The look: the blurred HUD panel, labels, badges, the screen dim |
+| `src/qualm/explain.py` | The pop-up's words: headline, reason, the neutral context line, which part of the screen carried it |
+| `src/qualm/review.py` | Dashboard server (http://127.0.0.1:8765): data, insights, verdicts, thresholds, exceptions, focus/pause, rule on/off |
+| `src/qualm/dashboard.html` | The dashboard page: Today, Review, All screens, Insights, Rules |
+| `src/qualm/doctor.py` | `qualm doctor` |
+| `src/qualm/autostart.py` | `serve`, `install`, `uninstall`: the model server command (8-bit) and the LaunchAgents |
 | `src/qualm/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export`, plus the commands above |
 | `rules.example.toml` | The starter rules and allow classes, in English, with measured thresholds and why in `note` |
 | `docs/PERSONALIZE.md` | Every personalization command, the question limit, and the test-then-tune loop for a new rule |
 | `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
 | `tests/test_policy.py` | The policy with made-up readings |
-| `experiments/` | Trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |
+| `experiments/` | `demo_data.py` (made-up weeks for screenshots); trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |
 
 `rules.toml` and `data/` are git-ignored: they contain what you read on screen.
 In `data/`, the app keeps `judgements.jsonl` (every judgement: the capture,
@@ -193,7 +258,8 @@ exactly what the model read, every answer's probabilities, the screen before,
 what the policy did and why; sensitive pages and unmonitored apps without
 content), `shots/` (a ~900 px screenshot per new screen, none for sensitive
 pages), `reviews.jsonl` (your answers on the review page),
-`decisions.jsonl` (interventions and your answers), `exceptions.jsonl` ("Not
+`decisions.jsonl` (interventions, your answers, focus sessions), `session.json`
+(pause and focus now), `reflections.jsonl` (the weekly question), `exceptions.jsonl` ("Not
 this one", "Never here", `except`/`never` commands), `trials.jsonl` (`rules
 test` scores, per exact rule wording) and `usage.json` (today's budgets).
 
@@ -387,6 +453,42 @@ GPU is unmeasured. Hence `[settings] max_questions = 25`, enforced. Not
 built: grouping rules into calls automatically, or a first cheap question
 that picks which rules to ask; either would let the limit rise.
 
+### Real use, first day (2026-09-22, 1,242 judgements)
+
+- Latency, bf16 Kev-4B, 5 rules + 2 allow classes: p50 1.8 s, p95 8.5 s,
+  and p50 11.5 s around midnight. The trials measured 0.85 s. The
+  difference was swap: 14.7 of 15.4 GB in use, the server's resident set
+  down to 57 MB (its weights paged out).
+- 20 pop-ups. True: Xiaohongshu explore (back), a Reddit thread (back
+  twice). False, since fixed: WeChat and WhatsApp windows showing only a
+  name (now "too little on screen"), a Chrome address-bar dropdown, Qualm's
+  own review page, music.youtube.com (now an allow class), an Apple Ads
+  page (feed_hit, now needs P(entertain) >= 0.6). Your call: claude.ai and
+  linkedin.com ("Never here").
+- 104 judgements skipped as sensitive: 60 Chrome pages, 40 the lock screen.
+  Not audited: a false "sensitive" hides a page from every rule.
+
+### 8-bit and 4-bit Kev-4B (2026-09-23, 119 trial pages, current rules)
+
+`KEV_QUANT_BITS` in `serve_capped.py` quantizes after the LoRA merge
+(`mlx.nn.quantize`, group 64; the pointer head stays fp32). Dumps in
+data/runs/{bf16-en-now,q8-en,q4-en}.jsonl.
+
+| | bf16 | 8-bit | 4-bit |
+|---|---|---|---|
+| memory (phys_footprint, after eval) | 9.9-11 GB | 6.1-7.1 GB | 4.1 GB |
+| latency p50 / p95 | 1.0 / 1.2 s | 1.1 / 1.6 s | 1.0 / 1.5 s |
+| AUC shortvideo / feeds / livestream / videos / social | 1.00 / 0.85 / 1.00 / 1.00 / 1.00 | same | 1.00 / 0.82 / 1.00 / 1.00 / 0.99 |
+| social P / R at 0.3 | 0.90 / 0.95 | 0.90 / 0.95 | 0.94 / 0.85 |
+| page kind agrees with bf16 | | 119 / 119 | 112 / 119 |
+| max \|dp\| per rule | | 0.012-0.038 | 0.12-0.44 |
+
+8-bit is the default: the same answers in half the memory. It isn't
+faster on a Mac with memory free; it's faster on this one because it
+doesn't swap. Latency here ran with the live bf16 server resident, so it
+understates 8-bit. 4-bit moves social and videos scores enough to lose
+real hits; not offered. Warm, alone: 0.58 s for 10 questions (8-bit).
+
 ### State size (Kev tokenizer, state only)
 
 | `--budget` | p50 | p95 | max | over 384 |
@@ -405,38 +507,47 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 
 ## Next steps, in order
 
-1. **Use the app for a few days, and review.** Run `qualm app`
-   (Kev-4B server up first), browse normally, then go through the review page:
-   "Was Qualm right?" per card; for wrong ones, "Is this X?" per rule. Use
-   the menu's "This should have been blocked" for misses as they happen.
-2. **Re-tune from your answers** on the same page (suggested thresholds, Apply;
-   exceptions in your own words), or `rules tune ID --apply`. The app reloads
-   rules.toml and exceptions without a restart. When the wording of a rule is
-   the problem: `rules set ID what="..."`, then `rules test ID` and `rules tune`.
-   Not run yet: the CLI loop on a rule someone new writes from scratch, with
-   real answers (it's been exercised end to end with made-up answers only).
-3. **Fix what the trials showed is weak:**
-   - Feeds on sites that look like single items (X profiles, Guba lists).
-4. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
+0. **Switch to the new version.** In the morning the app and server may
+   still be the old processes: `qualm doctor` says which. Restart the
+   server as `qualm serve` (8-bit) and the app as `qualm app`, or `qualm
+   install` for both at login.
+1. **Use the app for a few days, and review.** Browse normally, then go
+   through the dashboard's Review tab: "Was Qualm right?" per card; for
+   wrong ones, "Is this X?" per rule. Use the menu's "This should have been
+   blocked" for misses as they happen. Try a focus session a day.
+2. **Re-tune from your answers** on the Rules tab (suggested thresholds,
+   Apply; exceptions in your own words), or `rules tune ID --apply`. When
+   the wording of a rule is the problem: `rules set ID what="..."`, then
+   `rules test ID` and `rules tune`. Not run yet: the CLI loop on a rule
+   someone new writes from scratch, with real answers.
+3. **Audit "sensitive"**: 60 Chrome pages were skipped as sensitive on day
+   one, unaudited. A false positive there hides a page from every rule.
+   (Sensitive judgements keep no content by design, so this needs `label`
+   or a temporary debug log.)
+4. **Fix what the trials showed is weak:** feeds on sites that look like
+   single items (X profiles, Guba lists).
+5. **Save the 8-bit weights once**, so loading doesn't pass through bf16
+   (the 11 GB peak, minutes under swap).
+6. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
    your own labels:
    `qualm export --lang en --labels data/labels.jsonl --out train.jsonl`, then
    `uv run python -m kev.train --data train.jsonl --init_from jaredpalmer/kev-4b --base Qwen/Qwen3.5-4B-Base --epochs 2 --lr 2e-5 --batch 1 --accum 8 --dtype bf16 --device cuda`.
    `--base` is required with `--init_from`; the default base is Qwen3-0.6B.
-5. **Make the watcher cheaper and wider:**
+7. **Make the watcher cheaper and wider:**
    - Replace polling with an `AXObserver` (focused-window and title-changed
      notifications) plus `NSWorkspace.didActivateApplicationNotification`.
    - Add a Vision OCR fallback (`VNRecognizeTextRequest`, zh-Hans) when the
      Accessibility tree yields no text.
-6. **Personalizing, the rest:** `pause` / `snooze` commands (they need the
-   running app; the review server on 8765 could take them), and the review
-   page's Tune tab on top of `config.py` (add / edit / test a rule there too).
-7. **Ship it:** a signed `Qualm.app` (Swift `MenuBarExtra`, or py2app) with its own
-   name and permissions; `install` covers start-at-login meanwhile. Port
-   SeeNot's session intents: "I'm here to do X for 20 minutes" before a
-   session, in place of the per-rule snooze.
-8. **Graded friction past the pop-up** (InteractOut, CHI 2024: slowing
-   interaction beat lockouts): dim or blur the window when you keep going
-   back to a page after "Take me back".
+8. **Ship it:** a signed `Qualm.app` (Swift `MenuBarExtra`, or py2app) with
+   its own name, icon (docs/assets/logo.svg) and permissions; a license (none
+   chosen yet); a public repository (the README is written for one).
+9. **Graded friction past the pop-up** (InteractOut, CHI 2024: slowing
+   interaction beat lockouts): when you keep going back to a page after
+   "Take me back", slow it down rather than block harder. In a focus
+   session, a small corner nudge before the full panel (the research found
+   frequent full alerts disruptive).
+10. **Vary the pop-up's words now and then**, and say so (Kovacs CSCW 2018:
+   a fixed intervention wears off; rotating ones work, if explained).
 
 ## Known problems and gotchas
 
@@ -468,6 +579,13 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
   take it for the page (URL `chrome://omnibox-popup...`), so the model saw a
   title and nothing else; that's how a CMU store page scored 0.15 for stocks.
   Chrome's internal URLs are now skipped.
+- **The running Kev server of 2026-09-22 was started from
+  ~/Documents/seenot-desktop/experiments/serve_capped.py**, a path gone since
+  the rename. It keeps running, but can't be restarted by that command: use
+  `qualm serve`.
+- **Headless Chrome screenshots of the dashboard don't exit** (the page
+  refreshes every 15 s); the file is written anyway. /tmp/shoot.py-style:
+  a timeout of 30 s per shot.
 - **Harvested labels cover one rule each** (the rule that fired), and only hits
   the panel showed. Misses need `label`.
 
