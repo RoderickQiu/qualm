@@ -164,13 +164,14 @@ def fade(window, alpha: float, seconds: float = 0.18, then=None) -> None:
 
 
 class Dimmer:
-    """A soft dark veil over every screen while the panel is up. It doesn't
-    take clicks: it says "pause", it doesn't lock anything."""
+    """A soft dark veil over every screen while the panel is up. With
+    `block` it takes the clicks, so the pop-up is answered before you go
+    on (the panel sits above it); without, it's a veil you click through."""
 
     def __init__(self):
         self.windows = []
 
-    def show(self) -> None:
+    def show(self, block: bool = False) -> None:
         self.hide(animate=False)
         for screen in NSScreen.screens():
             w = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -178,7 +179,7 @@ class Dimmer:
             w.setBackgroundColor_(NSColor.blackColor())
             w.setOpaque_(False)
             w.setAlphaValue_(0.0)
-            w.setIgnoresMouseEvents_(True)
+            w.setIgnoresMouseEvents_(not block)
             w.setLevel_(NSStatusWindowLevel)
             w.setReleasedWhenClosed_(False)
             w.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces

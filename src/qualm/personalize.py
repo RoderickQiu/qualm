@@ -737,6 +737,8 @@ FIELDS = {
         "max_wait_s": "the longest wait, in seconds, before a check-in or \"I need it\" unlocks; it doubles with each "
                       "session today (the first is free) and again when you come back within 20 min of one ending",
         "extensions": "how many \"5 more\" a check-in session may get when its time is up (0: none)",
+        "block_clicks": "true: while a pop-up is open the dimmed screen takes the clicks, so you answer it first; "
+                        "false: you can click through the dim (also in the menu bar)",
         "max_questions": "questions one reading may ask (rules on at once + allow classes + 3 shared); "
                          "more slows the model sharply (25 is ~1.5 s on Kev-4B, 24 GB Mac)",
     },

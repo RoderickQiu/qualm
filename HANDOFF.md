@@ -212,6 +212,9 @@ daily budgets"): it reads as an allowance, puts no friction on the first
   a new-tab page; Chromium through AppleScript (`go back`, `URL of active
   tab`), Safari by keystroke with the URL read back. Verified live in a
   scratch Chrome window: iana.org/domains → example.com in 2 s, two steps.
+  The dim now takes clicks while a pop-up is open (`block_clicks`, default
+  on, menu bar toggle; the user's call); the 5 s menu timer lifts a dim
+  left without a panel, so a bug can't leave the screen unclickable.
   Also: the feeds pattern `xiaohongshu\.com/explore` matched every note
   (`/explore/<id>`); now only the explore page itself.
 

@@ -36,7 +36,8 @@ search is on purpose. The fifth thread opened from a feed is drift.
 - **Decides in plain code.** Per-rule thresholds, and exemptions for learning material, work
   tools, search, private pages and things opened on purpose. Check-in sessions, pauses, and what
   you taught it.
-- **Steps in gently.** A dark, blurred panel dims the screen and says why. *Take me back* is the
+- **Steps in gently.** A dark, blurred panel dims the screen and says why; until you answer, clicks
+  behind it don't go through (switch that off in the menu bar). *Take me back* is the
   default: it goes back off the site (to the lecture before the Shorts, not the next feed), or to
   a new tab if there's nothing to go back to. *I need it* unlocks after a short wait that grows each time you use it, and asks what
   for. *Not this one* teaches the rule an exception, and *Never here* silences an app or site.

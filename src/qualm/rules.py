@@ -172,6 +172,9 @@ class Settings:
     max_wait_s: int = 60
     # "5 more" when a check-in session's time is up: how many per session.
     extensions: int = 1
+    # While a pop-up is open, the dimmed screen takes the clicks: answer it
+    # before you go on. False: the dim is only a veil you can click through.
+    block_clicks: bool = True
     # Questions one reading may ask: rules on at the same time + allow classes
     # + the 3 shared ones. Kev-4B on a 24 GB Mac: 13 questions 0.6 s, 28 1.8 s,
     # 53 4.5-18 s, 103 timed out and swapped the machine (HANDOFF, Measured).
@@ -229,6 +232,7 @@ def parse_config(text: str) -> tuple[Settings, list[Rule]]:
         allow_urls=tuple(s.get("allow_urls", ())),
         max_wait_s=int(s.get("max_wait_s", Settings.max_wait_s)),
         extensions=int(s.get("extensions", Settings.extensions)),
+        block_clicks=bool(s.get("block_clicks", Settings.block_clicks)),
         max_questions=int(s.get("max_questions", Settings.max_questions)),
         allow=tuple(_make(AllowClass, ALLOW_FIELDS, "allow", a) for a in data.get("allow", ())),
     )

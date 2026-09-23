@@ -141,6 +141,7 @@ qualm never remove --site example.com
 qualm settings show
 qualm settings set max_wait_s=90                 # the longest check-in wait, in seconds (default 60)
 qualm settings set extensions=0                  # no "5 more" when a check-in's time is up
+qualm settings set block_clicks=false            # the dim behind a pop-up lets clicks through (also in the menu bar)
 qualm settings set no_monitor+=com.tencent.xinWeChat   # never read at all
 qualm settings set allow_sites+=gitlab.com       # never judged; links from it count as on purpose
 ```

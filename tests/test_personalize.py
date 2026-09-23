@@ -210,3 +210,16 @@ def test_question_limit(tmp_path):
         c.edit("rules", "r0", {"enabled": False})
         c.add("rules", {"id": "extra", "kind": "deny", "description": "x"})
     assert capacity(*c.load())["peak"] == 10
+
+
+def test_block_clicks_is_on_unless_turned_off(tmp_path):
+    from qualm.config import Config
+    from qualm.rules import parse_config
+
+    assert parse_config("")[0].block_clicks
+    path = tmp_path / "rules.toml"
+    path.write_text("[settings]\nlang = \"en\"\n")
+    Config(path).edit_settings({"block_clicks": False})
+    assert not parse_config(path.read_text())[0].block_clicks
+    Config(path).edit_settings({}, ["block_clicks"])
+    assert parse_config(path.read_text())[0].block_clicks and "block_clicks" not in path.read_text()

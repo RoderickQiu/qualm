@@ -113,6 +113,11 @@ new decision.
 
 ## "Take me back"
 
+While a pop-up is open the dimmed screen takes the clicks (`block_clicks`,
+on by default; the menu bar switches it): browsing on underneath meant
+the answer landed on a different page, or never came. The keyboard still
+reaches other apps, and nothing else is locked.
+
 One step back is rarely out: from a 小红书 note it lands on the explore
 feed, from there on a profile. So Take me back (and Done) goes back until
 the tab is off the pop-up's site, or on a page of it Qualm judged fine

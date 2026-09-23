@@ -1,7 +1,9 @@
 """Menu bar app: the watcher on a thread, an intervention panel on top.
 
 The panel is friction, not a lock: it floats over everything (full-screen
-video included), dims the screens behind it, and offers a way out. It has
+video included), dims the screens behind it and, by default, takes the
+clicks there until it's answered ("Pop-ups block clicks behind them" in the
+menu, or [settings] block_clicks), and offers a way out. It has
 three faces:
 
 - a deny rule steps in: "Take me back" is the default; "I need it" unlocks
@@ -121,9 +123,11 @@ class Controller(NSObject):
         self.pause_item.setEnabled_(True)
         self.pause_item.setSubmenu_(pause_menu)
         self.resume_item = self._item("Resume", "resume:")
+        self.block_item = self._item("Pop-ups block clicks behind them", "toggleBlock:")
         for item in (self.status_line, self.usage_line, NSMenuItem.separatorItem(),
                      self.focus_line, self.focus_item, self.end_focus_item, self.pause_item, self.resume_item,
                      NSMenuItem.separatorItem(),
+                     self.block_item,
                      self._item("This should have been blocked", "flagMiss:"),
                      self._item("Open dashboard", "openReview:", "d"),
                      self._item("Edit rules…", "openRules:"), NSMenuItem.separatorItem(),
@@ -159,11 +163,29 @@ class Controller(NSObject):
         self.pause_item.setHidden_(paused)
         self.resume_item.setHidden_(not paused)
         self.resume_item.setTitle_(f"Resume (paused until {datetime.fromtimestamp(self.policy.paused_until):%H:%M})" if paused else "Resume")
+        self.block_item.setState_(1 if self.policy.settings.block_clicks else 0)
         usage = self.policy.usage_summary()
         self.usage_line.setTitle_(usage)
         self.usage_line.setHidden_(not usage)
 
     def tick_(self, timer):
+        self._refresh()
+        if self.dimmer.windows and not self.panel.isVisible():
+            self.dimmer.hide()  # never leave the screen dimmed (and, blocking, unclickable) without a pop-up
+
+    def toggleBlock_(self, sender):
+        from .config import Config
+
+        on = not self.policy.settings.block_clicks
+        try:
+            # Saved in rules.toml like any setting (true is the default: no key).
+            Config(self.rules_path).edit_settings({} if on else {"block_clicks": False}, ["block_clicks"] if on else [])
+        except Exception as e:
+            self.set_status(f"couldn't save: {e}"[:80])
+            return
+        from .rules import load_config
+
+        self.policy.reload(*load_config(self.rules_path))
         self._refresh()
 
     @objc.python_method
@@ -378,7 +400,7 @@ class Controller(NSObject):
             threading.Thread(target=self._find_evidence, args=(d, ev), daemon=True).start()
         self.panel.center()
         self.panel.setAlphaValue_(0.0)
-        self.dimmer.show()
+        self.dimmer.show(block=self.policy.settings.block_clicks)
         NSApp.activateIgnoringOtherApps_(True)
         self.panel.makeKeyAndOrderFront_(None)
         self.panel.makeFirstResponder_(self.why if self.mode == "checkin" else None)
