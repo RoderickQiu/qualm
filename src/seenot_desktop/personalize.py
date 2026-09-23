@@ -1,40 +1,81 @@
 """Every way to make SeeNot yours, as commands: rules, allowed kinds of page,
-exceptions, never-here places and settings. The review page and the pop-up
-change the same files, so any of the three can undo the others.
+exceptions, never-here places and settings, plus `config` (the whole thing
+as data), `schema` (what every field means) and `status` (is it running).
+The review page and the pop-up change the same files, so any of them can
+undo the others.
 
-Every command that shows something takes --json, and every change is
-checked before rules.toml is saved: a person or an agent can drive all of
-it from a terminal. docs/PERSONALIZE.md walks through it.
+Built to be driven by an agent (Claude Code: .claude/skills/seenot) as well
+as by hand:
+- every command takes --json, errors included: {"error": {"code", "message"}};
+- exit codes: 0 ok, 2 invalid, 3 not found, 4 over the question limit,
+  5 model or app unreachable;
+- every change takes --dry-run, which prints the diff and saves nothing;
+- `config apply` changes many things at once, checked together;
+- nothing that fails a check is ever saved, and `config undo` reverts the
+  last change.
+docs/PERSONALIZE.md walks through it.
 """
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import re
 import shutil
 import sys
-from dataclasses import asdict
+from dataclasses import MISSING, asdict, fields
 from datetime import datetime
 from pathlib import Path
 
-from .config import EXAMPLE, Config, apply_assignments, starter_blocks
-from .rules import ID_RE, AllowClass, Rule, Settings
+from .config import EXAMPLE, Config, apply_assignments, field_type, starter_blocks
+from .rules import ID_RE, AllowClass, OverLimit, Rule, Settings, capacity
+
+EXIT = {"invalid": 2, "not_found": 3, "over_limit": 4, "unreachable": 5}
+
+
+class CliError(Exception):
+    def __init__(self, message: str, code: str = "invalid"):
+        super().__init__(message)
+        self.message, self.code = message, code
+
+
+def _fail(msg: str, code: str = "invalid"):
+    raise CliError(msg, code)
+
+
+# One command's run: whether it's a dry run, and what it would have changed.
+SESSION: dict = {"dry_run": False, "configs": [], "appends": []}
 
 
 def config_path(path: str) -> Config:
     """rules.toml, created from the starter rules the first time."""
     p = Path(path)
     if not p.exists():
+        if SESSION["dry_run"]:
+            _fail(f"{p} doesn't exist yet; run once without --dry-run", "not_found")
         shutil.copyfile(EXAMPLE, p)
         print(f"created {p} from the starter rules (rules.example.toml)", file=sys.stderr)
-    return Config(p)
+    for c in SESSION["configs"]:
+        if c.path == p:
+            return c
+    cfg = Config(p, dry_run=SESSION["dry_run"])
+    SESSION["configs"].append(cfg)
+    return cfg
 
 
 def _out(args, obj, text: str) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2) if getattr(args, "json", False) else text)
 
 
-def _fail(msg: str) -> None:
-    sys.exit(f"error: {msg}")
+def _append(data_dir: Path, e: dict) -> None:
+    e = {**e, "at": datetime.now().isoformat(timespec="seconds")}
+    if SESSION["dry_run"]:
+        SESSION["appends"].append({"file": str(data_dir / "exceptions.jsonl"), "line": e})
+        return
+    data_dir.mkdir(parents=True, exist_ok=True)
+    with (data_dir / "exceptions.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
 
 def _usage_today(data_dir: Path) -> dict:
@@ -43,6 +84,11 @@ def _usage_today(data_dir: Path) -> dict:
         return {}
     saved = json.loads(p.read_text(encoding="utf-8"))
     return saved.get("counts", {}) if saved.get("day") == datetime.now().date().isoformat() else {}
+
+
+def _capacity_line(cap: dict) -> str:
+    peak = "" if cap["peak"] == cap["now"] else f", {cap['peak']} at the busiest ({cap['peak_at']})"
+    return f"Questions per reading: {cap['now']} of {cap['limit']} now{peak}."
 
 
 def summary(r: Rule, settings: Settings) -> str:
@@ -84,33 +130,39 @@ def _rule_json(r: Rule, settings: Settings, usage: dict) -> dict:
 def _find(items, id: str, what: str):
     found = next((x for x in items if x.id == id), None)
     if found is None:
-        _fail(f"no {what} {id!r}; there are: {', '.join(x.id for x in items) or 'none'}")
+        _fail(f"no {what} {id!r}; there are: {', '.join(x.id for x in items) or 'none'}", "not_found")
     return found
+
+
+def _changed(args, what: dict, text: str) -> None:
+    """After a change: what it was, and the question budget it leaves."""
+    settings, rules = config_path(args.rules).load()
+    cap = capacity(settings, rules)
+    _out(args, {**what, "capacity": cap}, f"{text}\n{_capacity_line(cap)}")
 
 
 # -- rules ------------------------------------------------------------------
 
 
 def rules_list(args) -> None:
-    cfg = config_path(args.rules)
-    settings, rules = cfg.load()
+    settings, rules = config_path(args.rules).load()
     usage = _usage_today(Path(args.data))
     rows = [_rule_json(r, settings, usage) for r in rules]
-    lines = []
+    cap = capacity(settings, rules)
+    lines = [_capacity_line(cap), ""]
     for r, d in zip(rules, rows):
         state = "off" if not r.enabled else "on" if d["active_now"] else "on, not now"
         today = f"  today: {d['today']['minutes']:g} min, {d['today']['visits']} visits" if "today" in d else ""
         lines.append(f"{r.id:<12} [{state}] threshold {r.threshold:g}{today}\n    {d['summary']}")
     if not rules:
         lines.append("no rules. `seenot-desktop rules starters` lists ready-made ones; `rules add` makes your own.")
-    _out(args, rows, "\n".join(lines))
+    _out(args, {"capacity": cap, "rules": rows}, "\n".join(lines))
 
 
 def rules_show(args) -> None:
     from .review import exceptions
 
-    cfg = config_path(args.rules)
-    settings, rules = cfg.load()
+    settings, rules = config_path(args.rules).load()
     r = _find(rules, args.id, "rule")
     d = _rule_json(r, settings, _usage_today(Path(args.data)))
     learned = [e for e in exceptions(Path(args.data)) if e.get("rule") == r.id]
@@ -129,15 +181,13 @@ def rules_add(args) -> None:
     if args.from_starter:
         starters = starter_blocks()
         if args.id not in starters or starters[args.id][0] != "rules":
-            _fail(f"no starter rule {args.id!r}; `rules starters` lists them")
+            _fail(f"no starter rule {args.id!r}; `rules starters` lists them", "not_found")
         cfg.add("rules", {"id": args.id}, text=starters[args.id][1])
     else:
-        import re
-
         if not re.fullmatch(ID_RE, args.id):
             _fail(f"id {args.id!r}: lowercase letters, digits and _, starting with a letter")
         if not args.what:
-            _fail("say what the rule is about: --what \"short videos made for endless swiping\"")
+            _fail('say what the rule is about: --what "short videos made for endless swiping"')
         entry = {"id": args.id, "kind": "time_cap" if (args.minutes or args.visits) else "deny", "description": args.what}
         if args.minutes:
             entry["minutes_per_day"] = args.minutes
@@ -156,67 +206,47 @@ def rules_add(args) -> None:
             entry["enabled"] = False
         if args.note:
             entry["note"] = args.note
-        more, unset = apply_assignments(Rule, entry, args.set or [])
-        entry |= more
-        try:
-            cfg.add("rules", entry)
-        except ValueError as e:
-            _fail(str(e))
+        entry |= apply_assignments(Rule, entry, args.set or [])[0]
+        cfg.add("rules", entry)
     settings, rules = cfg.load()
     r = _find(rules, args.id, "rule")
-    _out(args, _rule_json(r, settings, {}), f"added {r.id}: {summary(r, settings)}\n"
-         f"Untested: see what it would catch with `seenot-desktop rules test {r.id}`.")
-
-
-def _edit(args, table: str, cls, set_: dict, unset: list[str]) -> None:
-    cfg = config_path(args.rules)
-    try:
-        cfg.edit(table, args.id, set_, unset)
-    except (KeyError, ValueError) as e:
-        _fail(e.args[0])
+    _changed(args, {"added": _rule_json(r, settings, {})}, f"added {r.id}: {summary(r, settings)}\n"
+             f"Untested: see what it would catch with `seenot-desktop rules test {r.id}`.")
 
 
 def _assignments(args, table: str, cls, id: str, pairs: list[str]) -> tuple[dict, list[str]]:
-    cfg = config_path(args.rules)
-    settings, rules = cfg.load()
+    settings, rules = config_path(args.rules).load()
     obj = _find(rules if table == "rules" else settings.allow, id, "rule" if table == "rules" else "allow class")
     # `what` is whichever description the model reads.
     pairs = [obj.text_field(settings.lang) + p[4:] if p.startswith(("what=", "what+=")) else p for p in pairs]
-    try:
-        return apply_assignments(cls, asdict(obj), pairs)
-    except ValueError as e:
-        _fail(str(e))
+    return apply_assignments(cls, asdict(obj), pairs)
+
+
+def _rule_changed(args, verb: str) -> None:
+    settings, rules = config_path(args.rules).load()
+    r = _find(rules, args.id, "rule")
+    _changed(args, {"rule": _rule_json(r, settings, {})}, f"{verb} {r.id}: {summary(r, settings)}")
 
 
 def rules_set(args) -> None:
     set_, unset = _assignments(args, "rules", Rule, args.id, args.pairs)
-    _edit(args, "rules", Rule, set_, unset)
-    _show_one(args)
-
-
-def _show_one(args, verb: str = "") -> None:
-    settings, rules = Config(args.rules).load()
-    r = _find(rules, args.id, "rule")
-    _out(args, _rule_json(r, settings, {}), f"{verb or 'saved'} {r.id}: {summary(r, settings)}")
+    config_path(args.rules).edit("rules", args.id, set_, unset)
+    _rule_changed(args, "saved")
 
 
 def rules_on(args) -> None:
-    _edit(args, "rules", Rule, {}, ["enabled"])
-    _show_one(args, "on")
+    config_path(args.rules).edit("rules", args.id, {}, ["enabled"])
+    _rule_changed(args, "on")
 
 
 def rules_off(args) -> None:
-    _edit(args, "rules", Rule, {"enabled": False}, [])
-    _show_one(args, "off")
+    config_path(args.rules).edit("rules", args.id, {"enabled": False}, [])
+    _rule_changed(args, "off")
 
 
 def rules_remove(args) -> None:
-    cfg = config_path(args.rules)
-    try:
-        cfg.remove("rules", args.id)
-    except KeyError as e:
-        _fail(e.args[0])
-    _out(args, {"removed": args.id}, f"removed {args.id} (the previous file is {cfg.path.name}.bak)")
+    config_path(args.rules).remove("rules", args.id)
+    _changed(args, {"removed": args.id}, f"removed {args.id} (`config undo` brings it back)")
 
 
 def rules_starters(args) -> None:
@@ -237,11 +267,22 @@ def rules_starters(args) -> None:
 
 
 def rules_test(args) -> None:
+    """A rule as it is, a rule with new wording (--what), or a draft that isn't saved (a new id with --what)."""
+    from dataclasses import replace
+
     from .decide import make_client
     from .trial import run
 
     settings, rules = config_path(args.rules).load()
-    r = _find(rules, args.id, "rule")
+    r = next((x for x in rules if x.id == args.id), None)
+    if r is None:
+        if not args.what:
+            _find(rules, args.id, "rule")
+        r = Rule(args.id, args.kind or "deny", args.what, threshold=args.threshold or 0.2)
+    elif args.what or args.kind or args.threshold:
+        r = replace(r, description=args.what or r.text(settings.lang), description_en="",
+                    kind=args.kind or r.kind, threshold=args.threshold or r.threshold)
+    draft = r not in rules
     data = Path(args.data)
 
     def progress(n, total):
@@ -251,12 +292,12 @@ def rules_test(args) -> None:
     try:
         rows = run(make_client(), data, r, settings, last=args.last, on_progress=progress)
     except Exception as e:  # the server is down or slow
-        _fail(f"couldn't ask the model ({type(e).__name__}: {e}). Is the Kev server running? See HANDOFF.md, Run it.")
+        _fail(f"couldn't ask the model ({type(e).__name__}: {e}). Is the Kev server running? `seenot-desktop status`", "unreachable")
     if not rows:
-        _fail(f"no screens in {data}/judgements.jsonl yet: run `seenot-desktop app` for a while first")
+        _fail(f"no screens in {data}/judgements.jsonl yet: run `seenot-desktop app` for a while first", "not_found")
     fires = [x for x in rows if x["does"] in ("pops up", "counts")]
-    lines = [f"{r.id} on your last {len(rows)} distinct screens, at threshold {r.threshold:g}: "
-             f"{len(fires)} would {'pop up' if r.kind == 'deny' else 'count'}.", ""]
+    lines = [f"{r.id}{' (draft, not saved)' if draft else ''} on your last {len(rows)} distinct screens, at threshold "
+             f"{r.threshold:g}: {len(fires)} would {'pop up' if r.kind == 'deny' else 'count'}.", ""]
     shown = rows if args.all else rows[:args.show]
     for x in shown:
         you = f"  you: {x['you_said']}" if x["you_said"] else ""
@@ -264,9 +305,13 @@ def rules_test(args) -> None:
         lines.append(f"#{x['id']}  {x['p_hit']:.2f}  {x['does']}{why}{you}\n      {(x['title'] or x['app'])[:70]}  {x['url'][:70]}")
     if not args.all and len(rows) > args.show:
         lines.append(f"… {len(rows) - args.show} more, lower scores (--all to see them)")
-    lines += ["", f"Tell it which are right:  seenot-desktop rules label {r.id} --yes ID ... --no ID ...",
-              f"Then:                     seenot-desktop rules tune {r.id} --apply"]
-    _out(args, {"rule": r.id, "threshold": r.threshold, "screens": rows}, "\n".join(lines))
+    if draft:
+        lines += ["", "Keep this wording: `rules add` (new) or `rules set ID what=...` (existing), then label and tune."]
+    else:
+        lines += ["", f"Tell it which are right:  seenot-desktop rules label {r.id} --yes ID ... --no ID ...",
+                  f"Then:                     seenot-desktop rules tune {r.id} --apply"]
+    _out(args, {"rule": r.id, "draft": draft, "reads": r.text(settings.lang), "threshold": r.threshold,
+                "would_fire": len(fires), "screens": rows}, "\n".join(lines))
 
 
 def rules_label(args) -> None:
@@ -274,10 +319,16 @@ def rules_label(args) -> None:
 
     _, rules = config_path(args.rules).load()
     _find(rules, args.id, "rule")
+    if not (args.yes or args.no):
+        _fail("give --yes and/or --no with judgement ids from `rules test`")
+    if SESSION["dry_run"]:
+        SESSION["appends"].append({"file": str(Path(args.data) / "reviews.jsonl"),
+                                   "line": {"rule": args.id, "yes": args.yes or [], "no": args.no or []}})
+        return
     try:
         n = label(Path(args.data), args.id, args.yes or [], args.no or [])
     except ValueError as e:
-        _fail(str(e))
+        _fail(str(e), "not_found")
     _out(args, {"rule": args.id, "yes": args.yes or [], "no": args.no or []}, f"saved {n} answers for {args.id}")
 
 
@@ -320,52 +371,42 @@ def allow_list(args) -> None:
 
 def allow_add(args) -> None:
     cfg = config_path(args.rules)
-    try:
-        if args.from_starter:
-            starters = starter_blocks()
-            if args.id not in starters or starters[args.id][0] != "allow":
-                _fail(f"no starter allow class {args.id!r}; `rules starters` lists them")
-            cfg.add("allow", {"id": args.id}, text=starters[args.id][1])
-        else:
-            if not args.what:
-                _fail('say what kind of page: --what "an online store: a product page, listing, cart or checkout"')
-            entry = {"id": args.id, "description": args.what, "threshold": args.threshold}
-            if args.site:
-                entry["sites"] = args.site
-            if args.app:
-                entry["apps"] = args.app
-            cfg.add("allow", entry)
-    except ValueError as e:
-        _fail(str(e))
-    print(f"added {args.id}: pages the model reads as this are never flagged, except by a rule's sites or patterns")
+    if args.from_starter:
+        starters = starter_blocks()
+        if args.id not in starters or starters[args.id][0] != "allow":
+            _fail(f"no starter allow class {args.id!r}; `rules starters` lists them", "not_found")
+        cfg.add("allow", {"id": args.id}, text=starters[args.id][1])
+    else:
+        if not args.what:
+            _fail('say what kind of page: --what "an online store: a product page, listing, cart or checkout"')
+        entry = {"id": args.id, "description": args.what, "threshold": args.threshold}
+        if args.site:
+            entry["sites"] = args.site
+        if args.app:
+            entry["apps"] = args.app
+        cfg.add("allow", entry)
+    _changed(args, {"added": args.id}, f"added {args.id}: pages the model reads as this are never flagged, "
+             "except by a rule's own sites or patterns")
 
 
 def allow_set(args) -> None:
     set_, unset = _assignments(args, "allow", AllowClass, args.id, args.pairs)
-    _edit(args, "allow", AllowClass, set_, unset)
-    print(f"saved {args.id}")
+    config_path(args.rules).edit("allow", args.id, set_, unset)
+    _changed(args, {"saved": args.id}, f"saved {args.id}")
 
 
 def allow_toggle(args) -> None:
-    _edit(args, "allow", AllowClass, {"enabled": False} if args.cmd2 == "off" else {}, [] if args.cmd2 == "off" else ["enabled"])
-    print(f"{args.id} {args.cmd2}")
+    off = args.cmd2 == "off"
+    config_path(args.rules).edit("allow", args.id, {"enabled": False} if off else {}, [] if off else ["enabled"])
+    _changed(args, {args.cmd2: args.id}, f"{args.id} {args.cmd2}")
 
 
 def allow_remove(args) -> None:
-    try:
-        config_path(args.rules).remove("allow", args.id)
-    except KeyError as e:
-        _fail(e.args[0])
-    print(f"removed {args.id}")
+    config_path(args.rules).remove("allow", args.id)
+    _changed(args, {"removed": args.id}, f"removed {args.id}")
 
 
 # -- exceptions and never-here ----------------------------------------------
-
-
-def _append(data_dir: Path, e: dict) -> None:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    with (data_dir / "exceptions.jsonl").open("a", encoding="utf-8") as f:
-        f.write(json.dumps({**e, "at": datetime.now().isoformat(timespec="seconds")}, ensure_ascii=False) + "\n")
 
 
 def live_exceptions(data_dir: Path) -> list[dict]:
@@ -389,6 +430,8 @@ def _same(x: dict, e: dict) -> bool:
 
 def except_list(args) -> None:
     _, rules = config_path(args.rules).load()
+    if args.rule:
+        _find(rules, args.rule, "rule")
     rows = []
     for r in rules:
         if args.rule and r.id != args.rule:
@@ -409,7 +452,7 @@ def except_add(args) -> None:
     if args.text in r.exceptions:
         _fail("already there")
     cfg.edit("rules", r.id, {"exceptions": [*r.exceptions, args.text]})
-    print(f"{r.id}: the model now reads “{args.text}” as fine")
+    _out(args, {"rule": r.id, "added": args.text}, f"{r.id}: the model now reads “{args.text}” as fine")
 
 
 def except_remove(args) -> None:
@@ -422,9 +465,9 @@ def except_remove(args) -> None:
         match = next((e for e in live_exceptions(Path(args.data))
                       if e["rule"] == r.id and args.text in (e.get("text"), e.get("title"), e.get("url"))), None)
         if match is None:
-            _fail(f"{r.id} has no exception {args.text!r}; `except list {r.id}` shows them")
+            _fail(f"{r.id} has no exception {args.text!r}; `except list {r.id}` shows them", "not_found")
         _append(Path(args.data), {k: match[k] for k in ("rule", "text", "title", "url") if match.get(k)} | {"removed": True})
-    print(f"removed from {r.id}: {args.text}")
+    _out(args, {"rule": r.id, "removed": args.text}, f"removed from {r.id}: {args.text}")
 
 
 def _place(args) -> dict:
@@ -446,70 +489,257 @@ def never_list(args) -> None:
 
 
 def never_add(args) -> None:
-    _append(Path(args.data), {"never": _place(args)})
-    print("saved: no rule fires there")
+    place = _place(args)
+    _append(Path(args.data), {"never": place})
+    _out(args, {"added": place}, "saved: no rule fires there")
 
 
 def never_remove(args) -> None:
-    from .review import undo_never
+    from .review import never_places
 
     place = _place(args)
-    undo_never(Path(args.data), place)
-    print("removed")
+    key = place.get("host") or place.get("app")
+    if not any((n.get("host") or n.get("app")) == key for n in never_places(Path(args.data))):
+        _fail(f"{key} isn't a never-here place; `never list` shows them", "not_found")
+    _append(Path(args.data), {"never": place, "removed": True})
+    _out(args, {"removed": place}, "removed")
 
 
 # -- settings -----------------------------------------------------------------
 
 
-SETTING_HELP = {
-    "budgets": "true: time caps count minutes and visits first; false (testing): every hit pops up",
-    "lang": 'en: rules with a description_en send that; anything else sends description',
-    "no_monitor": "apps (bundle ids) never read at all",
-    "allow_sites": "sites never judged; links from them count as opened on purpose",
-    "allow_urls": "the same, as URL regexes",
-}
-
-
 def settings_show(args) -> None:
     settings, _ = config_path(args.rules).load()
     d = {k: v for k, v in asdict(settings).items() if k != "allow"}
-    _out(args, d, "\n".join(f"{k} = {json.dumps(v, ensure_ascii=False)}\n    {SETTING_HELP.get(k, '')}" for k, v in d.items()))
+    _out(args, d, "\n".join(f"{k} = {json.dumps(v, ensure_ascii=False)}\n    {FIELDS['settings'][k]}" for k, v in d.items()))
 
 
 def settings_set(args) -> None:
     cfg = config_path(args.rules)
     settings, _ = cfg.load()
+    set_, unset = apply_assignments(Settings, asdict(settings), args.pairs)
+    cfg.edit_settings(set_, unset)
+    _changed(args, {"set": set_, "unset": unset}, "saved: " + ", ".join([*set_, *unset]))
+
+
+# -- the whole config, schema, status ----------------------------------------
+
+
+def config_export(args) -> None:
+    data = config_path(args.rules).export()
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def config_apply(args) -> None:
+    raw = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
     try:
-        set_, unset = apply_assignments(Settings, asdict(settings), args.pairs)
-        cfg.edit_settings(set_, unset)
+        desired = json.loads(raw)
+    except json.JSONDecodeError as e:
+        _fail(f"not JSON: {e}")
+    cfg = config_path(args.rules)
+    changes = cfg.apply(desired, prune=args.prune)
+    text = "\n".join(f"{c['op']} {c.get('table', '')} {c.get('id', '')}".rstrip() +
+                     (f": set {json.dumps(c['set'], ensure_ascii=False)}" if c.get("set") else "") +
+                     (f" unset {c['unset']}" if c.get("unset") else "") for c in changes) or "no changes"
+    _changed(args, {"changes": changes}, text)
+
+
+def config_check(args) -> None:
+    settings, rules = config_path(args.rules).load()  # raises with what's wrong
+    cap = capacity(settings, rules)
+    _out(args, {"ok": True, "capacity": cap, "rules": len(rules), "allow": len(settings.allow)},
+         f"ok: {len(rules)} rules, {len(settings.allow)} allow classes. {_capacity_line(cap)}")
+
+
+def config_undo(args) -> None:
+    config_path(args.rules).undo()
+    _changed(args, {"undone": True}, "back to the version before the last change (undo again to redo)")
+
+
+def _help_of(cls, key: str) -> str:
+    return FIELDS["rules" if cls is Rule else "allow" if cls is AllowClass else "settings"].get(key, "")
+
+
+def schema(args) -> None:
+    """Every field, its type, default and meaning, and the grammar of the
+    values that have one: enough to write rules.toml or `config apply` input
+    without reading the code."""
+    out = {}
+    for table, cls in (("rules", Rule), ("allow", AllowClass), ("settings", Settings)):
+        out[table] = {}
+        for f in fields(cls):
+            if f.name == "allow":
+                continue
+            t = field_type(cls, f.name)
+            default = None if f.default is MISSING else list(f.default) if isinstance(f.default, tuple) else f.default
+            out[table][f.name] = {"type": {list: "list of strings", str: "string", bool: "bool", int: "int", float: "number"}[t],
+                                  "required": f.default is MISSING, "default": default, "help": _help_of(cls, f.name)}
+    out["grammar"] = GRAMMAR
+    out["commands"] = "seenot-desktop --help; every command: --help, --json; every change: --dry-run"
+    text = []
+    for table in ("rules", "allow", "settings"):
+        text.append(f"[{table}]")
+        for k, v in out[table].items():
+            req = " (required)" if v["required"] else f" = {json.dumps(v['default'], ensure_ascii=False)}"
+            text.append(f"  {k}: {v['type']}{req}\n      {v['help']}")
+    text.append("")
+    text += [f"{k}: {v}" for k, v in GRAMMAR.items()]
+    _out(args, out, "\n".join(text))
+
+
+def status(args) -> None:
+    """Is the app up, is the model up, does the config load, how full is it."""
+    import os
+    import socket
+    import urllib.request
+
+    from .review import PORT, load_judgements
+
+    def listening(port: int) -> bool:
+        with socket.socket() as s:
+            s.settimeout(0.5)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+
+    out: dict = {"app_running": listening(PORT), "review_page": f"http://127.0.0.1:{PORT}/"}
+    kev = os.environ.get("KEV_URL", "http://127.0.0.1:8009")
+    try:
+        with urllib.request.urlopen(f"{kev}/v1/models", timeout=3) as r:
+            models = json.loads(r.read())
+        m = (models.get("models") or models.get("data") or [{}])[0]
+        out["model"] = {"reachable": True, "url": kev, "id": m.get("run") or m.get("name") or m.get("id", "")}
+    except Exception as e:
+        out["model"] = {"reachable": False, "url": kev, "error": type(e).__name__}
+    try:
+        settings, rules = config_path(args.rules).load()
+        out["config"] = {"ok": True, "budgets": settings.budgets, "rules_on_now": [r.id for r in rules if r.active()],
+                         "capacity": capacity(settings, rules)}
     except ValueError as e:
-        _fail(str(e))
-    print("saved: " + ", ".join([*set_, *unset]))
+        out["config"] = {"ok": False, "error": str(e)}
+    js = load_judgements(Path(args.data))
+    if js:
+        j = js[-1]
+        out["last_judgement"] = {"at": j["at"], "app": j["screen"].get("app", ""), "title": j["screen"].get("window_title", ""),
+                                 "decisions": j["decisions"]}
+    out["today"] = _usage_today(Path(args.data))
+    m, c = out["model"], out["config"]
+    lines = [f"app: {'running' if out['app_running'] else 'not running (seenot-desktop app)'}",
+             f"model: {'up, ' + m['id'] if m['reachable'] else 'unreachable at ' + m['url'] + ' (HANDOFF.md, Run it)'}",
+             f"config: {'ok, ' + _capacity_line(c['capacity']) if c['ok'] else 'broken: ' + c['error']}"]
+    if c.get("ok"):
+        lines.append(f"on now: {', '.join(c['rules_on_now']) or 'no rules'}; budgets {'on' if c['budgets'] else 'off (testing: every hit pops up)'}")
+    if "last_judgement" in out:
+        lj = out["last_judgement"]
+        acts = "; ".join(f"{d['action']} {d['rule']}".strip() for d in lj["decisions"]) or "nothing"
+        lines.append(f"last judged: {lj['at'][11:]} {lj['app']} | {lj['title'][:50]} -> {acts}")
+    _out(args, out, "\n".join(lines))
+    if not (out["app_running"] and m["reachable"] and c["ok"]):
+        raise SystemExit(EXIT["unreachable"] if c["ok"] else EXIT["invalid"])
+
+
+FIELDS = {
+    "rules": {
+        "id": "short name, used in logs: lowercase letters, digits and _, starting with a letter; can't change later",
+        "kind": "deny: step in; time_cap: count minutes and visits, step in over budget",
+        "description": "what the rule is about, in your words; the model reads it. Describe the mode, not the site",
+        "description_en": "optional English version, sent instead when [settings] lang = \"en\"",
+        "exceptions": "things that look like a hit but are fine; the model reads them with the rule",
+        "threshold": "the model's score (0-1) that counts as a hit; Kev-4B scores run low, so 0.15-0.5. `rules tune` sets it",
+        "target": "content: judge the opened item, feeds never hit; page: judge the page itself, feeds and home pages can hit",
+        "sites": "always a hit on these sites, without the model",
+        "patterns": "the same as URL regexes, for what sites can't say",
+        "allow_learning": "lectures, tutorials and docs never hit this rule",
+        "allow_intentional": "one item opened from search, a work app or a chat link is fine",
+        "feed_hit": "any page the model reads as an entertainment feed hits this rule",
+        "minutes_per_day": "time_cap: daily minutes",
+        "visits_per_day": "time_cap: separate visits a day; 0 = no limit",
+        "enabled": "false: kept in the file, but never asked and never fires",
+        "when": "only at these times; empty = always",
+        "note": "why it's set this way, for whoever reads the file next",
+    },
+    "allow": {
+        "id": "short name: lowercase letters, digits and _",
+        "description": "a kind of page no rule fires on, in your words (\"an online store\")",
+        "description_en": "optional English version",
+        "threshold": "the model's yes-probability that counts",
+        "sites": "known to be this kind: allowed without the model",
+        "patterns": "the same as URL regexes",
+        "apps": "bundle ids known to be this kind",
+        "enabled": "false: kept, but not asked",
+        "note": "why it's there",
+    },
+    "settings": {
+        "lang": "en: rules with a description_en send that; anything else sends description",
+        "no_monitor": "apps (bundle ids) never read at all",
+        "allow_sites": "sites never judged; links from them count as opened on purpose",
+        "allow_urls": "the same, as URL regexes",
+        "budgets": "true: time caps count minutes and visits first; false (testing): every hit pops up at once",
+        "max_questions": "questions one reading may ask (rules on at once + allow classes + 3 shared); "
+                         "more slows the model sharply (25 is ~1.5 s on Kev-4B, 24 GB Mac)",
+    },
+}
+
+GRAMMAR = {
+    "sites": '"douyin.com" = the site and its subdomains; "youtube.com/shorts" = that path and under it; '
+             '"youtube.com/" = the home page only',
+    "when": 'days and/or hours: "mon-fri 09:00-18:00", "weekends", "sat,sun", "22:00-02:00" (past midnight belongs '
+            'to the day it starts), "daily 12:00-13:00"; several entries = any of them',
+    "cli assignments": "key=value sets; key+=item / key-=item edit a list; key= removes the key (back to default); "
+                       'lists also take a JSON array: sites=\'["a.com","b.com"]\'; what=... sets the description the model reads',
+    "limit": "rules on at the same moment + enabled allow classes + 3 shared questions <= max_questions; "
+             "a change that would go over is refused (exit code 4)",
+}
 
 
 # -- the parser ---------------------------------------------------------------
 
 
+def run(args) -> None:
+    """Run one command with dry runs, --json errors and exit codes."""
+    SESSION.update(dry_run=getattr(args, "dry_run", False), configs=[], appends=[])
+    as_json = getattr(args, "json", False)
+    try:
+        if SESSION["dry_run"]:
+            with contextlib.redirect_stdout(io.StringIO()):
+                args.cmd_fn(args)
+            diff = "".join(c.diff() for c in SESSION["configs"])
+            _out(args, {"dry_run": True, "diff": diff, "appends": SESSION["appends"]},
+                 (diff or "rules.toml: no change") +
+                 "".join(f"\nwould append to {a['file']}: {json.dumps(a['line'], ensure_ascii=False)}" for a in SESSION["appends"]) +
+                 "\n(dry run: nothing saved)")
+        else:
+            args.cmd_fn(args)
+    except (CliError, OverLimit, ValueError, KeyError) as e:
+        code = e.code if isinstance(e, CliError) else "over_limit" if isinstance(e, OverLimit) else \
+            "not_found" if isinstance(e, KeyError) else "invalid"
+        msg = e.message if isinstance(e, CliError) else e.args[0] if e.args else str(e)
+        if as_json:
+            print(json.dumps({"error": {"code": code, "message": msg}}, ensure_ascii=False, indent=2))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        raise SystemExit(EXIT[code])
+
+
 def register(sub, defaults: dict) -> None:
-    """Adds rules / allow / except / never / settings to the main parser."""
+    """Adds rules / allow / except / never / settings / config / schema / status to the main parser."""
 
     def group(name, help):
-        g = sub.add_parser(name, help=help)
+        g = sub.add_parser(name, help=help, description=help)
         return g.add_subparsers(dest="cmd2", required=True, metavar="ACTION")
 
-    def cmd(g, name, fn, help, json_out=True):
+    def cmd(g, name, fn, help, changes=False):
         sp = g.add_parser(name, help=help, description=help)
         sp.add_argument("--rules", default=defaults["rules"], help="the rules file")
         sp.add_argument("--data", default=defaults["data"], help="the data folder")
-        if json_out:
-            sp.add_argument("--json", action="store_true", help="machine-readable output")
-        sp.set_defaults(fn=fn)
+        sp.add_argument("--json", action="store_true", help="machine-readable output, errors included")
+        if changes:
+            sp.add_argument("--dry-run", action="store_true", help="show the diff; save nothing")
+        sp.set_defaults(fn=run, cmd_fn=fn)
         return sp
 
     g = group("rules", "list, add, change, test and tune your rules")
-    cmd(g, "list", rules_list, "every rule in a sentence: on or off, active now, today's usage")
+    cmd(g, "list", rules_list, "every rule in a sentence: on or off, active now, today's usage, question budget")
     cmd(g, "show", rules_show, "one rule, every field").add_argument("id")
-    sp = cmd(g, "add", rules_add, "a new rule, in your words (or a starter: --from-starter)")
+    sp = cmd(g, "add", rules_add, "a new rule, in your words (or a starter: --from-starter)", changes=True)
     sp.add_argument("id", help="short name: lowercase, digits, _")
     sp.add_argument("--what", help='what it is about, in your words: "short videos made for endless swiping"')
     sp.add_argument("--minutes", type=float, help="a daily time budget instead of stepping in at once")
@@ -525,61 +755,85 @@ def register(sub, defaults: dict) -> None:
     sp.add_argument("--note", help="why it's there, for whoever reads the file later")
     sp.add_argument("--from-starter", action="store_true", help="copy the starter rule with this id")
     sp.add_argument("set", nargs="*", metavar="KEY=VALUE", help="any other field")
-    sp = cmd(g, "set", rules_set, "change fields: threshold=0.3 what=\"...\" sites+=tiktok.com when-=weekends note=")
+    sp = cmd(g, "set", rules_set, "change fields: threshold=0.3 what=\"...\" sites+=tiktok.com when-=weekends note=", changes=True)
     sp.add_argument("id")
     sp.add_argument("pairs", nargs="+", metavar="KEY=VALUE")
-    cmd(g, "on", rules_on, "switch a rule on").add_argument("id")
-    cmd(g, "off", rules_off, "switch a rule off (kept in the file)").add_argument("id")
-    cmd(g, "remove", rules_remove, "delete a rule from the file").add_argument("id")
+    cmd(g, "on", rules_on, "switch a rule on", changes=True).add_argument("id")
+    cmd(g, "off", rules_off, "switch a rule off (kept in the file)", changes=True).add_argument("id")
+    cmd(g, "remove", rules_remove, "delete a rule from the file", changes=True).add_argument("id")
     cmd(g, "starters", rules_starters, "the ready-made rules and allow classes, and which you have")
-    sp = cmd(g, "test", rules_test, "what the rule would do on your recent screens (asks the model)")
+    sp = cmd(g, "test", rules_test, "what a rule would do on your recent screens (asks the model); "
+             "--what tries other wording, or a draft rule under a new id, without saving")
     sp.add_argument("id")
+    sp.add_argument("--what", help="wording to try instead of the saved one (or for a draft)")
+    sp.add_argument("--kind", choices=("deny", "time_cap"), help="for a draft, or to try the other kind")
+    sp.add_argument("--threshold", type=float, help="threshold to try")
     sp.add_argument("--last", type=int, default=100, help="how many recent distinct screens")
     sp.add_argument("--show", type=int, default=20, help="how many to print, highest score first")
     sp.add_argument("--all", action="store_true", help="print all of them")
-    sp = cmd(g, "label", rules_label, "say which screens really are this rule (ids from `rules test`)")
+    sp = cmd(g, "label", rules_label, "say which screens really are this rule (ids from `rules test`)", changes=True)
     sp.add_argument("id")
     sp.add_argument("--yes", nargs="+", metavar="JID")
     sp.add_argument("--no", nargs="+", metavar="JID")
-    sp = cmd(g, "tune", rules_tune, "the threshold from your answers")
+    sp = cmd(g, "tune", rules_tune, "the threshold from your answers", changes=True)
     sp.add_argument("id")
     sp.add_argument("--apply", action="store_true", help="write it to rules.toml")
     sp.add_argument("--precision", type=float, default=0.9, help="share of hits that must be right")
 
     g = group("allow", "kinds of page no rule fires on (shopping, music)")
     cmd(g, "list", allow_list, "every allow class")
-    sp = cmd(g, "add", allow_add, "a kind of page never flagged, in your words", json_out=False)
+    sp = cmd(g, "add", allow_add, "a kind of page never flagged, in your words", changes=True)
     sp.add_argument("id")
     sp.add_argument("--what", help='"a music player or music streaming site"')
     sp.add_argument("--threshold", type=float, default=0.5)
     sp.add_argument("--site", action="append", help="known to be this: allowed without the model; repeat")
     sp.add_argument("--app", action="append", help="bundle id known to be this; repeat")
     sp.add_argument("--from-starter", action="store_true")
-    sp = cmd(g, "set", allow_set, "change fields, like `rules set`", json_out=False)
+    sp = cmd(g, "set", allow_set, "change fields, like `rules set`", changes=True)
     sp.add_argument("id")
     sp.add_argument("pairs", nargs="+", metavar="KEY=VALUE")
-    cmd(g, "on", allow_toggle, "switch on", json_out=False).add_argument("id")
-    cmd(g, "off", allow_toggle, "switch off", json_out=False).add_argument("id")
-    cmd(g, "remove", allow_remove, "delete", json_out=False).add_argument("id")
+    cmd(g, "on", allow_toggle, "switch on", changes=True).add_argument("id")
+    cmd(g, "off", allow_toggle, "switch off", changes=True).add_argument("id")
+    cmd(g, "remove", allow_remove, "delete", changes=True).add_argument("id")
 
     g = group("except", "things that look like a rule but are fine")
     cmd(g, "list", except_list, "per rule: typed, and learned from “Not this one”").add_argument("rule", nargs="?")
-    sp = cmd(g, "add", except_add, "an exception in your words; the model reads it with the rule", json_out=False)
+    sp = cmd(g, "add", except_add, "an exception in your words; the model reads it with the rule", changes=True)
     sp.add_argument("rule")
     sp.add_argument("text", help='"a lecture or conference talk"')
-    sp = cmd(g, "remove", except_remove, "remove one (the exact text, title or URL `except list` shows)", json_out=False)
+    sp = cmd(g, "remove", except_remove, "remove one (the exact text, title or URL `except list` shows)", changes=True)
     sp.add_argument("rule")
     sp.add_argument("text")
 
     g = group("never", "apps and sites where no rule ever fires")
     cmd(g, "list", never_list, "every never-here place")
     for name, fn, help in (("add", never_add, "no rule fires here again"), ("remove", never_remove, "undo")):
-        sp = cmd(g, name, fn, help, json_out=False)
+        sp = cmd(g, name, fn, help, changes=True)
         sp.add_argument("--site", help="example.com")
         sp.add_argument("--app", help="bundle id, e.g. net.whatsapp.WhatsApp")
         sp.add_argument("--name", help="the app's name, for display")
 
-    g = group("settings", "budgets on or off, apps never read, sites never judged")
+    g = group("settings", "budgets on or off, apps never read, sites never judged, the question limit")
     cmd(g, "show", settings_show, "every setting, with what it does")
-    sp = cmd(g, "set", settings_set, "budgets=true, no_monitor+=com.example.App, allow_sites+=github.com", json_out=False)
+    sp = cmd(g, "set", settings_set, "budgets=true, no_monitor+=com.example.App, allow_sites+=github.com", changes=True)
     sp.add_argument("pairs", nargs="+", metavar="KEY=VALUE")
+
+    g = group("config", "the whole config as JSON: export, edit, apply in one checked step; check; undo")
+    cmd(g, "export", config_export, "settings, allow classes and rules as JSON, as written (defaults left out)")
+    sp = cmd(g, "apply", config_apply, "make rules.toml match a JSON file (or - for stdin) in the shape `export` "
+             "prints: entries added or changed; a top-level key left out is left alone. All of it or nothing", changes=True)
+    sp.add_argument("file", help="JSON file, or - for stdin")
+    sp.add_argument("--prune", action="store_true", help="also remove rules and allow classes missing from the file")
+    cmd(g, "check", config_check, "does rules.toml load, and how full is the question budget")
+    cmd(g, "undo", config_undo, "back to the version before the last change; again to redo", changes=True)
+
+    sp = sub.add_parser("schema", help="every field: type, default, meaning, and the value grammar",
+                        description="every field: type, default, meaning, and the value grammar")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(fn=run, cmd_fn=schema)
+    sp = sub.add_parser("status", help="app running? model up? config ok? what it judged last",
+                        description="app running? model up? config ok? what it judged last (exit 5 if something is down)")
+    sp.add_argument("--rules", default=defaults["rules"])
+    sp.add_argument("--data", default=defaults["data"])
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(fn=run, cmd_fn=status)

@@ -84,6 +84,15 @@ research on digital self-control tools:
   not 0.5: at 0.5, Kev-4B's low scores meant a new rule would almost never fire.
   `rules.example.toml` is English only now, and the app creates rules.toml
   from it on first run.
+- **A question limit, and a CLI an agent can drive safely.** Each reading may
+  ask at most `max_questions` (25) questions: rules on at the same moment +
+  allow classes + 3 shared, checked over the whole week (rules with
+  non-overlapping `when` share a slot); a change past it is refused.
+  Every command takes `--json` (errors too, with exit codes 2/3/4/5), every
+  change `--dry-run`; `config export|apply|undo` changes many things in one
+  checked step (`--prune` to remove); `schema`, `status`; `rules test --what`
+  tries wording as a draft. `.claude/skills/seenot/SKILL.md` tells Claude
+  Code how to use it.
 
 ### MVP (built after the trials)
 
@@ -170,7 +179,8 @@ fallback may trigger an **Automation** prompt per browser the first time.
 | `src/seenot_desktop/review.py` | Review page (http://127.0.0.1:8765): your verdicts, threshold suggestions from them, applying thresholds and exceptions |
 | `src/seenot_desktop/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export`, plus the commands above |
 | `rules.example.toml` | The starter rules and allow classes, in English, with measured thresholds and why in `note` |
-| `docs/PERSONALIZE.md` | Every personalization command, and the test-then-tune loop for a new rule |
+| `docs/PERSONALIZE.md` | Every personalization command, the question limit, and the test-then-tune loop for a new rule |
+| `.claude/skills/seenot/SKILL.md` | How Claude Code should drive the CLI for a user |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
 | `tests/test_policy.py` | The policy with made-up readings |
 | `experiments/` | Trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |
@@ -371,8 +381,9 @@ Kev answers every question in one forward pass and generates nothing, so up
 to ~10 rules costs about the same as one. Past that, one long pass grows
 faster than linearly on this Mac (memory, attention over thousands of
 tokens); calls of 10 rules keep it linear at ~1 s per 10. Hosted Jev on a
-GPU is unmeasured. Not built: grouping rules into calls automatically, or a
-first cheap question that picks which rules to ask.
+GPU is unmeasured. Hence `[settings] max_questions = 25`, enforced. Not
+built: grouping rules into calls automatically, or a first cheap question
+that picks which rules to ask; either would let the limit rise.
 
 ### State size (Kev tokenizer, state only)
 

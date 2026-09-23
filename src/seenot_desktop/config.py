@@ -4,15 +4,19 @@ command, and the review page, goes through.
 Edits are surgical: only the keys you change are rewritten, so comments and
 the rest of the file survive. Every edit is parsed with the same checks as
 loading before it's written (a broken file is never saved), and the previous
-version is kept as rules.toml.bak.
+version is kept as rules.toml.bak. Several edits can go in one batch, checked
+and saved together (`apply`: the whole config as data, for agents), and any
+of it can be a dry run that only shows the diff.
 """
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import shutil
 import tomllib
+from contextlib import contextmanager
 from dataclasses import MISSING, fields
 from pathlib import Path
 
@@ -178,13 +182,100 @@ def _edit_block(block: str, set_: dict, unset: list[str]) -> str:
 
 
 class Config:
-    """rules.toml, for reading and editing. Each change is checked and saved at once."""
+    """rules.toml, for reading and editing. Each change is checked and saved at
+    once, or, inside `batch()`, all together at the end. With dry_run, nothing
+    is saved: `pending` holds what would have been."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, dry_run: bool = False):
         self.path = Path(path)
+        self.dry_run = dry_run
+        self.pending: str | None = None
+        self._buffer: str | None = None
 
     def text(self) -> str:
+        if self._buffer is not None:
+            return self._buffer
+        if self.dry_run and self.pending is not None:
+            return self.pending
         return self.path.read_text(encoding="utf-8")
+
+    @contextmanager
+    def batch(self):
+        """Edits inside are checked once, as a whole, and saved together or not at all."""
+        self._buffer = self.text()
+        try:
+            yield self
+            text = self._buffer
+        finally:
+            self._buffer = None
+        self._save(text)
+
+    def diff(self) -> str:
+        """What a dry run would change, as a unified diff."""
+        if self.pending is None:
+            return ""
+        old = self.path.read_text(encoding="utf-8")
+        return "".join(difflib.unified_diff(old.splitlines(keepends=True), self.pending.splitlines(keepends=True),
+                                            str(self.path), str(self.path) + " (after)"))
+
+    def undo(self) -> None:
+        """Back to the version before the last change (rules.toml.bak); undo again to redo."""
+        bak = self.path.with_name(self.path.name + ".bak")
+        if not bak.exists():
+            raise KeyError("nothing to undo: no rules.toml.bak yet")
+        old, cur = bak.read_text(encoding="utf-8"), self.text()
+        parse_config(old)
+        if self.dry_run:
+            self.pending = old
+            return
+        self.path.write_text(old, encoding="utf-8")
+        bak.write_text(cur, encoding="utf-8")
+
+    def export(self) -> dict:
+        """The whole config as data, as written (defaults left out): what `apply` takes back."""
+        data = tomllib.loads(self.text())
+        return {"settings": data.get("settings", {}), "allow": data.get("allow", []), "rules": data.get("rules", [])}
+
+    def apply(self, desired: dict, prune: bool = False) -> list[dict]:
+        """Make the file match `desired` (the shape `export` returns; a top-level
+        key left out is left alone). Entries missing from a list are kept
+        unless `prune`: a partial list never deletes rules by accident. One
+        batch: all of it, checked together, or nothing. Returns the changes."""
+        unknown = set(desired) - {"settings", "allow", "rules"}
+        if unknown:
+            raise ValueError(f"unknown top-level keys {sorted(unknown)}; expected settings, allow, rules")
+        current = self.export()
+        changes = []
+        with self.batch():
+            if "settings" in desired:
+                want, have = desired["settings"], current["settings"]
+                set_ = {k: v for k, v in want.items() if have.get(k) != v}
+                unset = [k for k in have if k not in want]
+                if set_ or unset:
+                    self.edit_settings(set_, unset)
+                    changes.append({"op": "settings", "set": set_, "unset": unset})
+            for table in ("allow", "rules"):
+                if table not in desired:
+                    continue
+                want = {e.get("id"): e for e in desired[table]}
+                if None in want or len(want) != len(desired[table]):
+                    raise ValueError(f"{table}: every entry needs a unique id")
+                have = {e["id"]: e for e in current[table]}
+                for id in have:
+                    if id not in want and prune:
+                        self.remove(table, id)
+                        changes.append({"op": "remove", "table": table, "id": id})
+                for id, entry in want.items():
+                    if id not in have:
+                        self.add(table, entry)
+                        changes.append({"op": "add", "table": table, "id": id})
+                        continue
+                    set_ = {k: v for k, v in entry.items() if k != "id" and have[id].get(k) != v}
+                    unset = [k for k in have[id] if k not in entry]
+                    if set_ or unset:
+                        self.edit(table, id, set_, unset)
+                        changes.append({"op": "change", "table": table, "id": id, "set": set_, "unset": unset})
+        return changes
 
     def load(self) -> tuple[Settings, list[Rule]]:
         return parse_config(self.text())
@@ -201,7 +292,16 @@ class Config:
         return f"no {'rule' if table == 'rules' else table} {id!r}; there are: {', '.join(map(str, ids)) or 'none'}"
 
     def _write(self, text: str) -> None:
+        if self._buffer is not None:  # in a batch: checked at the end
+            self._buffer = text
+            return
+        self._save(text)
+
+    def _save(self, text: str) -> None:
         parse_config(text)  # refuse to save a file that no longer loads
+        if self.dry_run:
+            self.pending = text
+            return
         if self.path.exists():
             shutil.copyfile(self.path, self.path.with_name(self.path.name + ".bak"))
         self.path.write_text(text, encoding="utf-8")
@@ -227,7 +327,8 @@ class Config:
         cls = TABLES[table]
         for key in entry:
             field_type(cls, key)
-        if any(r.id == entry["id"] for r in self._all_entries()):
+        data = tomllib.loads(self.text())
+        if any(e.get("id") == entry["id"] for t in TABLES for e in data.get(t, [])):
             raise ValueError(f"{entry['id']!r} already exists")
         block = text or f"[[{table}]]\n" + "".join(f"{k} = {toml_value(v)}\n" for k, v in entry.items())
         blocks = _blocks(self.text())
@@ -257,10 +358,6 @@ class Config:
         if not blocks[i].endswith("\n\n"):
             blocks[i] += "\n"
         self._write("".join(blocks))
-
-    def _all_entries(self):
-        settings, rules = self.load()
-        return [*rules, *settings.allow]
 
 
 def starter_blocks() -> dict[str, tuple[str, str]]:

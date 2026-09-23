@@ -5,14 +5,21 @@ files the app, the pop-up and the review page use: `rules.toml` for rules,
 allow classes and settings, and `data/exceptions.jsonl` for what you taught
 it at runtime. The running app picks up changes without a restart.
 
-The commands are written to be driven by an agent as well as by hand:
+The commands are written to be driven by an agent as well as by hand
+(Claude Code picks up `.claude/skills/seenot` in this repo):
 
-- every command that shows something takes `--json`;
-- every change is checked with the same checks as loading, and a change
-  that would break the file is refused with a message that says what to
-  fix; nothing is written;
-- the previous `rules.toml` is kept as `rules.toml.bak`;
-- `--help` on any command lists its options.
+- every command takes `--json`, errors included:
+  `{"error": {"code": "over_limit", "message": "..."}}`;
+- exit codes: 0 ok, 2 invalid, 3 not found, 4 over the question limit,
+  5 app or model down;
+- every change takes `--dry-run`: it prints the diff and saves nothing;
+- every change is checked with the same checks as loading; a change that
+  would break the file or go over the question limit is refused with a
+  message that says what to do, and nothing is written;
+- `config apply` makes many changes in one checked step, and `config undo`
+  reverts the last saved change (one level: `rules.toml.bak`);
+- `schema` lists every field with its type, default and meaning, and
+  `status` says whether the app and the model are up.
 
 `rules.toml` is created from the starter rules (`rules.example.toml`) the
 first time any command or the app runs.
@@ -57,6 +64,18 @@ seenot-desktop rules remove news
 | `exceptions` | things that look like a hit but are fine; the model reads them | `except add` |
 | `note` | why it's set this way, for whoever reads the file next | `--note` |
 
+## The question limit
+
+Each reading asks the model one question per rule that's on at that moment,
+one per allow class, and 3 shared ones (sensitive, page kind, purpose). The
+cost isn't flat past ~10 rules (HANDOFF, Measured): on Kev-4B on a 24 GB
+Mac, 13 questions take 0.6 s, 28 take 1.8 s, 53 up to 18 s, and 103 timed
+out and swapped the machine. So `[settings] max_questions = 25` is a hard
+limit, checked over the whole week: rules whose `when` hours don't overlap
+share a slot. `rules list` and every change print how full it is; a change
+past it is refused (exit code 4) with the ways out: hours that don't
+overlap, folding two rules into one description, or switching one off.
+
 ## Test a rule before you trust it
 
 A new rule, or new wording, hasn't been measured. Kev-4B ranks pages well,
@@ -85,6 +104,10 @@ seenot-desktop rules label news --yes 6d159df9 0f437a14 --no 52a39a64 c1d80582 d
 seenot-desktop rules tune news              # the threshold that's right on 90% of hits, from your answers
 seenot-desktop rules tune news --apply      # write it to rules.toml
 ```
+
+Try wording before saving anything: `rules test news --what "news
+headlines and articles"` tests it as a draft (for an existing rule, in
+place of its saved wording; for a new id, as a new rule).
 
 Scores are cached per exact wording (`data/trials.jsonl`), so running
 `test` again is fast, and changing the description makes it ask again.
@@ -122,20 +145,40 @@ seenot-desktop settings set no_monitor+=com.tencent.xinWeChat   # never read at 
 seenot-desktop settings set allow_sites+=gitlab.com       # never judged; links from it count as on purpose
 ```
 
-## For an agent
-
-A user saying "stop me watching streams during work, but lectures are fine"
-maps to:
+## Many changes at once
 
 ```bash
-seenot-desktop rules list --json                    # what's there already
-seenot-desktop rules set livestream 'when+=mon-fri 09:00-18:00' allow_learning=true
-seenot-desktop rules test livestream --json         # check what it catches now
+seenot-desktop config export > cfg.json          # settings, allow classes and rules, as written
+# edit cfg.json
+seenot-desktop config apply cfg.json --dry-run   # the diff
+seenot-desktop config apply cfg.json             # all of it, checked together, or nothing
+seenot-desktop config undo                       # changed your mind
 ```
 
-A rule that doesn't exist yet: `rules add NAME --off ...`, `rules test NAME
---json`, show the user the top screens (or judge them from their titles and
-URLs), `rules label`, `rules tune --apply`, then `rules on NAME`.
+Entries missing from the file are kept: a partial list never deletes
+anything. `--prune` removes what's missing. Near the question limit, this
+is how to swap rules: switching one off and adding another in separate
+commands would be refused halfway.
+
+## Is it running
+
+```bash
+seenot-desktop status            # app, model, config and question budget, what it judged last (exit 5 if down)
+seenot-desktop config check      # does rules.toml load
+seenot-desktop schema            # every field and its grammar
+```
+
+## For an agent
+
+`.claude/skills/seenot/SKILL.md` is the operating guide for Claude Code:
+start with `status`, `rules list` and `schema`, map the user's words onto
+fields, dry-run, respect the question limit, and test a new rule before
+switching it on. A user saying "stop me watching streams during work, but
+lectures are fine" maps to:
+
+```bash
+seenot-desktop rules set livestream 'when+=mon-fri 09:00-18:00' allow_learning=true --json
+```
 
 What the commands don't do yet: pause or snooze the running app (the menu
 and the pop-up do), and anything that needs the review page's screenshots.

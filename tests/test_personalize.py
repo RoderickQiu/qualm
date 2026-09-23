@@ -142,9 +142,71 @@ def test_cli_round_trip(tmp_path):
     assert run("rules", "add", "news", "--what", "news sites", "--minutes", "15", "--site", "nytimes.com").returncode == 0
     assert run("rules", "set", "news", "when+=weekdays", "threshold=0.3").returncode == 0
     assert run("rules", "off", "shortvideo").returncode == 0
-    rows = json.loads(run("rules", "list", "--json").stdout)
+    rows = json.loads(run("rules", "list", "--json").stdout)["rules"]
     news = next(r for r in rows if r["id"] == "news")
     assert news["kind"] == "time_cap" and news["when"] == ["weekdays"] and news["threshold"] == 0.3
     assert not next(r for r in rows if r["id"] == "shortvideo")["enabled"]
     bad = run("rules", "set", "news", "when=someday")
-    assert bad.returncode != 0 and "someday" in bad.stderr
+    assert bad.returncode == 2 and "someday" in bad.stderr
+    err = json.loads(run("rules", "show", "nope", "--json").stdout)["error"]
+    assert err["code"] == "not_found" and "news" in err["message"]
+    assert run("rules", "show", "nope").returncode == 3
+
+    # A dry run shows the diff and saves nothing.
+    before = (tmp_path / "r.toml").read_text()
+    dry = json.loads(run("rules", "set", "news", "threshold=0.5", "--dry-run", "--json").stdout)
+    assert dry["dry_run"] and "+threshold = 0.5" in dry["diff"] and (tmp_path / "r.toml").read_text() == before
+    dry = json.loads(run("never", "add", "--site", "example.com", "--dry-run", "--json").stdout)
+    assert dry["appends"] and not (tmp_path / "d" / "exceptions.jsonl").exists()
+
+    # The whole config round-trips through export / apply, all or nothing.
+    cfg = json.loads(run("config", "export").stdout)
+    cfg["rules"] = [r for r in cfg["rules"] if r["id"] != "videos"]
+    cfg["rules"].append({"id": "games", "kind": "deny", "description": "video games"})
+    next(r for r in cfg["rules"] if r["id"] == "social")["minutes_per_day"] = 10
+    (tmp_path / "want.json").write_text(json.dumps(cfg))
+    out = json.loads(run("config", "apply", str(tmp_path / "want.json"), "--json").stdout)
+    # Without --prune, a rule left out of the list is kept.
+    assert {(c["op"], c["id"]) for c in out["changes"]} == {("add", "games"), ("change", "social")}
+    out = json.loads(run("config", "apply", str(tmp_path / "want.json"), "--prune", "--json").stdout)
+    assert {(c["op"], c["id"]) for c in out["changes"]} == {("remove", "videos")}
+    assert json.loads(run("config", "export").stdout)["rules"] == cfg["rules"]
+    # Undo brings the previous file back.
+    assert run("config", "undo").returncode == 0
+    assert "videos" in {r["id"] for r in json.loads(run("config", "export").stdout)["rules"]}
+
+
+def test_question_limit(tmp_path):
+    """Rules on at the same moment + allow classes + 3 shared questions <= max_questions,
+    checked over the whole week, and a change past it is refused whole."""
+    from seenot_desktop.rules import OverLimit, capacity, parse_config
+
+    def cfg(n, when=None, limit=10):
+        rules = "".join(f'[[rules]]\nid = "r{i}"\nkind = "deny"\ndescription = "x"\n'
+                        + (f'when = ["{when[i % len(when)]}"]\n' if when else "") for i in range(n))
+        return f"[settings]\nmax_questions = {limit}\n\n" + rules
+
+    assert capacity(*parse_config(cfg(7)))["peak"] == 10
+    with pytest.raises(OverLimit):
+        parse_config(cfg(8))
+    # Rules at different times don't add up.
+    s, rules = parse_config(cfg(14, when=["mon-fri 09:00-18:00", "mon-fri 18:00-23:00"]))
+    assert capacity(s, rules)["peak"] == 10
+    with pytest.raises(OverLimit):
+        parse_config(cfg(14, when=["mon-fri 09:00-18:00", "mon-fri 17:00-23:00"]))
+
+    path = tmp_path / "r.toml"
+    path.write_text(cfg(7))
+    c = Config(path)
+    with pytest.raises(OverLimit):
+        c.add("rules", {"id": "extra", "kind": "deny", "description": "x"})
+    with pytest.raises(OverLimit):
+        c.apply({"rules": [{"id": f"n{i}", "kind": "deny", "description": "x"} for i in range(9)]}, prune=True)
+    with pytest.raises(OverLimit):
+        c.apply({"rules": [{"id": "n0", "kind": "deny", "description": "x"}]})
+    assert path.read_text() == cfg(7)
+    # Switching one off makes room.
+    with c.batch():
+        c.edit("rules", "r0", {"enabled": False})
+        c.add("rules", {"id": "extra", "kind": "deny", "description": "x"})
+    assert capacity(*c.load())["peak"] == 10
