@@ -24,7 +24,7 @@ from pathlib import Path
 from .rules import Rule, load_config
 
 PORT = 8765
-VERDICTS = ("right", "should_block", "should_not_block")
+VERDICTS = ("right", "wrong", "should_block", "should_not_block")
 MIN_EACH = 3  # positives and negatives a rule needs before a threshold is suggested
 
 
@@ -268,8 +268,10 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
                 if self.path == "/api/review":
-                    jid = body.pop("id")
-                    save_review(data_dir, jid, **body)
+                    # One judgement, or a group of similar ones answered together.
+                    ids = body.pop("ids", None) or [body.pop("id")]
+                    for jid in ids:
+                        save_review(data_dir, jid, **{k: (dict(v) if isinstance(v, dict) else v) for k, v in body.items()})
                 elif self.path == "/api/threshold":
                     set_threshold(rules_path, body["rule"], float(body["value"]))
                 elif self.path == "/api/exception":
@@ -289,263 +291,413 @@ PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>SeeNot review</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-:root { --bg:#f6f6f4; --card:#fff; --ink:#1d1d1f; --mute:#6e6e73; --line:#e3e3e0;
-  --red:#c8372d; --redbg:#fbeae8; --amber:#a15c00; --amberbg:#fdf1de; --blue:#1f5fbf; --bluebg:#e7effb;
-  --green:#1e7b3c; --greenbg:#e5f4ea; }
+:root { --bg:#f5f5f3; --card:#fff; --ink:#1d1d1f; --mute:#6e6e73; --line:#e2e2de;
+  --red:#c8372d; --redbg:#fbeae8; --amber:#9a5700; --amberbg:#fcf0dc; --blue:#1f5fbf; --bluebg:#e7effb;
+  --green:#1e7b3c; --greenbg:#e4f3e9; }
 * { box-sizing:border-box; }
-body { margin:0; font:14px/1.45 -apple-system, "PingFang SC", system-ui, sans-serif; background:var(--bg); color:var(--ink); }
-header { position:sticky; top:0; z-index:5; background:rgba(246,246,244,.95); backdrop-filter:blur(8px); border-bottom:1px solid var(--line); padding:12px 24px; }
-header h1 { font-size:17px; margin:0 12px 0 0; display:inline; }
-.bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.chip { border:1px solid var(--line); background:#fff; border-radius:999px; padding:4px 11px; cursor:pointer; font-size:13px; }
-.chip.on { background:var(--ink); color:#fff; border-color:var(--ink); }
-.chip .n { color:var(--mute); margin-left:4px; } .chip.on .n { color:#ccc; }
-input[type=search] { border:1px solid var(--line); border-radius:8px; padding:5px 10px; min-width:220px; font:inherit; }
-main { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:20px; padding:20px 24px; align-items:start; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; display:grid; grid-template-columns:260px minmax(0,1fr); gap:16px; }
-.card.wrong { border-color:var(--red); box-shadow:0 0 0 1px var(--red) inset; }
-.card.ok { border-color:#bfe0c9; }
-.shot { width:260px; border-radius:8px; border:1px solid var(--line); cursor:zoom-in; display:block; background:#eee; }
-.noshot { width:260px; height:150px; border-radius:8px; background:#efefec; color:var(--mute); display:flex; align-items:center; justify-content:center; font-size:12px; text-align:center; padding:10px; }
-.title { font-weight:600; font-size:15px; overflow-wrap:anywhere; }
-.url { color:var(--mute); font-size:12px; overflow-wrap:anywhere; }
-.meta { color:var(--mute); font-size:12px; margin:2px 0 8px; }
-.pill { display:inline-block; border-radius:6px; padding:3px 9px; font-weight:600; font-size:13px; margin:2px 6px 2px 0; }
-.pill.intervene { background:var(--redbg); color:var(--red); }
-.pill.allow { background:var(--amberbg); color:var(--amber); }
-.pill.count { background:var(--bluebg); color:var(--blue); }
-.pill.none, .pill.skip { background:#efefec; color:var(--mute); }
-.why { font-weight:400; }
-.ask { margin:10px 0 6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-.ask b { margin-right:4px; }
-button { font:inherit; font-size:13px; border:1px solid var(--line); background:#fff; border-radius:7px; padding:4px 10px; cursor:pointer; }
-button:hover { border-color:#b9b9b5; }
-button.sel.right { background:var(--greenbg); border-color:var(--green); color:var(--green); }
-button.sel.bad { background:var(--redbg); border-color:var(--red); color:var(--red); }
-button.sel.yes { background:var(--redbg); border-color:var(--red); color:var(--red); }
-button.sel.no { background:var(--greenbg); border-color:var(--green); color:var(--green); }
-table.rules { border-collapse:collapse; width:100%; margin-top:6px; font-size:13px; }
-table.rules td { padding:4px 6px; border-top:1px solid #f0f0ee; vertical-align:middle; }
-table.rules td.q { width:48%; }
-.q .rid { font-weight:600; } .q .desc { color:var(--mute); font-size:12px; }
-.meter { position:relative; height:8px; background:#eeeeeb; border-radius:4px; width:120px; }
-.meter .fill { position:absolute; left:0; top:0; bottom:0; border-radius:4px; background:#9aa0a6; }
-.meter .fill.over { background:var(--red); }
-.meter .tick { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--ink); }
-.num { font-variant-numeric:tabular-nums; color:var(--mute); font-size:12px; white-space:nowrap; }
-.implied { color:var(--mute); font-size:11px; }
-details { margin-top:8px; } summary { cursor:pointer; color:var(--mute); font-size:12px; }
-pre { background:#f6f6f4; border-radius:8px; padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; max-height:260px; overflow:auto; }
-aside { position:sticky; top:76px; }
-.panel { background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; }
-.panel h2 { font-size:14px; margin:0 0 8px; }
-.tune { border-top:1px solid #f0f0ee; padding:8px 0; font-size:13px; }
-.tune:first-of-type { border-top:0; }
-.tune .rid { font-weight:600; }
-.small { font-size:12px; color:var(--mute); }
-.exc { font-size:12px; margin:2px 0 0 10px; color:var(--mute); }
-textarea { width:100%; font:inherit; font-size:13px; border:1px solid var(--line); border-radius:8px; padding:6px; }
-select { font:inherit; font-size:13px; }
-#zoom { position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:10; cursor:zoom-out; }
-#zoom img { max-width:92vw; max-height:92vh; border-radius:8px; }
-.empty { color:var(--mute); padding:40px; text-align:center; }
+body { margin:0; font:15px/1.45 -apple-system, "PingFang SC", system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+nav { display:flex; align-items:center; gap:4px; padding:10px 20px; border-bottom:1px solid var(--line); background:#fff; position:sticky; top:0; z-index:5; }
+nav b { margin-right:16px; }
+nav a { padding:6px 12px; border-radius:8px; color:var(--mute); text-decoration:none; cursor:pointer; }
+nav a.on { background:var(--ink); color:#fff; }
+nav .right { margin-left:auto; font-size:12px; color:var(--mute); }
+.wrap { max-width:1180px; margin:0 auto; padding:20px; }
+.muted { color:var(--mute); } .small { font-size:13px; }
+kbd { font:12px ui-monospace, monospace; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 5px; background:#fff; color:var(--mute); }
+button { font:inherit; border:1px solid var(--line); background:#fff; border-radius:9px; padding:8px 14px; cursor:pointer; }
+button:hover { border-color:#b5b5b0; }
+
+/* review: one screen at a time */
+.progress { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.progress .track { flex:1; height:6px; background:#e8e8e4; border-radius:3px; overflow:hidden; }
+.progress .fill { height:100%; background:var(--green); }
+.one { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:22px; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; }
+.one img { width:100%; border-radius:10px; border:1px solid var(--line); display:block; cursor:zoom-in; }
+.noshot { aspect-ratio:16/10; border-radius:10px; background:#efefec; display:flex; align-items:center; justify-content:center; color:var(--mute); }
+.title { font-size:18px; font-weight:650; overflow-wrap:anywhere; }
+.url { color:var(--mute); font-size:13px; overflow-wrap:anywhere; margin-top:2px; }
+.said { margin:16px 0; padding:12px 14px; border-radius:10px; font-size:16px; }
+.said.intervene { background:var(--redbg); color:var(--red); }
+.said.allow { background:var(--amberbg); color:var(--amber); }
+.said.count { background:var(--bluebg); color:var(--blue); }
+.said.none { background:#efefec; color:#444; }
+.said .why { display:block; font-size:13px; opacity:.85; margin-top:3px; }
+.q { font-weight:650; margin:18px 0 8px; }
+.choices { display:flex; gap:8px; flex-wrap:wrap; }
+.choices button { font-size:15px; padding:10px 16px; }
+.choices .right.sel { background:var(--greenbg); border-color:var(--green); color:var(--green); }
+.choices .wrong.sel { background:var(--redbg); border-color:var(--red); color:var(--red); }
+.chips { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+.chip { display:flex; align-items:center; gap:10px; text-align:left; padding:8px 12px; border-radius:9px; }
+.chip.sel { background:var(--redbg); border-color:var(--red); }
+.chip.none.sel { background:var(--greenbg); border-color:var(--green); }
+.chip .name { font-weight:600; } .chip .desc { font-size:12px; color:var(--mute); }
+.chip kbd { flex:none; }
+.save { margin-top:12px; display:flex; gap:8px; align-items:center; }
+.save .go { background:var(--ink); color:#fff; border-color:var(--ink); }
+details { margin-top:18px; } summary { cursor:pointer; color:var(--mute); font-size:13px; }
+.scores { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+.scores td { padding:3px 4px; }
+.meter { position:relative; height:7px; background:#eeeeea; border-radius:4px; width:130px; }
+.meter .f { position:absolute; left:0; top:0; bottom:0; border-radius:4px; background:#9aa0a6; }
+.meter .f.over { background:var(--red); }
+.meter .t { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--ink); }
+pre { background:#f5f5f3; border-radius:8px; padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; max-height:220px; overflow:auto; }
+.done { text-align:center; padding:60px 20px; background:#fff; border:1px solid var(--line); border-radius:14px; }
+.done h2 { margin:0 0 6px; }
+.keys { margin-top:14px; font-size:12px; color:var(--mute); }
+.similar { margin:-6px 0 6px; } .similar summary { color:var(--ink); font-size:14px; }
+
+/* all screens: one line each */
+.opts { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+.opts input[type=search] { border:1px solid var(--line); border-radius:8px; padding:6px 10px; min-width:240px; font:inherit; font-size:14px; }
+table.list { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; font-size:14px; }
+table.list td { padding:6px 10px; border-top:1px solid #efefec; vertical-align:middle; }
+table.list tr { cursor:pointer; } table.list tr:hover td { background:#fafaf8; }
+table.list img { width:64px; height:40px; object-fit:cover; border-radius:5px; display:block; }
+table.list .t { max-width:460px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tag { display:inline-block; border-radius:6px; padding:1px 8px; font-size:12px; font-weight:600; white-space:nowrap; }
+.tag.intervene { background:var(--redbg); color:var(--red); } .tag.allow { background:var(--amberbg); color:var(--amber); }
+.tag.count { background:var(--bluebg); color:var(--blue); } .tag.none, .tag.skip { background:#efefec; color:var(--mute); }
+.tag.right { background:var(--greenbg); color:var(--green); } .tag.wrong { background:var(--redbg); color:var(--red); }
+
+/* tune */
+.panel { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+.panel h2 { font-size:16px; margin:0 0 10px; }
+table.tune { width:100%; border-collapse:collapse; font-size:14px; }
+table.tune td, table.tune th { padding:8px; border-top:1px solid #efefec; text-align:left; vertical-align:top; }
+table.tune th { font-size:12px; color:var(--mute); font-weight:500; border-top:0; }
+textarea, select { font:inherit; font-size:14px; border:1px solid var(--line); border-radius:8px; padding:6px; }
+textarea { width:100%; }
+#zoom { position:fixed; inset:0; background:rgba(0,0,0,.82); display:none; align-items:center; justify-content:center; z-index:10; cursor:zoom-out; }
+#zoom img { max-width:94vw; max-height:94vh; border-radius:8px; }
 .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:8px 14px; border-radius:8px; font-size:13px; display:none; z-index:20; }
 </style></head><body>
-<header>
-  <div class="bar">
-    <h1>SeeNot review</h1>
-    <span id="filters"></span>
-    <input type="search" id="q" placeholder="Search title, URL, app…">
-    <span class="small" id="mode"></span>
-  </div>
-</header>
-<main>
-  <section id="cards"></section>
-  <aside>
-    <div class="panel"><h2>How to review</h2>
-      <div class="small">For each screen: was SeeNot right? If not, say which rule is what the page really is
-      (<b>Yes</b> = this page <i>is</i> that thing). Answers tune the thresholds on the right.
-      "Right" also counts as <i>no</i> for every rule that stayed quiet.</div></div>
-    <div class="panel"><h2>Thresholds, from your answers</h2><div id="tuning"></div></div>
-    <div class="panel"><h2>Add an exception</h2>
-      <div class="small" style="margin-bottom:6px">In your own words; the model reads it with the rule. E.g. "a lecture or conference talk on YouTube".</div>
-      <select id="excRule"></select>
-      <textarea id="excText" rows="2" placeholder="…is fine"></textarea>
-      <button id="excAdd">Add</button>
-      <div id="excList"></div></div>
-  </aside>
-</main>
-<div id="zoom"><img></div>
+<nav>
+  <b>SeeNot</b>
+  <a data-tab="review">Review <span id="nleft"></span></a>
+  <a data-tab="all">All screens</a>
+  <a data-tab="tune">Tune rules</a>
+  <span class="right" id="mode"></span>
+</nav>
+<div class="wrap" id="view"></div>
+<div id="zoom"><img alt=""></div>
 <div class="toast" id="toast"></div>
 <script>
-let D = null, filter = "all", q = "";
+"use strict";
+let D = null;
+let tab = "review", pos = 0, quiet = false, search = "", listFilter = "all";
+let pick = null;      // while answering "wrong": the set of rule ids the page really is
+let showDetails = false;
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-function toast(t) { const el = $("#toast"); el.textContent = t; el.style.display = "block"; clearTimeout(el._t); el._t = setTimeout(() => el.style.display = "none", 1800); }
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function toast(t) { const el = $("#toast"); el.textContent = t; el.style.display = "block"; clearTimeout(el.tm); el.tm = setTimeout(() => { el.style.display = "none"; }, 1600); }
 
 async function load() { D = await (await fetch("/api/data")).json(); render(); }
 async function post(path, body) {
   const r = await (await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})).json();
-  if (r.error) { toast(r.error); return; }
-  D = r; render();
+  if (r.error) { toast(r.error); return false; }
+  D = r; return true;
 }
 
-// Consecutive judgements of the same screen with the same outcome are one card.
-function groups() {
-  const out = [];
-  for (const j of D.judgements) {
-    const key = [j.screen.app, j.screen.window_title, j.screen.url, JSON.stringify(j.decisions)].join("|");
-    const last = out[out.length - 1];
-    if (last && last.key === key) { last.items.push(j); continue; }
-    out.push({key, items:[j]});
-  }
-  return out.reverse();
+// ---- model of the data -------------------------------------------------
+function ruleName(r) {
+  const t = r.text || "";
+  const cut = t.split(/[,:，：]/)[0];
+  return cut.length > 60 ? cut.slice(0, 57) + "…" : cut;
 }
 function outcome(j) {
-  const acts = j.decisions.map(d => d.action);
-  if (acts.includes("intervene")) return "intervene";
-  if (acts.includes("allow")) return "allow";
-  if (acts.includes("count")) return "count";
-  if (acts.includes("skip")) return "skip";
+  const a = j.decisions.map(d => d.action);
+  for (const k of ["intervene", "allow", "count", "skip"]) if (a.includes(k)) return k;
   return "none";
 }
-function reviewOf(g) { for (const j of [...g.items].reverse()) if (D.reviews[j.id]) return [j, D.reviews[j.id]]; return [g.items[g.items.length - 1], null]; }
-
-const LABEL = {intervene:"Popped up", allow:"Allowed (exempt)", count:"Counted", skip:"Not judged", none:"Nothing"};
-function verdictLine(j) {
-  const ds = j.decisions.filter(d => d.action !== "skip" || d.reason);
-  if (!ds.length) return `<span class="pill none">Nothing: no rule reached its threshold</span>`;
-  return ds.map(d => {
-    let why = d.reason;
-    if (d.reason === "opened on purpose" && j.came_from) why += ` (from ${esc(j.came_from.page_kind)}${j.came_from.app && j.came_from.app !== j.screen.bundle_id ? " in another app" : ""})`;
-    return `<span class="pill ${d.action}">${LABEL[d.action]}${d.rule ? ": " + esc(d.rule) : ""} <span class="why">· ${esc(why)}</span></span>`;
-  }).join("");
-}
-
-function ruleRows(j, rv) {
-  if (!j.p_hit) return "";
-  const answers = (rv && rv.rules) || {};
-  const implied = {};
-  if (rv && rv.verdict === "right") {
-    const acted = Object.fromEntries(j.decisions.filter(d => d.rule).map(d => [d.rule, d.action]));
-    for (const rid in j.p_hit) if (!(rid in answers)) {
-      if (acted[rid] === "intervene" || acted[rid] === "count") implied[rid] = "yes";
-      else if (!(rid in acted)) implied[rid] = "no";
-    }
+function nearMiss(j) {
+  if (!j.p_hit) return 0;
+  let m = 0;
+  for (const rid in j.p_hit) {
+    const t = (j.thresholds || {})[rid] || 0.5;
+    m = Math.max(m, j.p_hit[rid] / t);
   }
-  const rules = Object.fromEntries(D.rules.map(r => [r.id, r]));
-  const ids = Object.keys(j.p_hit).sort((a, b) => j.p_hit[b] - j.p_hit[a]);
-  return `<table class="rules">` + ids.map(rid => {
-    const r = rules[rid] || {text:"", threshold: (j.thresholds || {})[rid] ?? 0.5};
-    const p = j.p_hit[rid], t = (j.thresholds || {})[rid] ?? r.threshold;
-    const a = answers[rid], imp = implied[rid];
-    const ans = j.answers && j.answers[rid] ? Object.entries(j.answers[rid]).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(" · ") : "";
-    return `<tr><td class="q"><span class="rid">Is this ${esc(rid)}?</span><div class="desc">${esc(r.text)}</div></td>
-      <td><div class="meter" title="${esc(ans)}"><div class="fill ${p >= t ? "over" : ""}" style="width:${Math.min(100, p * 100)}%"></div><div class="tick" style="left:${t * 100}%"></div></div>
-      <div class="num">score ${p.toFixed(2)} · threshold ${t}</div></td>
-      <td style="white-space:nowrap"><button class="${a === "yes" ? "sel yes" : ""}" data-j="${j.id}" data-rule="${rid}" data-a="yes">Yes</button>
-      <button class="${a === "no" ? "sel no" : ""}" data-j="${j.id}" data-rule="${rid}" data-a="no">No</button>
-      ${imp && !a ? `<div class="implied">${imp} (implied by “right”)</div>` : ""}</td></tr>`;
-  }).join("") + `</table>`;
+  return m;
 }
-
-function card(g) {
-  const [j, rv] = reviewOf(g);
-  const first = g.items[0], last = g.items[g.items.length - 1];
-  const t0 = first.at.slice(11, 16), t1 = last.at.slice(11, 16);
-  const shot = g.items.map(x => x.shot).find(Boolean);
-  const verdict = rv && rv.verdict;
-  const cls = verdict === "right" ? "ok" : verdict ? "wrong" : "";
-  const img = shot ? `<img class="shot" src="/shots/${shot}" loading="lazy">`
-    : `<div class="noshot">${j.p_hit ? "no screenshot" : "not judged: " + esc((j.decisions[0] || {}).reason || "")}</div>`;
-  const reviewable = !!j.p_hit;
-  const ask = reviewable ? `<div class="ask"><b>Was SeeNot right?</b>
-      <button class="${verdict === "right" ? "sel right" : ""}" data-j="${j.id}" data-v="right">✓ Right</button>
-      <button class="${verdict === "should_block" ? "sel bad" : ""}" data-j="${j.id}" data-v="should_block">Should have popped up</button>
-      <button class="${verdict === "should_not_block" ? "sel bad" : ""}" data-j="${j.id}" data-v="should_not_block">Shouldn't have popped up</button>
-      ${verdict ? `<button data-j="${j.id}" data-v="">clear</button>` : ""}</div>` : "";
-  const kinds = ["feed","single_item","search","work","other"], purposes = ["learn","task","entertain"];
-  const sel = (name, opts, cur, model) => `<select data-j="${j.id}" data-field="${name}"><option value="">${name}: model said ${esc(model)}</option>` +
-      opts.map(o => `<option value="${o}" ${cur === o ? "selected" : ""}>${name} is really: ${o}</option>`).join("") + `</select>`;
-  const probs = o => o ? Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(", ") : "";
-  return `<div class="card ${cls}">
-    <div>${img}</div>
-    <div>
-      <div class="title">${esc(j.screen.window_title || j.screen.app)}</div>
-      <div class="url">${esc(j.screen.app)}${j.screen.url ? " · " + esc(j.screen.url) : ""}</div>
-      <div class="meta">${t0}${t1 !== t0 ? "–" + t1 : ""}${g.items.length > 1 ? ` · judged ${g.items.length}×` : ""}${j.page_kind ? ` · model: ${esc(j.page_kind)}, ${esc(j.purpose)}` : ""}${j.latency_ms ? ` · ${j.latency_ms} ms` : ""} · #${j.id}</div>
-      ${verdictLine(j)}
-      ${ask}
-      ${reviewable ? ruleRows(j, rv) : ""}
-      ${reviewable ? `<details><summary>What the model read, and the rest of its answers</summary>
-        <pre>${esc(JSON.stringify(j.state, null, 2))}</pre>
-        <div class="small">page kind: ${probs(j.page_probs)}<br>purpose: ${probs(j.purpose_probs)}<br>sensitive: ${j.sensitive}
-        <br>came from: ${j.came_from ? esc(j.came_from.page_kind + " · " + j.came_from.key) : "—"} · opened on purpose: ${j.opened_on_purpose ? "yes" : "no"}</div>
-        <div style="margin-top:6px">${sel("page_kind", kinds, rv && rv.page_kind, j.page_kind)} ${sel("purpose", purposes, rv && rv.purpose, j.purpose)}</div>
-        <textarea data-j="${j.id}" data-field="note" rows="1" placeholder="note (optional)">${esc(rv && rv.note || "")}</textarea>
-      </details>` : ""}
-    </div></div>`;
-}
-
-function render() {
-  const gs = groups();
-  const counts = {all: gs.length, intervene:0, allow:0, count:0, none:0, unreviewed:0, wrong:0};
-  for (const g of gs) {
-    const [j, rv] = reviewOf(g); const o = outcome(j);
-    if (o in counts) counts[o]++;
-    if (j.p_hit && !(rv && rv.verdict)) counts.unreviewed++;
-    if (rv && rv.verdict && rv.verdict !== "right") counts.wrong++;
+// One entry per page (URL, or app + title): the latest detailed judgement of it.
+function screens() {
+  const by = new Map();
+  for (const j of D.judgements) {
+    const key = j.screen.url || (j.screen.app + "|" + (j.screen.window_title || ""));
+    const e = by.get(key) || {key, items:[]};
+    e.items.push(j);
+    by.set(key, e);
   }
-  const F = [["all","All"],["intervene","Popped up"],["allow","Allowed"],["count","Counted"],["none","Nothing"],["unreviewed","Not reviewed"],["wrong","Marked wrong"]];
-  $("#filters").innerHTML = F.map(([k, l]) => `<span class="chip ${filter === k ? "on" : ""}" data-f="${k}">${l}<span class="n">${counts[k]}</span></span>`).join(" ");
-  $("#mode").textContent = D.budgets ? "budgets on" : "testing mode: every hit pops up";
-  const shown = gs.filter(g => {
-    const [j, rv] = reviewOf(g);
-    if (filter === "unreviewed" && !(j.p_hit && !(rv && rv.verdict))) return false;
-    if (filter === "wrong" && !(rv && rv.verdict && rv.verdict !== "right")) return false;
-    if (["intervene","allow","count","none"].includes(filter) && outcome(j) !== filter) return false;
-    if (q && !(j.screen.window_title + " " + j.screen.url + " " + j.screen.app).toLowerCase().includes(q)) return false;
-    return true;
+  const out = [];
+  for (const e of by.values()) {
+    const detailed = e.items.filter(j => j.p_hit);
+    e.j = detailed.length ? detailed[detailed.length - 1] : e.items[e.items.length - 1];
+    e.review = null;
+    for (const j of e.items) if (D.reviews[j.id]) e.review = D.reviews[j.id];
+    e.first = e.items[0].at; e.last = e.items[e.items.length - 1].at;
+    e.shot = e.j.shot || (e.items.slice().reverse().find(j => j.shot) || {}).shot;
+    out.push(e);
+  }
+  return out;
+}
+// Similar screens: the same site and kind of page, with ids blanked out
+// (youtube.com/shorts/*, reddit.com/r/*/comments/*), and the same outcome.
+function looksLikeId(seg) { return /\d/.test(seg) || seg.length >= 12 || /^[A-Za-z0-9_-]{8,}$/.test(seg) && /[A-Z]/.test(seg) && /[a-z]/.test(seg); }
+function simKey(e) {
+  const j = e.j;
+  let where = j.screen.app;
+  if (j.screen.url && /^https?:/.test(j.screen.url)) {
+    try {
+      const u = new URL(j.screen.url);
+      const segs = u.pathname.split("/").filter(Boolean).slice(0, 4).map(x => looksLikeId(x) ? "*" : x);
+      // Subreddits, profiles and channels vary but are the same kind of page.
+      if (segs[0] === "r" && segs.length > 1) segs[1] = "*";
+      where = u.hostname.replace(/^www\./, "") + "/" + segs.join("/");
+    } catch (err) { where = j.screen.url; }
+  }
+  const acts = j.decisions.filter(d => d.rule).map(d => d.action + ":" + d.rule).sort().join(",");
+  return where + "|" + outcome(j) + "|" + acts;
+}
+function similarGroups(list) {
+  const by = new Map();
+  for (const e of list) { const k = simKey(e); if (!by.has(k)) by.set(k, []); by.get(k).push(e); }
+  return [...by.values()].map(members => {
+    members.sort((a, b) => (b.last < a.last ? -1 : 1));
+    return {key: members[0].key, rep: members[0], members: members};
   });
-  $("#cards").innerHTML = shown.length ? shown.slice(0, 200).map(card).join("") : `<div class="empty">Nothing here yet. Browse with SeeNot running, then refresh.</div>`;
-  $("#tuning").innerHTML = D.tuning.map(t => `<div class="tune"><span class="rid">${esc(t.rule)}</span> · threshold ${t.threshold}
-      <div class="small">your answers: ${t.yes} yes, ${t.no} no${t.precision != null || t.recall != null ? ` · now precision ${t.precision ?? "–"}, recall ${t.recall ?? "–"}` : ""}</div>
-      ${t.suggested != null ? `<div class="small">suggested <b>${t.suggested}</b> → precision ${t.suggested_precision}, recall ${t.suggested_recall}
-        ${t.suggested !== t.threshold ? `<button data-apply="${t.rule}" data-value="${t.suggested}">Apply</button>` : ""}</div>`
-        : `<div class="small">needs ${3} yes and ${3} no to suggest</div>`}</div>`).join("");
-  $("#excRule").innerHTML = D.rules.map(r => `<option value="${r.id}">${esc(r.id)}</option>`).join("");
-  $("#excList").innerHTML = D.rules.filter(r => r.exceptions.length || D.exceptions.some(e => e.rule === r.id && e.text)).map(r =>
-    `<div class="small" style="margin-top:6px"><b>${esc(r.id)}</b>` +
-    [...r.exceptions, ...D.exceptions.filter(e => e.rule === r.id && e.text).map(e => e.text)].map(x => `<div class="exc">· ${esc(x)}</div>`).join("") + `</div>`).join("");
+}
+const PRIORITY = {intervene:0, allow:1, count:2, none:3, skip:4};
+function queue() {
+  const open = screens()
+    .filter(e => e.j.p_hit && !(e.review && e.review.verdict))
+    .filter(e => quiet || outcome(e.j) !== "none" || nearMiss(e.j) >= 0.5);
+  return similarGroups(open)
+    .sort((a, b) => (PRIORITY[outcome(a.rep.j)] - PRIORITY[outcome(b.rep.j)]) || (b.members.length - a.members.length) ||
+                    (nearMiss(b.rep.j) - nearMiss(a.rep.j)) || (b.rep.last < a.rep.last ? -1 : 1));
 }
 
-document.addEventListener("click", e => {
-  const b = e.target.closest("button, .chip, img.shot");
-  if (!b) return;
-  if (b.matches("img.shot")) { $("#zoom img").src = b.src; $("#zoom").style.display = "flex"; return; }
-  if (b.dataset.f) { filter = b.dataset.f; render(); return; }
-  if (b.dataset.v !== undefined) {
-    const v = b.dataset.v || null;
-    post("/api/review", {id:b.dataset.j, verdict:v}).then(() => toast(v ? "saved" : "cleared"));
-    // A wrong verdict with no rule answers yet: open the rule questions.
+// ---- plain-language sentences -----------------------------------------
+function said(j) {
+  const o = outcome(j);
+  const ds = j.decisions.filter(d => d.action === o);
+  const rules = ds.map(d => "<b>" + esc(d.rule) + "</b>").join(", ");
+  const why = ds.map(d => esc(d.reason)).filter(Boolean).join("; ");
+  if (o === "intervene") return {cls:"intervene", text:"SeeNot popped up: this looks like " + rules, why:"because " + why};
+  if (o === "allow") {
+    let w = why;
+    if (why.includes("opened on purpose") && j.came_from) w += " (you came from a " + esc(j.came_from.page_kind) + " page)";
+    return {cls:"allow", text:"SeeNot let it through: it matched " + rules + " but an exemption applied", why:w};
+  }
+  if (o === "count") return {cls:"count", text:"SeeNot counted time toward " + rules, why:why};
+  if (o === "skip") return {cls:"none", text:"Not judged", why:why};
+  const top = j.p_hit ? Object.entries(j.p_hit).sort((a, b) => b[1] - a[1])[0] : null;
+  return {cls:"none", text:"SeeNot did nothing", why: top ? "closest rule: " + esc(top[0]) + " at " + top[1].toFixed(2) + " (needs " + ((j.thresholds || {})[top[0]]) + ")" : ""};
+}
+function flagged(j) { return new Set(j.decisions.filter(d => d.action === "intervene" || d.action === "count" || d.action === "allow").map(d => d.rule)); }
+
+// ---- review tab -------------------------------------------------------
+function reviewView() {
+  const q = queue();
+  $("#nleft").textContent = q.length ? "(" + q.length + ")" : "";
+  if (!q.length) {
+    return '<div class="done"><h2>Nothing left to review</h2><div class="muted">New screens show up here as you browse.</div>' +
+      '<div style="margin-top:14px"><label class="small"><input type="checkbox" id="quiet" ' + (quiet ? "checked" : "") +
+      '> also review screens where SeeNot stayed quiet</label></div></div>';
+  }
+  if (pos >= q.length) pos = q.length - 1;
+  if (pos < 0) pos = 0;
+  const g = q[pos], e = g.rep, j = e.j, s = said(j);
+  const total = screens().filter(x => x.j.p_hit).length;
+  const reviewed = screens().filter(x => x.review && x.review.verdict).length;
+  const img = e.shot ? '<img src="/shots/' + e.shot + '" alt="">' : '<div class="noshot">no screenshot for this one</div>';
+  const times = e.items.length > 1 ? " · seen " + e.items.length + "× from " + e.first.slice(11, 16) + " to " + e.last.slice(11, 16) : " · " + e.first.slice(11, 16);
+  let h = '<div class="progress"><span class="small muted">' + (pos + 1) + " of " + q.length + " to review</span>" +
+    '<div class="track"><div class="fill" style="width:' + (total ? Math.round(100 * reviewed / total) : 0) + '%"></div></div>' +
+    '<span class="small muted">' + reviewed + " reviewed</span>" +
+    '<label class="small muted"><input type="checkbox" id="quiet" ' + (quiet ? "checked" : "") + "> include quiet screens</label></div>";
+  h += '<div class="one"><div>' + img + '</div><div>';
+  h += '<div class="title">' + esc(j.screen.window_title || j.screen.app) + '</div>';
+  h += '<div class="url">' + esc(j.screen.app) + (j.screen.url ? " · " + esc(j.screen.url) : "") + esc(times) + "</div>";
+  h += '<div class="said ' + s.cls + '">' + s.text + (s.why ? '<span class="why">' + s.why + "</span>" : "") + "</div>";
+  if (g.members.length > 1) {
+    h += '<details class="similar"><summary><b>+' + (g.members.length - 1) + " similar " + (g.members.length === 2 ? "page" : "pages") +
+      "</b> with the same result. Your answer applies to all " + g.members.length + ".</summary><div class=\"small muted\" style=\"margin-top:6px\">" +
+      g.members.slice(0, 25).map(m => "· " + esc(m.j.screen.window_title || m.j.screen.url)).join("<br>") +
+      (g.members.length > 25 ? "<br>…and " + (g.members.length - 25) + " more" : "") + "</div></details>";
+  }
+  if (pick === null) {
+    h += '<div class="q">Was that right?</div><div class="choices">' +
+      '<button class="right" data-act="right">✓ Right <kbd>R</kbd></button>' +
+      '<button class="wrong" data-act="wrong">✗ Wrong <kbd>W</kbd></button>' +
+      '<button data-act="skip">Skip <kbd>S</kbd></button></div>';
+  } else {
+    h += '<div class="q">What is this page, really? <span class="small muted">(pick all that apply)</span></div><div class="chips">';
+    D.rules.forEach((r, i) => {
+      h += '<button class="chip ' + (pick.has(r.id) ? "sel" : "") + '" data-pick="' + r.id + '"><kbd>' + (i + 1) + '</kbd><span><span class="name">' +
+        esc(r.id) + '</span> <span class="desc">' + esc(ruleName(r)) + "</span></span></button>";
+    });
+    h += '<button class="chip none ' + (pick.size === 0 ? "sel" : "") + '" data-pick=""><kbd>0</kbd><span><span class="name">None of these</span> ' +
+      '<span class="desc">SeeNot should leave this page alone</span></span></button></div>' +
+      '<div class="save"><button class="go" data-act="save">Save <kbd>Enter</kbd></button><button data-act="cancel">Cancel <kbd>Esc</kbd></button></div>';
+  }
+  h += '<details id="det" ' + (showDetails ? "open" : "") + '><summary>Details: scores and what the model read <kbd>D</kbd></summary>' + detailsHtml(j) + "</details>";
+  h += '<div class="keys"><kbd>←</kbd> <kbd>→</kbd> previous / next · click the screenshot to enlarge</div>';
+  h += "</div></div>";
+  return h;
+}
+function detailsHtml(j) {
+  if (!j.p_hit) return "";
+  let h = '<table class="scores">';
+  Object.entries(j.p_hit).sort((a, b) => b[1] - a[1]).forEach(([rid, p]) => {
+    const t = (j.thresholds || {})[rid] || 0.5;
+    h += "<tr><td>" + esc(rid) + '</td><td><div class="meter"><div class="f ' + (p >= t ? "over" : "") + '" style="width:' + Math.min(100, p * 100) +
+      '%"></div><div class="t" style="left:' + (t * 100) + '%"></div></div></td><td class="small muted">' + p.toFixed(2) + " / needs " + t + "</td></tr>";
+  });
+  h += "</table>";
+  const probs = o => o ? Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + " " + v.toFixed(2)).join(", ") : "";
+  h += '<div class="small muted" style="margin-top:8px">page: ' + probs(j.page_probs) + "<br>purpose: " + probs(j.purpose_probs) +
+    "<br>came from: " + (j.came_from ? esc(j.came_from.page_kind + " · " + j.came_from.key) : "—") + " · opened on purpose: " + (j.opened_on_purpose ? "yes" : "no") +
+    " · " + j.latency_ms + " ms · #" + j.id + "</div>";
+  h += "<pre>" + esc(JSON.stringify(j.state, null, 2)) + "</pre>";
+  return h;
+}
+async function answer(kind) {
+  const q = queue(); const g = q[pos]; if (!g) return;
+  const e = g.rep, ids = g.members.map(m => m.j.id);
+  if (kind === "skip") { pos++; pick = null; render(); return; }
+  if (kind === "right") {
+    if (await post("/api/review", {ids:ids, verdict:"right"})) { toast("✓ saved" + (ids.length > 1 ? " for " + ids.length + " pages" : "")); pick = null; render(); }
     return;
   }
-  if (b.dataset.rule) {
-    const rv = D.reviews[b.dataset.j] || {rules:{}};
-    const cur = (rv.rules || {})[b.dataset.rule];
-    post("/api/review", {id:b.dataset.j, rules:{[b.dataset.rule]: cur === b.dataset.a ? null : b.dataset.a}});
+  if (kind === "wrong") { pick = new Set(flagged(e.j)); render(); return; }
+  if (kind === "cancel") { pick = null; render(); return; }
+  if (kind === "save") {
+    // You said what the page is: yes for those rules, no for every other.
+    const rules = {};
+    D.rules.forEach(r => { rules[r.id] = pick.has(r.id) ? "yes" : "no"; });
+    const popped = outcome(e.j) === "intervene";
+    const verdict = popped && pick.size === 0 ? "should_not_block" : !popped && pick.size ? "should_block" : "wrong";
+    if (await post("/api/review", {ids:ids, verdict:verdict, rules:rules})) { toast("✗ saved" + (ids.length > 1 ? " for " + ids.length + " pages" : "")); pick = null; render(); }
+  }
+}
+
+// ---- all screens tab ----------------------------------------------------
+function allView() {
+  let es = similarGroups(screens()).map(g => Object.assign({}, g.rep, {similar: g.members.length})).sort((a, b) => (b.last < a.last ? -1 : 1));
+  if (search) es = es.filter(e => (e.j.screen.window_title + " " + e.j.screen.url + " " + e.j.screen.app).toLowerCase().includes(search));
+  if (listFilter !== "all") es = es.filter(e => listFilter === "wrong" ? (e.review && e.review.verdict && e.review.verdict !== "right")
+                                                  : listFilter === "right" ? (e.review && e.review.verdict === "right") : outcome(e.j) === listFilter);
+  const F = [["all","All"],["intervene","Popped up"],["allow","Allowed"],["count","Counted"],["none","Nothing"],["wrong","You said wrong"],["right","You said right"]];
+  let h = '<div class="opts"><input type="search" id="search" placeholder="Search title, URL, app…" value="' + esc(search) + '"> ' +
+    F.map(([k, l]) => '<button data-lf="' + k + '" style="' + (listFilter === k ? "background:#1d1d1f;color:#fff;border-color:#1d1d1f" : "") + '">' + l + "</button>").join(" ") +
+    ' <span class="small muted">' + es.length + " kinds of screen</span></div>";
+  h += '<table class="list">' + es.slice(0, 400).map(e => {
+    const j = e.j, o = outcome(j), rv = e.review;
+    const rules = j.decisions.filter(d => d.rule).map(d => d.rule).join(", ");
+    const you = rv && rv.verdict ? '<span class="tag ' + (rv.verdict === "right" ? "right" : "wrong") + '">you: ' + (rv.verdict === "right" ? "right" : "wrong") + "</span>" : "";
+    return '<tr data-key="' + esc(e.key) + '"><td>' + (e.shot ? '<img src="/shots/' + e.shot + '" loading="lazy" alt="">' : "") + "</td>" +
+      '<td class="small muted">' + e.last.slice(5, 16).replace("T", " ") + "</td>" +
+      '<td class="t"><b>' + esc(j.screen.window_title || j.screen.app) + '</b>' + (e.similar > 1 ? ' <span class="small muted">+' + (e.similar - 1) + " similar</span>" : "") + '<br><span class="small muted">' + esc(j.screen.url || j.screen.app) + "</span></td>" +
+      '<td><span class="tag ' + o + '">' + ({intervene:"popped up", allow:"allowed", count:"counted", none:"nothing", skip:"not judged"})[o] + (rules ? ": " + esc(rules) : "") + "</span></td>" +
+      "<td>" + you + "</td></tr>";
+  }).join("") + "</table>";
+  return h;
+}
+
+// ---- tune tab -----------------------------------------------------------
+function tuneView() {
+  let h = '<div class="panel"><h2>Thresholds, from your answers</h2><div class="small muted" style="margin-bottom:8px">A rule fires when its score reaches the threshold. ' +
+    "Suggestions need at least 3 “yes” and 3 “no” answers for that rule, and aim for 9 in 10 pop-ups being right.</div>";
+  h += '<table class="tune"><tr><th>Rule</th><th>Threshold</th><th>Your answers</th><th>Now</th><th>Suggested</th></tr>';
+  D.tuning.forEach(t => {
+    const r = D.rules.find(x => x.id === t.rule) || {};
+    const now = t.precision == null && t.recall == null ? "—" : "right " + (t.precision == null ? "–" : Math.round(t.precision * 100) + "%") +
+      " of pop-ups, catches " + (t.recall == null ? "–" : Math.round(t.recall * 100) + "%");
+    const sug = t.suggested == null ? '<span class="small muted">not enough answers yet</span>'
+      : "<b>" + t.suggested + '</b> <span class="small muted">→ right ' + Math.round(t.suggested_precision * 100) + "%, catches " + Math.round(t.suggested_recall * 100) + "%</span> " +
+        (t.suggested !== t.threshold ? '<button data-apply="' + t.rule + '" data-value="' + t.suggested + '">Apply</button>' : '<span class="small muted">(current)</span>');
+    h += "<tr><td><b>" + esc(t.rule) + '</b><div class="small muted">' + esc(ruleName(r)) + "</div></td><td>" + t.threshold + "</td><td>" + t.yes + " yes · " + t.no + " no</td><td class=\"small\">" + now + "</td><td>" + sug + "</td></tr>";
+  });
+  h += "</table></div>";
+  h += '<div class="panel"><h2>Exceptions</h2><div class="small muted" style="margin-bottom:8px">In your own words; the model reads them with the rule. ' +
+    "E.g. for videos: “a lecture or conference talk”.</div>" +
+    '<div style="display:flex;gap:8px;align-items:flex-start"><select id="excRule">' + D.rules.map(r => '<option value="' + r.id + '">' + esc(r.id) + "</option>").join("") +
+    '</select><textarea id="excText" rows="1" placeholder="…is fine"></textarea><button data-act="exc">Add</button></div>';
+  D.rules.forEach(r => {
+    const xs = r.exceptions.concat(D.exceptions.filter(e => e.rule === r.id && e.text).map(e => e.text));
+    if (xs.length) h += '<div class="small" style="margin-top:10px"><b>' + esc(r.id) + "</b>" + xs.map(x => '<div class="muted">· ' + esc(x) + "</div>").join("") + "</div>";
+  });
+  h += "</div>";
+  h += '<div class="panel small muted">Rules themselves (wording, budgets, URL patterns) are in rules.toml, via “Open rules…” in the SeeNot menu. The app picks up changes without a restart.</div>';
+  return h;
+}
+
+// ---- render and input ---------------------------------------------------
+function render() {
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.tab === tab));
+  $("#mode").textContent = D.budgets ? "budgets on" : "testing mode: every hit pops up";
+  const n = queue().length;
+  $("#nleft").textContent = n ? "(" + n + ")" : "";
+  $("#view").innerHTML = tab === "review" ? reviewView() : tab === "all" ? allView() : tuneView();
+  const s = $("#search"); if (s && document.activeElement !== s && search) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+}
+document.addEventListener("click", ev => {
+  const t = ev.target;
+  const a = t.closest("nav a"); if (a) { tab = a.dataset.tab; pick = null; render(); return; }
+  if (t.matches(".one img, table.list img")) { $("#zoom img").src = t.src; $("#zoom").style.display = "flex"; ev.stopPropagation(); return; }
+  const b = t.closest("button");
+  if (b && b.dataset.act === "exc") {
+    post("/api/exception", {rule:$("#excRule").value, text:$("#excText").value}).then(ok => { if (ok) { toast("exception added"); render(); } });
     return;
   }
-  if (b.dataset.apply) { post("/api/threshold", {rule:b.dataset.apply, value:b.dataset.value}).then(() => toast("rules.toml updated; the app reloads it")); return; }
-  if (b.id === "excAdd") { post("/api/exception", {rule:$("#excRule").value, text:$("#excText").value}).then(() => { $("#excText").value = ""; toast("exception added"); }); }
+  if (b && b.dataset.act) { answer(b.dataset.act); return; }
+  if (b && b.dataset.pick !== undefined) {
+    if (b.dataset.pick === "") pick = new Set(); else if (pick.has(b.dataset.pick)) pick.delete(b.dataset.pick); else pick.add(b.dataset.pick);
+    render(); return;
+  }
+  if (b && b.dataset.apply) { post("/api/threshold", {rule:b.dataset.apply, value:b.dataset.value}).then(ok => { if (ok) { toast("rules.toml updated"); render(); } }); return; }
+  if (b && b.dataset.lf) { listFilter = b.dataset.lf; render(); return; }
+  const row = t.closest("tr[data-key]");
+  if (row) {
+    // Open that screen in the review view, even if it was already reviewed.
+    const e = screens().find(x => x.key === row.dataset.key);
+    if (e && e.j.p_hit) { reviewOne(e); }
+  }
 });
-document.addEventListener("change", e => {
-  const el = e.target;
-  if (el.dataset.field) post("/api/review", {id:el.dataset.j, [el.dataset.field]: el.value || null});
+function reviewOne(e) {
+  // Put the screen back in the queue by clearing its verdict view-side: show it directly.
+  tab = "review"; pick = null; quiet = true;
+  const find = qq => qq.findIndex(g => g.members.some(m => m.key === e.key));
+  const i = find(queue());
+  if (i >= 0) { pos = i; render(); return; }
+  // Already reviewed: clear the verdict so it can be answered again.
+  post("/api/review", {ids:[e.j.id], verdict:null}).then(() => { pos = Math.max(0, find(queue())); render(); });
+}
+document.addEventListener("change", ev => { if (ev.target.id === "quiet") { quiet = ev.target.checked; pos = 0; render(); } });
+document.addEventListener("input", ev => { if (ev.target.id === "search") { search = ev.target.value.toLowerCase(); render(); } });
+document.addEventListener("toggle", ev => { if (ev.target.id === "det") showDetails = ev.target.open; }, true);
+$("#zoom").onclick = () => { $("#zoom").style.display = "none"; };
+document.addEventListener("keydown", ev => {
+  if (tab !== "review" || ev.target.matches("input, textarea, select") || ev.metaKey || ev.ctrlKey) return;
+  const k = ev.key.toLowerCase();
+  if (pick === null) {
+    if (k === "r") answer("right");
+    else if (k === "w") answer("wrong");
+    else if (k === "s" || k === "arrowright") answer("skip");
+    else if (k === "arrowleft") { pos = Math.max(0, pos - 1); render(); }
+    else if (k === "d") { showDetails = !showDetails; render(); }
+    else return;
+  } else {
+    if (k === "enter") answer("save");
+    else if (k === "escape") answer("cancel");
+    else if (k === "0") { pick = new Set(); render(); }
+    else if (/^[1-9]$/.test(k) && D.rules[+k - 1]) { const id = D.rules[+k - 1].id; if (pick.has(id)) pick.delete(id); else pick.add(id); render(); }
+    else return;
+  }
+  ev.preventDefault();
 });
-$("#zoom").onclick = () => $("#zoom").style.display = "none";
-$("#q").oninput = e => { q = e.target.value.toLowerCase(); render(); };
 load();
-setInterval(() => { if (!document.querySelector("textarea:focus, select:focus, input:focus")) load(); }, 10000);
+setInterval(() => { if (pick === null && !document.querySelector("textarea:focus, input:focus, select:focus")) load(); }, 15000);
 </script></body></html>
 """
