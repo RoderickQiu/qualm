@@ -8,6 +8,7 @@ little visible text) and cuts them to a character budget.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import unicodedata
 from dataclasses import asdict, dataclass, field
@@ -94,6 +95,19 @@ def _clean(value) -> str:
     return " ".join(s.split())[:200]
 
 
+def _title(title: str, app: str) -> str:
+    """The window title without what the browser adds: its own name (the
+    state has the app already), Chrome's "High memory usage - 1.2 GB", whose
+    number changes as you read and looked like a new page to the watcher,
+    and unread counts ("(3) Inbox"), which change without the page changing."""
+    t = re.sub(r" - High memory usage - [\d.]+ [KMG]B", "", title)
+    t = re.sub(r"^\(\d+\+?\) ", "", t)
+    if app:
+        # "Page - Google Chrome", "Page - Google Chrome (Incognito)", "Page - Google Chrome - Work"
+        t = re.sub(rf" [-–—] {re.escape(app)}( \([^)]*\))?( [-–—] [^-–—]+)?$", "", t)
+    return t or title
+
+
 def _walk(window, state: ScreenState) -> None:
     queue = [window]
     seen = 0
@@ -172,7 +186,7 @@ def capture(skip: tuple[str, ...] = ()) -> ScreenState:
         AXUIElementSetAttributeValue(root, "AXManualAccessibility", True)
         window = _ax(root, "AXFocusedWindow")
         if window is not None:
-            state.window_title = _clean(_ax(window, "AXTitle"))
+            state.window_title = _title(_clean(_ax(window, "AXTitle")), state.app)
             state.frame = _frame(window)
             _walk(window, state)
     if not state.url:

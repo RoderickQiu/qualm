@@ -24,6 +24,10 @@ from .decide import Reading
 from .rules import Rule, Settings
 
 LEARN_MIN = 0.6  # P(purpose = learn) needed for the learning exemption
+# P(purpose = entertain) a feed needs before feed_hit fires. Every trial feed
+# scored 0.82 or more; the pages it wrongly fired on in real use (an Apple Ads
+# "recommendations" page, a job board) won the argmax at 0.41-0.55.
+ENTERTAIN_MIN = 0.6
 MAX_TICK_S = 5.0  # longer gaps (sleep, a stalled model call) don't count as usage
 MAX_EXCEPTIONS = 10  # per rule; the newest "Not this one" titles the model reads
 OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge Qualm itself
@@ -44,7 +48,7 @@ def gate(rule: Rule, p: float, state: dict, reading: Reading, settings: Settings
     `rules test`, so a test shows what the rule would really do."""
     url = state.get("url", "")
     pattern = rule.matches_url(url)
-    feed = rule.feed_hit and reading.page_kind == "feed" and reading.purpose == "entertain"
+    feed = rule.feed_hit and reading.page_kind == "feed" and reading.purpose_probs.get("entertain", 0) >= ENTERTAIN_MIN
     if not (pattern or feed or p >= rule.threshold):
         return None
     # A feed of candidates doesn't break "don't show me X"; scrolling it

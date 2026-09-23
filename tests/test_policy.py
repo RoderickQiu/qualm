@@ -141,6 +141,13 @@ def test_entertainment_feed_hits_a_feed_rule_on_any_site(policy):
     assert see(policy, "https://news.example/", reading(page="feed", purpose="task", feeds=0.0)) == []
 
 
+def test_a_feed_only_barely_for_entertainment_is_not_an_entertainment_feed(policy):
+    # Apple Ads' "recommendations" page, in real use: feed 0.39, entertain 0.41.
+    r = reading(page="feed", feeds=0.0)
+    r.purpose_probs = {"entertain": 0.41, "task": 0.37, "learn": 0.22}
+    assert see(policy, "https://app-ads.apple.com/cm/app/1/recommendations", r) == []
+
+
 def test_scrolling_a_feed_counts_toward_a_time_cap(policy):
     assert ("count", "social") in see(policy, "https://weibo.com/", reading(page="feed", social=0.5))
 
