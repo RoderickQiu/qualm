@@ -5,15 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import statistics
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_RULES = "rules.toml"
-DEFAULT_LABELS = "data/labels.jsonl"
-DEFAULT_DATA = "data"
 THRESHOLDS = (0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 0.85)
 
 
@@ -63,7 +61,7 @@ def cmd_ask(args) -> None:
     time.sleep(args.delay)
     state = capture(skip=settings.no_monitor).to_state(args.budget)
     print(json.dumps(state, ensure_ascii=False))
-    _print_reading(ask(make_client(), state, rules, settings.lang, settings.allow))
+    _print_reading(ask(make_client(settings), state, rules, settings.lang, settings.allow))
 
 
 def cmd_watch(args) -> None:
@@ -88,9 +86,14 @@ def cmd_watch(args) -> None:
 def cmd_app(args) -> None:
     import tempfile
 
+    from . import paths
+    from . import setup as s
     from .app import run_app
     from .policy import Policy
 
+    if not args.demo and Path(args.rules) == paths.rules_file() and s.needed():
+        run_app(None, args.rules, args.budget, data_dir=args.data)  # a first run: the setup window, then watching
+        return
     settings, rules = _config(args)
     # The demo must not teach your real rules anything.
     data = tempfile.mkdtemp(prefix="qualm-demo-") if args.demo else args.data
@@ -267,7 +270,7 @@ def cmd_eval(args) -> None:
         records += review_labels(Path(args.data), rules)
     if not records:
         sys.exit(f"no records in {path}" + (" or your reviews" if args.reviews else ""))
-    client = make_client()
+    client = make_client(settings)
     lat = []
     acc = {"page_kind": [0, 0], "purpose": [0, 0], "sensitive": [0, 0]}  # right, labelled
     points: dict[str, list[tuple[float, bool]]] = {r.id: [] for r in rules}
@@ -345,13 +348,13 @@ def cmd_export(args) -> None:
 def cmd_install(args) -> None:
     from .autostart import install
 
-    install(Path(__file__).resolve().parents[2], Path(args.kev_dir).expanduser().resolve(), args.model, args.port, args.bits)
+    install()
 
 
 def cmd_serve(args) -> None:
     from .autostart import serve
 
-    serve(Path(__file__).resolve().parents[2], Path(args.kev_dir).expanduser().resolve(), args.model, args.port, args.bits)
+    serve(Path(args.kev_dir).expanduser().resolve() if args.kev_dir else None, args.model, args.port, args.bits)
 
 
 def cmd_uninstall(args) -> None:
@@ -360,10 +363,93 @@ def cmd_uninstall(args) -> None:
     uninstall()
 
 
+def _ask(prompt: str, default: str) -> str:
+    try:
+        return input(f"{prompt} [{default}]: ").strip() or default
+    except EOFError:
+        return default
+
+
+def cmd_setup(args) -> None:
+    """Where the model runs, the permission, your rules, start at login: each
+    asked in turn (or given as flags, for scripts and agents)."""
+    import getpass
+
+    from . import keychain, paths
+    from . import setup as s
+    from .rules import load_config
+
+    if copied := s.migrate():
+        print(f"Copied {', '.join(copied)} from this folder to {paths.home()}; the originals stay where they are.")
+    print(f"Qualm keeps your rules and data in {paths.home()}\n")
+
+    rec, why = s.recommend()
+    print("Where should the model run?")
+    print("  kev  on this Mac: private, nothing leaves it; about 1 s per reading")
+    print("  jev  hosted by TypeSafe: ~0.2 s and little memory, but the text of each new screen is sent to TypeSafe")
+    print(f"  {why}")
+    backend = args.backend or (_ask("kev or jev", rec) if args.interactive else rec)
+    key = None
+    if backend == "jev":
+        have = keychain.stored()
+        key = args.key or (None if have else os.environ.get("TYPESAFE_API_KEY") or keychain.api_key())
+        if not key and not have:
+            if not args.interactive:
+                sys.exit("the hosted model needs a key: --key, or run setup in a terminal")
+            key = getpass.getpass("TypeSafe API key (from console.typesafe.ai; not shown): ").strip()
+        if key and (err := s.check_key(key)):
+            sys.exit(f"that key didn't work: {err}")
+        print("  the key works" if key else "  using the key in your keychain")
+
+    current = None
+    if paths.rules_file().exists():
+        _, rules = load_config(paths.rules_file())
+        current = [r.id for r in rules if r.enabled]
+    starters = s.starters()
+    on = current if current is not None else [x["id"] for x in starters if x["on"]]
+    if args.rules is not None:
+        picked = [x for x in args.rules.split(",") if x]
+    else:
+        print("\nWhat should Qualm watch for?")
+        for x in starters:
+            print(f"  {x['id']:<11} {x['what'][:80]} ({x['kind']})")
+        picked = [x.strip() for x in _ask("rules to turn on, comma-separated", ",".join(i for i in on if i in {x['id'] for x in starters})).split(",")] \
+            if args.interactive else [i for i in on if i in {x["id"] for x in starters}]
+    unknown = set(picked) - {x["id"] for x in starters}
+    if unknown:
+        sys.exit(f"not a starter rule: {', '.join(sorted(unknown))}")
+    login = args.login if args.login is not None else (_ask("\nStart Qualm at login? y/n", "y").lower().startswith("y")
+                                                          if args.interactive else True)
+    for line in s.apply(s.Choices(backend, picked, login, key)):
+        print(f"✓ {line}")
+    if not s.accessibility():
+        print("\n! Accessibility isn't granted yet: without it Qualm sees only app names.")
+        print("  System Settings > Privacy & Security > Accessibility: turn on Qualm (or, from a terminal, "
+              "your terminal app). `qualm setup --permission` opens it.")
+    if backend == "kev":
+        print("\nThe app starts the local model itself. The first start downloads about 9 GB and saves an 8-bit copy "
+              "(a few minutes); `qualm serve` does it now, in this terminal.")
+    print("\nDone. Start it: open Qualm.app, or `qualm app`." if not login else "\nDone. Qualm is starting.")
+
+
+def cmd_permission(args) -> None:
+    from . import setup as s
+
+    if s.accessibility():
+        print("Accessibility is granted.")
+    else:
+        s.ask_accessibility()
+        print("Opened System Settings > Privacy & Security > Accessibility: turn Qualm on there.")
+
+
 def main() -> None:
     from . import __doc__ as doc
+    from . import paths
     from .state import DEFAULT_CHAR_BUDGET
 
+    # Your rules and data live in ~/Library/Application Support/Qualm (paths.py).
+    DEFAULT_RULES, DEFAULT_DATA = str(paths.rules_file()), str(paths.data_dir())
+    DEFAULT_LABELS = str(Path(DEFAULT_DATA) / "labels.jsonl")
     p = argparse.ArgumentParser(prog="qualm", description=doc, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -417,15 +503,22 @@ def main() -> None:
     sp.add_argument("--data", default=DEFAULT_DATA)
     sp.add_argument("--precision", type=float, default=0.9, help="precision --suggest aims for")
 
-    for name, fn in (("serve", cmd_serve), ("install", cmd_install)):
-        sp = add(name, fn, model=False)
-        sp.add_argument("--kev-dir", default="~/Documents/kev", help="the Kev repo (git clone https://github.com/jaredpalmer/kev)")
-        sp.add_argument("--model", default="jaredpalmer/kev-4b")
-        sp.add_argument("--port", type=int, default=8009)
-        sp.add_argument("--bits", type=int, choices=(8, 16), default=8,
-                        help="8 (default): half the memory, the same answers on the trials; 16: bf16 as trained")
+    sp = add("serve", cmd_serve, model=False)
+    sp.add_argument("--kev-dir", help="run from a Kev checkout instead of the installed runtime (development)")
+    sp.add_argument("--model", default="jaredpalmer/kev-4b")
+    sp.add_argument("--port", type=int, default=8009)
+    sp.add_argument("--bits", type=int, choices=(8, 16), default=8,
+                    help="8 (default): half the memory, the same answers on the trials; 16: bf16 as trained")
+    add("install", cmd_install, model=False)
+    add("uninstall", cmd_uninstall, model=False)
 
-    sp = add("uninstall", cmd_uninstall, model=False)
+    sp = add("setup", cmd_setup, model=False)
+    sp.add_argument("--backend", choices=("kev", "jev"), help="kev: on this Mac; jev: hosted by TypeSafe")
+    sp.add_argument("--key", help="a TypeSafe API key (saved in your keychain)")
+    sp.add_argument("--rules", help="starter rules to turn on, comma-separated (\"\" for none)")
+    sp.add_argument("--login", action=argparse.BooleanOptionalAction, default=None, help="start at login")
+    sp.add_argument("--permission", action="store_true", help="only open the Accessibility settings")
+    sp.set_defaults(interactive=sys.stdin.isatty())
 
     sp = add("export", cmd_export)
     sp.add_argument("--labels", default=DEFAULT_LABELS)
@@ -436,6 +529,8 @@ def main() -> None:
     register(sub, {"rules": DEFAULT_RULES, "data": DEFAULT_DATA})
 
     args = p.parse_args()
+    if args.cmd == "setup" and args.permission:
+        args.fn = cmd_permission
     try:
         args.fn(args)
     except KeyboardInterrupt:

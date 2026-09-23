@@ -107,24 +107,35 @@ flowchart LR
 
 ## Get started
 
-You need a Mac with Apple silicon, at least 16 GB of memory, and [uv](https://docs.astral.sh/uv/).
-It has been tested on macOS 27 (an M5 Pro with 24 GB).
+**The app.** Build it (below) or take a `Qualm.dmg`, drag Qualm to Applications and open it. A short setup
+asks four things:
+
+1. **Where the model runs.** *On this Mac* (Kev-4B, 8-bit): private, about 1 s per check; it uses 6–7 GB of
+   memory while it runs, and the first start downloads about 9 GB, once. *Hosted* (TypeSafe's Jev): about
+   0.2 s and almost no memory, but the text of each new screen is sent to TypeSafe; it needs an API key,
+   which is kept in your keychain. Setup recommends one from what your Mac has free right now, counting
+   what's swapped out.
+2. **Accessibility**, so Qualm can read the front window. Without it, it sees only app names.
+3. **What to watch for**: the starter rules, each on or off.
+4. **Open at login.**
+
+Your rules and data live in `~/Library/Application Support/Qualm`. The app starts the local model itself
+and stops it when you quit. The app is ad-hoc signed, not notarized: on a Mac that didn't build it, the
+first open needs right-click → Open ([packaging/README.md](packaging/README.md)).
+
+**From source** (a Mac with Apple silicon and [uv](https://docs.astral.sh/uv/); tested on macOS 27, M5 Pro, 24 GB):
 
 ```bash
-git clone https://github.com/jaredpalmer/kev ~/Documents/kev   # the local model
 git clone <this repository> qualm && cd qualm
 uv sync
-
-uv run qualm doctor           # what's missing, and how to fix it
-uv run qualm serve            # terminal 1: Kev-4B, 8-bit (the first start downloads it)
-uv run qualm app              # terminal 2: the menu bar app
-uv run qualm app --demo       # just see the pop-up (also: feed, checkin, timesup, focus, prompt)
-uv run qualm install          # later: start both at every login (uninstall to undo)
+uv run qualm setup                     # the same four questions, in the terminal
+uv run qualm app                       # the menu bar app (it starts the model server itself)
+uv run python packaging/build_app.py   # or build dist/Qualm.app and dist/Qualm.dmg
 ```
 
-Give your terminal **Accessibility** permission (System Settings → Privacy & Security). Without
-it, Qualm sees only app names. A rules.toml from before check-ins won't load; `qualm config migrate`
-updates it.
+`qualm doctor` says what's missing and how to fix it. `qualm app --demo` shows the pop-up without
+watching anything (also: feed, checkin, timesup, focus, prompt). A checkout from before September 23
+kept `rules.toml` and `data/` in its own folder: `qualm setup` copies them to Application Support.
 
 | Everyday | |
 |---|---|
@@ -176,19 +187,19 @@ This is the whole policy (thresholds, exemptions, patterns), with each page judg
 
 ## Privacy
 
-- The page text is read, judged and logged on your Mac only. `rules.toml` and `data/` are
-  git-ignored.
+- With the local model, the page text is read, judged and logged on your Mac only, in
+  `~/Library/Application Support/Qualm`.
 - Private pages (logins, payments, banking) are not judged, not logged with content, and no
   screenshot of them is kept. Password managers are never read at all, and you can add any app to that list.
 - The dashboard listens on 127.0.0.1 only, and only the page itself can change settings.
-- There is a hosted option, TypeSafe's Jev (`QUALM_BACKEND=jev`), but it's off by default. It would
-  send screen text to a server.
+- The hosted option, TypeSafe's Jev, is yours to choose in setup, never a fallback: if the local model
+  is down, Qualm doesn't quietly switch to it. With it, the text of each new screen goes to TypeSafe;
+  the log stays on your Mac.
 
 ## Status
 
-This is an early, working prototype: a Python + PyObjC menu bar app, used by its author since September 2026. It
-isn't a signed `.app` yet, so menu bar managers list it as "python3", and after `qualm install`
-macOS asks for permissions for the Python binary itself. It has no OCR fallback, so apps that
+This is an early, working prototype: a Python + PyObjC menu bar app, used by its author since September 2026. The
+`.app` is ad-hoc signed, not notarized, and each rebuild asks for Accessibility again. It has no OCR fallback, so apps that
 draw their text as pixels are judged by their title alone. [HANDOFF.md](HANDOFF.md) has the full
 state, the design decisions and the next steps.
 

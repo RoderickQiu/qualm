@@ -11,6 +11,9 @@ def choice(**probs):
 
 
 class FakeClient:
+    def __init__(self, backend="kev"):
+        self.backend = backend
+
     def system_one(self, state, questions):
         return NS(
             answers={
@@ -35,15 +38,13 @@ def test_shift_keeps_order_and_zero_is_identity():
 
 def test_kev_scores_pass_through(monkeypatch):
     monkeypatch.delenv("QUALM_SHIFT", raising=False)
-    monkeypatch.setenv("QUALM_BACKEND", "kev")
-    r = ask(FakeClient(), {}, [RULE], "en")
+    r = ask(FakeClient("kev"), {}, [RULE], "en")
     assert (r.sensitive, r.rules[0].p_hit) == (0.95, 0.8)
 
 
 def test_jev_scores_move_onto_kevs_scale(monkeypatch):
     monkeypatch.delenv("QUALM_SHIFT", raising=False)
-    monkeypatch.setenv("QUALM_BACKEND", "jev")
-    r = ask(FakeClient(), {}, [RULE], "en")
+    r = ask(FakeClient("jev"), {}, [RULE], "en")
     assert r.sensitive == pytest.approx(shifted(0.95, 2.0)) and r.sensitive < 0.75
     assert r.rules[0].p_hit == pytest.approx(shifted(0.8, 2.0))
     assert (r.page_kind, r.purpose) == ("feed", "entertain")  # choices are the model's own
@@ -51,6 +52,15 @@ def test_jev_scores_move_onto_kevs_scale(monkeypatch):
 
 
 def test_qualm_shift_overrides(monkeypatch):
-    monkeypatch.setenv("QUALM_BACKEND", "jev")
     monkeypatch.setenv("QUALM_SHIFT", "0")
-    assert ask(FakeClient(), {}, [RULE], "en").sensitive == 0.95
+    assert ask(FakeClient("jev"), {}, [RULE], "en").sensitive == 0.95
+
+
+def test_backend_from_settings_and_the_environment_wins(monkeypatch):
+    from qualm.decide import backend
+    from qualm.rules import Settings
+
+    monkeypatch.delenv("QUALM_BACKEND", raising=False)
+    assert backend(Settings()) == "kev" and backend(Settings(backend="jev")) == "jev"
+    monkeypatch.setenv("QUALM_BACKEND", "kev")
+    assert backend(Settings(backend="jev")) == "kev"

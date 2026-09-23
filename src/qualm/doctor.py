@@ -7,99 +7,82 @@ one command or setting that fixes it.
 
 from __future__ import annotations
 
-import json
-import os
 import platform
-import socket
-import subprocess
-import urllib.request
 from pathlib import Path
 
 OK, WARN, FAIL = "ok", "warn", "fail"
 
 
-def _sysctl(name: str) -> str:
-    try:
-        return subprocess.run(["sysctl", "-n", name], capture_output=True, text=True, timeout=3).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
+def checks(rules_path: str, data_dir: str) -> list[dict]:
+    from . import autostart, keychain, localmodel, paths
+    from .decide import backend
+    from .rules import capacity, load_config
 
-
-def _listening(port: int) -> bool:
-    with socket.socket() as s:
-        s.settimeout(0.5)
-        return s.connect_ex(("127.0.0.1", port)) == 0
-
-
-def checks(rules_path: str, data_dir: str, kev_dir: str) -> list[dict]:
     out = []
 
     def add(name, status, found, fix=""):
         out.append({"check": name, "status": status, "found": found, "fix": fix})
 
-    mac = platform.mac_ver()[0]
-    arm = platform.machine() == "arm64"
-    add("Mac with Apple silicon", OK if mac and arm else FAIL, f"macOS {mac or '?'}, {platform.machine()}",
-        "" if arm else "The local model runs on MLX, which needs Apple silicon. Hosted Jev: QUALM_BACKEND=jev.")
-    gb = int(_sysctl("hw.memsize") or 0) / 2**30
-    add("Memory", OK if gb >= 16 else WARN, f"{gb:.0f} GB",
-        "" if gb >= 16 else "Kev-4B at 8 bits needs about 6 GB on top of your apps; 16 GB or more is comfortable.")
-    swap = _sysctl("vm.swapusage")
-    try:
-        used = float(swap.split("used = ")[1].split("M")[0]) / 1024
-    except (IndexError, ValueError):
-        used = 0.0
-    add("Swap", OK if used < 8 else WARN, f"{used:.1f} GB in use",
-        "" if used < 8 else "Heavy swapping makes readings take seconds. Run the model at 8 bits (the default of `qualm serve`) "
-        "and one model server at a time.")
+    add("Where your rules and data live", WARN if paths.legacy() else OK,
+        f"{Path(rules_path).resolve().parent}" + (" (this folder, from before)" if paths.legacy() else ""),
+        f"`qualm setup` copies them to {paths.home()}, where the app looks" if paths.legacy() else "")
 
-    from ApplicationServices import AXIsProcessTrusted
-
-    trusted = bool(AXIsProcessTrusted())
-    add("Accessibility permission", OK if trusted else FAIL,
-        "granted to this terminal" if trusted else "not granted: Qualm can only see app names",
-        "" if trusted else "System Settings > Privacy & Security > Accessibility: add your terminal app (and, after "
-        "`qualm install`, the Python it prints), then restart it.")
-
-    from .rules import capacity, load_config
-
+    settings = None
     try:
         settings, rules = load_config(rules_path)
         cap = capacity(settings, rules)
         add("Rules", OK, f"{rules_path}: {sum(r.enabled for r in rules)} rules on, {cap['peak']} of {cap['limit']} questions per reading")
     except FileNotFoundError:
-        add("Rules", WARN, f"{rules_path} doesn't exist yet", "Any command creates it from the starters: `qualm rules list`.")
+        add("Rules", FAIL, f"{rules_path} doesn't exist yet", "`qualm setup` (or open Qualm.app) picks your rules.")
     except ValueError as e:
         add("Rules", FAIL, str(e)[:200], "`qualm config check` says what to fix; `qualm config undo` goes back one change.")
 
-    kev = Path(kev_dir).expanduser()
-    has_kev = (kev / "kev" / "serve.py").exists()
-    add("Kev (the local model)", OK if has_kev else FAIL, str(kev) if has_kev else f"not found at {kev}",
-        "" if has_kev else f"git clone https://github.com/jaredpalmer/kev {kev}")
+    name = backend(settings)
+    mac = platform.mac_ver()[0]
+    add("Model", OK, "hosted by TypeSafe (Jev): each new screen's text is sent there" if name == "jev"
+        else "on this Mac (Kev-4B, 8-bit): nothing leaves it")
+    if name == "jev":
+        key = keychain.api_key()
+        add("TypeSafe API key", OK if key else FAIL, "found" if key else "none",
+            "" if key else "`qualm setup --backend jev` asks for it and keeps it in your keychain.")
+    else:
+        add("Apple silicon", OK if localmodel.apple_silicon() else FAIL, f"macOS {mac or '?'}, {platform.machine()}",
+            "" if localmodel.apple_silicon() else "The local model needs Apple silicon: `qualm setup --backend jev` for the hosted one.")
+        m = localmodel.memory()
+        add("Memory for the local model", OK if m.fits else WARN, m.summary(),
+            "" if m.fits else "Quit what you don't need, or use the hosted model: `qualm setup --backend jev`.")
+        ready = localmodel.runtime_ready()
+        add("Local model runtime", OK if ready else WARN, str(paths.kev_env()) if ready else "not installed yet",
+            "" if ready else "The app installs it on first start (~1 GB); or `qualm serve` now.")
+        info = localmodel.answering()
+        if info is None:
+            add("Model server", WARN, f"nothing answers on :{localmodel.PORT}",
+                "The app starts it; in a terminal: `qualm serve`.")
+        else:
+            quantized = str(info.get("dtype", "")).startswith("uint")  # mlx reports packed quantized weights as uint32
+            add("Model server", OK if quantized else WARN, f"{info.get('run', '?')}, {'8-bit' if quantized else info.get('dtype', '?')}",
+                "" if quantized else "Serving bf16 takes twice the memory for the same answers: restart it with `qualm serve`.")
 
-    url = os.environ.get("KEV_URL", "http://127.0.0.1:8009")
     try:
-        with urllib.request.urlopen(f"{url}/v1/models", timeout=3) as r:
-            m = (json.loads(r.read()).get("models") or [{}])[0]
-        dtype = m.get("dtype", "")
-        quantized = dtype.startswith("uint")  # mlx reports packed quantized weights as uint32
-        add("Model server", OK if quantized else WARN,
-            f"{m.get('run', '?')} at {url}, {'quantized' if quantized else dtype or '?'}",
-            "" if quantized else "Serving bf16 uses about twice the memory for the same answers: restart it with `qualm serve` (8-bit).")
-    except Exception as e:
-        add("Model server", FAIL, f"nothing answers at {url} ({type(e).__name__})",
-            "`qualm serve` in another terminal, or `qualm install` to start it at login.")
+        from ApplicationServices import AXIsProcessTrusted
+
+        trusted = bool(AXIsProcessTrusted())
+    except ImportError:
+        trusted = False
+    who = "Qualm" if paths.bundle() else "this terminal"
+    add("Accessibility permission", OK if trusted else FAIL,
+        f"granted to {who}" if trusted else "not granted: Qualm can only see app names",
+        "" if trusted else "`qualm setup --permission` opens System Settings > Privacy & Security > Accessibility: "
+        f"turn on {who}.")
 
     from .review import PORT
 
-    add("Qualm app", OK if _listening(PORT) else WARN, "running" if _listening(PORT) else "not running",
-        "" if _listening(PORT) else "`qualm app`, or `qualm install` to start it at login.")
-    agents = Path.home() / "Library" / "LaunchAgents"
-    installed = [p.name for p in (agents / "com.qualm.kev.plist", agents / "com.qualm.app.plist") if p.exists()]
-    add("Start at login", OK if len(installed) == 2 else WARN, ", ".join(installed) or "not installed",
-        "" if len(installed) == 2 else "`qualm install` (undo: `qualm uninstall`).")
+    add("Qualm app", OK if localmodel.listening(PORT) else WARN, "running" if localmodel.listening(PORT) else "not running",
+        "" if localmodel.listening(PORT) else "Open Qualm.app, or `qualm app`.")
+    add("Start at login", OK if autostart.installed() else WARN, "on" if autostart.installed() else "off",
+        "" if autostart.installed() else "`qualm install` (undo: `qualm uninstall`).")
     data = Path(data_dir)
-    add("Your data", OK, f"{data.resolve()}: stays on this Mac, git-ignored" + (" (empty so far)" if not data.exists() else ""))
+    add("Your data", OK, f"{data.resolve()}: stays on this Mac" + (" (empty so far)" if not data.exists() else ""))
     return out
 
 

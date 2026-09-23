@@ -51,8 +51,9 @@ ACCENTS = {
     "timesup": (0.98, 0.80, 0.33),  # soft yellow
     "focus": (0.38, 0.78, 0.98),  # clear blue
     "done": (0.45, 0.85, 0.55),  # green, for "got it"
+    "watch": (0.38, 0.78, 0.98),  # the setup window: the menu bar's eye
 }
-SYMBOLS = {"deny": "hand.raised.fill", "checkin": "timer", "timesup": "hourglass", "focus": "scope", "done": "checkmark"}
+SYMBOLS = {"deny": "hand.raised.fill", "checkin": "timer", "timesup": "hourglass", "focus": "scope", "done": "checkmark", "watch": "eye"}
 
 
 def rgb(r: float, g: float, b: float, a: float = 1.0) -> NSColor:

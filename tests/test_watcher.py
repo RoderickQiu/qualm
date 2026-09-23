@@ -16,7 +16,7 @@ def run(monkeypatch, tmp_path, screens, fail_first=False):
     front = types.SimpleNamespace(processIdentifier=lambda: -1)
     workspace = types.SimpleNamespace(frontmostApplication=lambda: front)
     monkeypatch.setattr(w, "NSWorkspace", types.SimpleNamespace(sharedWorkspace=lambda: workspace))
-    monkeypatch.setattr(w, "make_client", lambda: None)
+    monkeypatch.setattr(w, "make_client", lambda settings=None: types.SimpleNamespace(backend="kev"))
     monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
     watcher = w.Watcher(Policy(Settings(), [], tmp_path), lambda ev: None, interval=0, debounce=0.5, recheck=30, presence=False)
 
@@ -43,6 +43,14 @@ def run(monkeypatch, tmp_path, screens, fail_first=False):
 
 def page(url, text=("hello",)):
     return ScreenState(app="Safari", bundle_id="com.apple.Safari", window_title=url, url=url, text=list(text))
+
+
+def test_qualms_own_windows_are_never_judged(monkeypatch, tmp_path):
+    # Another Qualm's setup window lists Douyin, TikTok and Shorts: judged, it
+    # popped up as short video (2026-09-23). Neither it nor Qualm.app is read.
+    setup = ScreenState(app="Qualm", bundle_id="python3", window_title="Set up Qualm", text=["Short videos: TikTok, Shorts"])
+    app = ScreenState(app="Qualm", bundle_id="com.qualm.app", window_title="Anything", text=["Douyin"])
+    assert run(monkeypatch, tmp_path, [setup] * 5 + [app] * 5) == []
 
 
 def test_an_unchanged_screen_is_asked_once(monkeypatch, tmp_path):
@@ -83,7 +91,7 @@ def judged(monkeypatch, tmp_path, screens, model_down=False):
     front = types.SimpleNamespace(processIdentifier=lambda: -1)
     workspace = types.SimpleNamespace(frontmostApplication=lambda: front)
     monkeypatch.setattr(w, "NSWorkspace", types.SimpleNamespace(sharedWorkspace=lambda: workspace))
-    monkeypatch.setattr(w, "make_client", lambda: None)
+    monkeypatch.setattr(w, "make_client", lambda settings=None: types.SimpleNamespace(backend="kev"))
     monkeypatch.setattr(w, "ask", fake_ask)
     monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
     monkeypatch.setattr(w.time, "sleep", lambda _: clock.__setitem__("t", clock["t"] + 1.0))
@@ -177,7 +185,7 @@ def test_starting_focus_rejudges_the_screen_you_are_on(monkeypatch, tmp_path):
     asked = []
     front = types.SimpleNamespace(processIdentifier=lambda: -1)
     monkeypatch.setattr(w, "NSWorkspace", types.SimpleNamespace(sharedWorkspace=lambda: types.SimpleNamespace(frontmostApplication=lambda: front)))
-    monkeypatch.setattr(w, "make_client", lambda: None)
+    monkeypatch.setattr(w, "make_client", lambda settings=None: types.SimpleNamespace(backend="kev"))
     monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
     watcher = w.Watcher(Policy(Settings(), [], tmp_path), lambda ev: None, interval=0, debounce=0.5, recheck=30, presence=False)
 
@@ -205,7 +213,7 @@ def test_a_check_in_session_on_an_unchanged_page_ends_with_times_up(monkeypatch,
     clock, seen = {"t": 0.0}, []
     front = types.SimpleNamespace(processIdentifier=lambda: -1)
     monkeypatch.setattr(w, "NSWorkspace", types.SimpleNamespace(sharedWorkspace=lambda: types.SimpleNamespace(frontmostApplication=lambda: front)))
-    monkeypatch.setattr(w, "make_client", lambda: None)
+    monkeypatch.setattr(w, "make_client", lambda settings=None: types.SimpleNamespace(backend="kev"))
     monkeypatch.setattr(w, "ask", lambda client, state, rules, lang, allow: Reading(
         0.0, "single_item", {"single_item": 0.9}, "entertain", {"entertain": 0.9}, [RuleVerdict("videos", "in_scope", 0.9, {})], 100.0))
     monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])

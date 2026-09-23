@@ -7,3 +7,6 @@ data/
 rules.toml.bak
 # API keys
 .env
+# App builds (packaging/build_app.py)
+dist/
+build/

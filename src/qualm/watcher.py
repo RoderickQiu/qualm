@@ -19,14 +19,16 @@ from typing import Callable
 
 from AppKit import NSRunningApplication, NSWorkspace
 
-from .decide import Reading, ask, make_client
+from .decide import Reading, ask, backend, make_client
 from .policy import Decision, Policy, host_of
 from .presence import Presence
 from .rules import build_questions, load_config
 from .state import DEFAULT_CHAR_BUDGET, ScreenState, capture
 
 PANEL_TITLE = "Qualm"  # the intervention panel's window title
+SETUP_TITLE = "Set up Qualm"  # the first-run window (onboard.py)
 OLD_PANEL_TITLES = ("SeeNot",)  # before the rename
+BUNDLE_ID = "com.qualm.app"  # Qualm.app
 # What the policy gets when the model can't answer: nothing but the URL, so
 # only a rule's own sites and patterns can hit.
 NO_READING = Reading(sensitive=0.0, page_kind="other", page_probs={}, purpose="", purpose_probs={}, rules=[], latency_ms=0.0)
@@ -151,8 +153,19 @@ class Watcher:
         self._shot_sig, self._shot = s.signature(), name
         return name
 
+    def _client(self, client):
+        """The model client, made again when [settings] backend changes; None
+        while it can't be made (hosted, with no key yet)."""
+        if client is not None and client.backend == backend(self.policy.settings):
+            return client
+        try:
+            return make_client(self.policy.settings)
+        except RuntimeError as e:
+            self.on_status(str(e))
+            return None
+
     def run(self) -> None:
-        client = make_client()
+        client = self._client(None)
         last_sig, changed_at, last_asked = None, 0.0, float("-inf")
         judged_state = None  # what the model read last time
         me = os.getpid()
@@ -170,8 +183,10 @@ class Watcher:
                 time.sleep(self.interval)
                 continue
             s = capture(skip=self.policy.settings.no_monitor)
-            if s.window_title in (PANEL_TITLE, *OLD_PANEL_TITLES):
-                # Another Qualm's panel (a demo, a second copy): never judge ourselves.
+            if s.window_title in (PANEL_TITLE, SETUP_TITLE, *OLD_PANEL_TITLES) or s.bundle_id == BUNDLE_ID:
+                # Another Qualm's window (a demo, the setup window, a second
+                # copy): never judge ourselves. Its text names the very sites
+                # the rules are about (the setup lists Douyin, TikTok, Shorts).
                 time.sleep(self.interval)
                 continue
             if s.signature() != last_sig:
@@ -191,6 +206,7 @@ class Watcher:
             new_text = changed_at <= last_asked and state != judged_state and now - last_asked >= self.recheck
             if new_screen or new_text:
                 last_asked, judged_state = now, state
+                client = self._client(client)
                 if not self._judge(client, s):
                     judged_state = None  # the model didn't answer: ask again next time
             time.sleep(self.interval)
@@ -226,9 +242,12 @@ class Watcher:
             return True
         shot = self._screenshot(s)
         try:
+            if client is None:
+                raise LookupError("no model to ask")
             reading = self._ask(client, state)
-        except Exception as e:  # server down, timeout: say so, keep watching
-            self.on_status(f"model unreachable: {type(e).__name__}")
+        except Exception as e:  # server down, timeout, no key: say so, keep watching
+            if client is not None:
+                self.on_status(f"model unreachable: {type(e).__name__}")
             if not any(r.matches_url(s.url) for r in self.policy.active_rules()):
                 time.sleep(5)
                 return False

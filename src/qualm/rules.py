@@ -179,6 +179,10 @@ class Settings:
     # + the 3 shared ones. Kev-4B on a 24 GB Mac: 13 questions 0.6 s, 28 1.8 s,
     # 53 4.5-18 s, 103 timed out and swapped the machine (HANDOFF, Measured).
     max_questions: int = 25
+    # Where the model runs. "kev": on this Mac, nothing leaves it. "jev":
+    # TypeSafe's hosted model, each new screen's text is sent there. The
+    # environment's QUALM_BACKEND wins over this.
+    backend: str = "kev"
     allow: tuple[AllowClass, ...] = ()  # [[allow]]: kinds of page never flagged
 
     def allowed_url(self, url: str) -> bool:
@@ -188,6 +192,7 @@ class Settings:
 RULE_FIELDS = set(Rule.__dataclass_fields__)
 ALLOW_FIELDS = set(AllowClass.__dataclass_fields__)
 SETTINGS_FIELDS = set(Settings.__dataclass_fields__) - {"allow"}
+BACKENDS = ("kev", "jev")
 ID_RE = r"[a-z][a-z0-9_]*"
 
 
@@ -234,12 +239,15 @@ def parse_config(text: str) -> tuple[Settings, list[Rule]]:
         extensions=int(s.get("extensions", Settings.extensions)),
         block_clicks=bool(s.get("block_clicks", Settings.block_clicks)),
         max_questions=int(s.get("max_questions", Settings.max_questions)),
+        backend=s.get("backend", Settings.backend),
         allow=tuple(_make(AllowClass, ALLOW_FIELDS, "allow", a) for a in data.get("allow", ())),
     )
     for site in settings.allow_sites:
         site_pattern(site)
     if not 0 <= settings.max_wait_s <= 600:
         raise ValueError("[settings] max_wait_s: seconds, between 0 and 600")
+    if settings.backend not in BACKENDS:
+        raise ValueError(f"[settings] backend: one of {', '.join(BACKENDS)} (kev on this Mac, jev hosted by TypeSafe)")
     if not 0 <= settings.extensions <= 5:
         raise ValueError("[settings] extensions: between 0 and 5")
     rules = [_make(Rule, RULE_FIELDS, "rules", r) for r in data.get("rules", ())]

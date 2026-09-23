@@ -1,8 +1,8 @@
 """Ask the model. What to do about the answers is `policy.py`'s job.
 
 The backend is anything that speaks TypeSafe's System One API: a local Kev
-server by default, or TypeSafe's hosted Jev when TYPESAFE_API_KEY is set and
-QUALM_BACKEND=jev.
+server by default, or TypeSafe's hosted Jev: `[settings] backend = "jev"`
+(QUALM_BACKEND overrides), with the key from `qualm setup` (keychain.py).
 
 Every score in a Reading is on Kev's scale, because rules.toml's thresholds
 and the policy's constants were measured on Kev. Jev ranks pages as well but
@@ -17,34 +17,27 @@ import math
 import os
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from typesafe_sdk import TypeSafeClient
 
+from .keychain import api_key
 from .rules import AllowClass, Rule, build_questions
 
-
-ENV_FILE = Path(__file__).resolve().parents[2] / ".env"  # the checkout's, git-ignored
-
-
-def load_env(path: Path = ENV_FILE) -> None:
-    """KEY=value lines from .env into the environment; what's already set wins."""
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        key, sep, value = line.partition("=")
-        if sep and not key.lstrip().startswith("#"):
-            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+KEV_PORT = 8009
 
 
 SHIFT = {"kev": 0.0, "jev": 2.0}  # log-odds; Jev's 1.5-3 all matched Kev on the trial pages
 
 
-def score_shift() -> float:
+def backend(settings=None) -> str:
+    return os.environ.get("QUALM_BACKEND") or getattr(settings, "backend", "kev")
+
+
+def score_shift(name: str) -> float:
     """This backend's shift onto Kev's scale; QUALM_SHIFT overrides."""
     if (s := os.environ.get("QUALM_SHIFT")) is not None:
         return float(s)
-    return SHIFT.get(os.environ.get("QUALM_BACKEND", "kev"), 0.0)
+    return SHIFT.get(name, 0.0)
 
 
 def shifted(p: float, shift: float) -> float:
@@ -54,14 +47,25 @@ def shifted(p: float, shift: float) -> float:
     return 1 / (1 + math.exp(shift - math.log(p / (1 - p))))
 
 
-def make_client() -> TypeSafeClient:
-    load_env()
-    backend = os.environ.get("QUALM_BACKEND", "kev")
-    if backend == "jev":
-        return TypeSafeClient(model=os.environ.get("QUALM_MODEL", "jev-1.13.0"))
-    return TypeSafeClient(
+class Client(TypeSafeClient):
+    """The SDK client, knowing which backend it talks to (for the shift)."""
+
+    def __init__(self, name: str, **kw):
+        super().__init__(**kw)
+        self.backend = name
+
+
+def make_client(settings=None) -> Client:
+    name = backend(settings)
+    if name == "jev":
+        key = api_key()
+        if not key:
+            raise RuntimeError("no TypeSafe API key: `qualm setup` stores one in the keychain")
+        return Client(name, api_key=key, model=os.environ.get("QUALM_MODEL", "jev-1.13.0"))
+    return Client(
+        name,
         api_key=os.environ.get("KEV_API_KEY", "local"),
-        base_url=os.environ.get("KEV_URL", "http://127.0.0.1:8009"),
+        base_url=os.environ.get("KEV_URL", f"http://127.0.0.1:{KEV_PORT}"),
         model=os.environ.get("QUALM_MODEL", "kev-latest"),
         # Kev-4B's first call on MLX takes ~25 s; the SDK default of 10 s times
         # out and retries, queueing duplicate work on a one-request-at-a-time server.
@@ -100,7 +104,7 @@ def ask(client: TypeSafeClient, state: dict, rules: list[Rule], lang: str = "zh"
     t0 = time.perf_counter()
     resp = client.system_one(state=state, questions=build_questions(rules, lang, allow))
     latency = (time.perf_counter() - t0) * 1000
-    a, k = resp.answers, score_shift()
+    a, k = resp.answers, score_shift(getattr(client, "backend", "kev"))
 
     def probs(ans) -> dict[str, float]:
         return {c: shifted(float(p), k) for c, p in ans.probabilities.items()}

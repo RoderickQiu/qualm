@@ -5,7 +5,11 @@ description: Set up, change or check Qualm's rules for the user - what it blocks
 
 # Driving Qualm for the user
 
-Everything goes through `uv run qualm …` in the qualm repo.
+Everything goes through `uv run qualm …` in the qualm repo (or plain
+`qualm …` where Qualm.app added the command). The rules and data live in
+`~/Library/Application Support/Qualm`, whichever folder you run it from;
+`qualm setup --backend kev|jev --rules a,b --no-login` sets it up without
+questions, and `qualm settings set backend=jev` switches the model.
 Always pass `--json` and read the result; errors come back as
 `{"error": {"code", "message"}}` with exit codes 2 invalid, 3 not found,
 4 over the question limit, 5 app or model down. Don't edit rules.toml

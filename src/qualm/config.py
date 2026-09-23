@@ -22,7 +22,7 @@ from pathlib import Path
 
 from .rules import AllowClass, Rule, Settings, parse_config
 
-EXAMPLE = Path(__file__).resolve().parents[2] / "rules.example.toml"
+EXAMPLE = Path(__file__).resolve().parent / "rules.example.toml"
 TABLES = {"rules": Rule, "allow": AllowClass}
 
 

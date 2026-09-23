@@ -3,7 +3,8 @@
 Everything you can personalize is a command. The commands edit the same
 files the app, the pop-up and the review page use: `rules.toml` for rules,
 allow classes and settings, and `data/exceptions.jsonl` for what you taught
-it at runtime. The running app picks up changes without a restart.
+it at runtime, both in `~/Library/Application Support/Qualm`. The running app
+picks up changes without a restart.
 
 The commands are written to be driven by an agent as well as by hand
 (Claude Code picks up `.claude/skills/qualm` in this repo):
@@ -21,8 +22,9 @@ The commands are written to be driven by an agent as well as by hand
 - `schema` lists every field with its type, default and meaning, and
   `status` says whether the app and the model are up.
 
-`rules.toml` is created from the starter rules (`rules.example.toml`) the
-first time any command or the app runs.
+`rules.toml` is created from the starter rules
+(`src/qualm/rules.example.toml`) by `qualm setup` or the app's setup window,
+or the first time any command runs.
 
 ## Rules
 

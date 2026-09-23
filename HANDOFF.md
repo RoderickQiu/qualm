@@ -3,7 +3,7 @@
 Written 2026-09-22; updated the same day after the trials, again after
 the MVP was built, on the night of 2026-09-23 (pop-up, focus sessions,
 dashboard, 8-bit model, `serve` / `doctor`), and on the day of 2026-09-23
-(check-ins replace daily budgets). This is the working
+(check-ins replace daily budgets; then setup, Qualm.app and hosted Jev). This is the working
 document: update the Status and Measured sections as you go. README.md is
 the public face: what it is, screenshots, getting started.
 
@@ -22,9 +22,11 @@ The backend is anything that speaks TypeSafe's System One API:
 - **Kev**, local (default): open-source Jev-style models on Qwen3.5, 0.8B/4B/9B,
   Apache-2.0. It runs through MLX on this Mac, and screen content stays on the
   machine.
-- **Jev**, hosted: `QUALM_BACKEND=jev`. The key is in `.env` (git-ignored,
-  read by `decide.load_env`; the shell wins). Its scores are shifted onto
-  Kev's scale, so the same rules.toml works for both (Measured, "Hosted Jev").
+- **Jev**, hosted: `[settings] backend = "jev"` (picked in setup;
+  QUALM_BACKEND overrides). The key is in the login keychain (`keychain.py`;
+  a checkout's git-ignored `.env` and the environment are read first). Its
+  scores are shifted onto Kev's scale, so the same rules.toml works for both
+  (Measured, "Hosted Jev"). Never a fallback when Kev is down.
 
 ## Status
 
@@ -234,6 +236,67 @@ demo data. Not verified: the live loop in a browser with the new code
 (the user was at the Mac; the demo pop-ups already interrupted them), and a
 day of real use.
 
+### Setup, Qualm.app, the local model managed (day of 2026-09-23)
+
+Asked to make setup easier and more universal. Before: two repos, two
+terminals, everything relative to the checkout, "16 GB" as the bar.
+
+- **Per-user folder** (`paths.py`): rules, data, the model runtime and the
+  8-bit weights in `~/Library/Application Support/Qualm` (QUALM_HOME
+  overrides). A checkout's `rules.toml` in the current directory still wins
+  until `qualm setup` copies it and `data/` over (copies; nothing moved or
+  deleted). `rules.example.toml` and the server script (`kevserve.py`, was
+  experiments/serve_capped.py) moved into the package; the root
+  rules.example.toml is a symlink.
+- **Kev as a managed dependency** (`localmodel.py`): its runtime (Kev pinned
+  to commit 08ab0b8, PyTorch, MLX; 1.0 GB) goes into `kev-env/` via uv, on
+  first use. The app starts the server when nothing answers on :8009 and
+  stops it on Quit; `qualm serve` still runs it in a terminal
+  (`--kev-dir` for a Kev checkout). No second clone, no second terminal;
+  `install` is one LaunchAgent (the app), and removes the old com.qualm.kev.
+- **8-bit weights saved once** (`kevserve.py`, QUALM_MODEL_CACHE): the first
+  start loads bf16, merges, quantizes and writes `models/<ckpt>-<base>-q8g64/`;
+  later starts load that and never hold bf16. Verified on Kev-0.8B: answers
+  from the saved weights are identical to the freshly quantized ones (max
+  |dp| 0 on 15 pages x 11 questions), from both the dev Kev env and the
+  installed runtime. Found and fixed: Kev sizes the pointer head from the
+  embedding's width, which is packed on quantized weights (1024 -> 256).
+  Kev-4B's cache is built on its next start (not done here: the Mac had
+  22 GB in swap and the live server running).
+- **Memory in numbers, not "16 GB"**: the server holds 6.1-7.1 GB
+  (measured); setup compares that with what's free now, counting swapped-out
+  pages as in use. This Mac: 24 GB, ~33 GB in use (22 GB swapped out) ->
+  "not enough: it would swap", hosted recommended.
+- **`qualm setup`** (and flags for scripts: `--backend`, `--key`, `--rules`,
+  `--login/--no-login`, `--permission`), and the **setup window**
+  (`onboard.py`), both through `setup.apply`: where the model runs (cards
+  with the costs; key checked against Jev before saving to the keychain),
+  Accessibility (live status), the starter rules (switches), open at login.
+  The window is a 5-page assistant built with Auto Layout; the first
+  hand-placed version overlapped and was redone. Screenshots of every page,
+  light and dark, with and without a key and permission, and the whole flow
+  driven in code in a throwaway home.
+- **Qualm.app** (`packaging/`, `uv run python packaging/build_app.py`):
+  149 MB, DMG 90 MB, ad-hoc signed, not notarized. A C launcher embeds the
+  bundled CPython, so the process *is* Qualm.app (Accessibility asked for
+  "Qualm", bundle id com.qualm.app); with arguments it acts as `python`,
+  and setup can add a `qualm` shim to ~/.local/bin. The app carries uv to
+  install the local runtime. Verified without opening it: imports, bundle
+  id, `-m qualm doctor`, `codesign --verify --deep --strict`. Not verified:
+  opening it from Finder, and which name the permission prompts show.
+- **`doctor`** checks what the chosen model needs (runtime, memory, server;
+  or the key) instead of a Kev clone.
+- **Never judge Qualm's own windows**: while I rendered the setup window,
+  the user's running (old) app judged it ("Short videos: Douyin, TikTok,
+  YouTube Shorts") and popped up as short video (judgement at 14:25:16 in
+  data/). The watcher now skips "Set up Qualm" and anything from
+  com.qualm.app, with a test. Also from testing: a flow test run from the
+  checkout wrote the user's own rules.toml (legacy wins); restored by hand
+  the same minute (both lines removed, .bak reset), and `setup.apply` now
+  only ever writes the per-user copy.
+
+93 tests.
+
 ### MVP (built after the trials)
 
 `qualm app` is a menu bar app (Python + PyObjC) that watches the
@@ -269,45 +332,40 @@ Not built:
 ## Run it
 
 ```bash
-# 1. Model server (Kev cloned at ~/Documents/kev: git clone https://github.com/jaredpalmer/kev)
-uv run qualm serve              # Kev-4B, 8-bit, MLX cache capped, on :8009; --bits 16 for bf16
-#    = cd ~/Documents/kev && KEV_DTYPE=bf16 KEV_QUANT_BITS=8 uv run --extra serve \
-#        python ~/Documents/qualm/experiments/serve_capped.py --run jaredpalmer/kev-4b --port 8009
-#    Plain `python -m kev.serve` holds 17 GB for 4B and swaps a 24 GB Mac.
-#    Run one server at a time.
+uv run qualm setup              # first time: model, permission, rules, login; copies a checkout's rules and data home
+uv run qualm app                # menu bar + pop-up; starts the local model server itself (or the setup window, first run)
+uv run python packaging/build_app.py   # dist/Qualm.app + dist/Qualm.dmg (packaging/README.md)
 
-# 2. This repo
-cd ~/Documents/qualm
 uv run qualm doctor             # everything checked, with fixes
-uv run qualm rules list         # your rules (rules.toml is created from rules.example.toml if missing)
-uv run qualm rules --help       # add / set / on / off / test / tune …; docs/PERSONALIZE.md
+uv run qualm serve              # the model server in this terminal: Kev-4B, 8-bit, :8009; --bits 16, --kev-dir DIR
+uv run qualm rules list         # your rules; docs/PERSONALIZE.md for the rest
+uv run qualm settings set backend=jev   # switch to hosted Jev (key: `qualm setup --backend jev`)
 uv run qualm probe              # state only, no model; Ctrl-C to stop
 uv run qualm ask --delay 3      # switch windows within 3 s, get one reading
 uv run qualm label              # capture + label one moment -> data/labels.jsonl
 uv run qualm eval               # precision/recall per threshold, latency
-uv run qualm install            # or: start model server + app at every login (uninstall to undo)
-uv run qualm app                # the MVP: menu bar + intervention panel
+uv run qualm install            # start the app at every login (uninstall to undo)
 uv run qualm app --demo         # show the panel once, learn nothing (deny|feed|checkin|timesup|focus|prompt)
 uv run qualm focus write the report --minutes 50   # --stop ends it
 uv run qualm pause 30           # --stop resumes
 uv run qualm watch              # the same loop in the terminal, every judgement printed
-open http://127.0.0.1:8765/              # dashboard (the app serves it; or `review --web`)
+open http://127.0.0.1:8765/     # dashboard (the app serves it; or `review --web`)
 uv run qualm review             # the same judgements in the terminal
-uv run qualm review --fix <id> stocks=no   # answer one from the terminal
 uv run qualm eval --reviews --suggest      # re-ask the model on everything you reviewed
-uv run qualm harvest            # your answers to the panel -> data/labels.jsonl
-uv run qualm eval --suggest     # thresholds from your labels, for rules.toml
-uv run qualm export --lang en   # labels -> Kev training JSONL (data/train.jsonl)
+uv run qualm export --lang en   # labels -> Kev training JSONL
 ```
 
-Env knobs: `KEV_URL`, `KEV_TIMEOUT` (default 30 s; the SDK's 10 s is shorter
-than 4B's warm-up), `QUALM_QUESTION_STYLE=rule|direct` (see Measured),
-`QUALM_BACKEND=jev` (key from `.env`), `QUALM_MODEL`, `QUALM_SHIFT` (log-odds;
-default 0 for Kev, 2 for Jev).
+Everything reads and writes `~/Library/Application Support/Qualm` (rules.toml,
+data/, kev-env/, models/); logs in `~/Library/Logs/Qualm`.
 
-Permissions: the terminal app needs **Accessibility** (System Settings →
-Privacy & Security). It already has it on this Mac. The AppleScript URL
-fallback may trigger an **Automation** prompt per browser the first time.
+Env knobs: `QUALM_HOME`, `QUALM_BACKEND=kev|jev` (over `[settings] backend`),
+`QUALM_MODEL`, `QUALM_SHIFT` (log-odds; default 0 for Kev, 2 for Jev),
+`KEV_URL`, `KEV_TIMEOUT` (default 30 s; the SDK's 10 s is shorter than 4B's
+warm-up), `QUALM_QUESTION_STYLE=rule|direct` (see Measured).
+
+Permissions: **Accessibility** for Qualm.app, or for the terminal when run
+from a checkout. The AppleScript URL fallback may trigger an **Automation**
+prompt per browser the first time.
 
 ## Layout
 
@@ -318,7 +376,14 @@ fallback may trigger an **Automation** prompt per browser the first time.
 | `src/qualm/config.py` | Edits rules.toml in place, one key at a time; refuses a file that wouldn't load |
 | `src/qualm/personalize.py` | The `rules` / `allow` / `except` / `never` / `settings` commands |
 | `src/qualm/trial.py` | `rules test` / `label` / `tune`: a rule on your recent screens, and its threshold from your answers |
-| `src/qualm/decide.py` | TypeSafe SDK client (Kev or Jev) and `ask()` |
+| `src/qualm/decide.py` | TypeSafe SDK client (Kev or Jev, from `[settings] backend`), the score shift, `ask()` |
+| `src/qualm/paths.py` | Where things live: ~/Library/Application Support/Qualm, a checkout's legacy folder, the bundle, uv |
+| `src/qualm/keychain.py` | The TypeSafe key in the login keychain (and .env / the environment first) |
+| `src/qualm/localmodel.py` | The local model: runtime install, server command, the app's managed server, memory in numbers |
+| `src/qualm/kevserve.py` | Kev's server as Qualm runs it (inside the runtime): MLX cache cap, 8-bit, weights saved once |
+| `src/qualm/setup.py` | First run, shared by `qualm setup` and the window: migrate, recommend, apply |
+| `src/qualm/onboard.py` | The setup window: a 5-page assistant (Auto Layout) |
+| `packaging/` | `build_app.py` + `launcher.c`: Qualm.app and the DMG; README on signing |
 | `src/qualm/policy.py` | Reading -> skip / allow / intervene: thresholds, URL patterns, exemptions, "opened on purpose", check-in sessions and their waits, snoozes, re-judging, user exceptions, the decision log |
 | `src/qualm/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
 | `src/qualm/app.py` | Menu bar item (focus, pause), the intervention panel and the focus prompt (PyObjC); serves the dashboard |
@@ -327,9 +392,9 @@ fallback may trigger an **Automation** prompt per browser the first time.
 | `src/qualm/review.py` | Dashboard server (http://127.0.0.1:8765): data, insights, verdicts, thresholds, exceptions, focus/pause, rule on/off |
 | `src/qualm/dashboard.html` | The dashboard page: Today, Review, All screens, Insights, Rules |
 | `src/qualm/doctor.py` | `qualm doctor` |
-| `src/qualm/autostart.py` | `serve`, `install`, `uninstall`: the model server command (8-bit) and the LaunchAgents |
+| `src/qualm/autostart.py` | `serve`, `install`, `uninstall`: the model server in a terminal, the app's LaunchAgent, the `qualm` shim |
 | `src/qualm/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export`, plus the commands above |
-| `rules.example.toml` | The starter rules and allow classes, in English, with measured thresholds and why in `note` |
+| `src/qualm/rules.example.toml` | The starter rules and allow classes, in English, with measured thresholds and why in `note` |
 | `docs/PERSONALIZE.md` | Every personalization command, the question limit, and the test-then-tune loop for a new rule |
 | `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
@@ -641,11 +706,15 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 
 ## Next steps, in order
 
-0. **Switch to the new version.** Restart `qualm app` (the server can stay):
-   the running app predates check-ins, refuses the migrated rules.toml
-   ("not reloaded") and keeps the old behaviour until then. `qualm doctor`
-   says what's running. Then watch the first check-ins and time's-ups in
-   real use: the live loop with the new code isn't verified yet.
+0. **Switch to the new version.** Quit the running `qualm app` (it
+   predates check-ins and setup), then in the checkout: `uv run qualm setup`
+   (copies rules.toml and data/ to Application Support, asks the four
+   questions; on this Mac it recommends hosted, because of swap), then
+   `uv run qualm app`, or open dist/Qualm.app (then grant it Accessibility).
+   With the local model, the first start builds Kev-4B's 8-bit cache: it
+   loads bf16 once more (~11 GB peak), so stop the old server first. Not
+   verified yet: Qualm.app opened from Finder, the permission prompt's name,
+   the app's managed server on a real first start, a day of real use.
 1. **Use the app for a few days, and review.** Browse normally, then go
    through the dashboard's Review tab: "Was Qualm right?" per card; for
    wrong ones, "Is this X?" per rule. Use the menu's "This should have been
@@ -661,8 +730,9 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    or a temporary debug log.)
 4. **Fix what the trials showed is weak:** feeds on sites that look like
    single items (X profiles, Guba lists).
-5. **Save the 8-bit weights once**, so loading doesn't pass through bf16
-   (the 11 GB peak, minutes under swap).
+5. **Publish Kev-4B's 8-bit weights** (with Jared's say), so a first start
+   downloads ~4.5 GB instead of 9 and never loads bf16; and ask whether
+   PyTorch can be optional for MLX serving (it's most of the 1 GB runtime).
 6. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
    your own labels:
    `qualm export --lang en --labels data/labels.jsonl --out train.jsonl`, then
@@ -673,9 +743,9 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
      notifications) plus `NSWorkspace.didActivateApplicationNotification`.
    - Add a Vision OCR fallback (`VNRecognizeTextRequest`, zh-Hans) when the
      Accessibility tree yields no text.
-8. **Ship it:** a signed `Qualm.app` (Swift `MenuBarExtra`, or py2app) with
-   its own name, icon (docs/assets/logo.svg) and permissions; a license (none
-   chosen yet); a public repository (the README is written for one).
+8. **Ship it:** Qualm.app exists (ad-hoc signed); left: a Developer ID and
+   notarization if it's to be shared widely, a license (none chosen yet), a
+   public repository (the README is written for one).
 9. **Graded friction past the pop-up** (InteractOut, CHI 2024: slowing
    interaction beat lockouts): when you keep going back to a page after
    "Take me back", slow it down rather than block harder. In a focus

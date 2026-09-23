@@ -74,6 +74,7 @@ class Controller(NSObject):
     @objc.python_method
     def setup(self, policy: Policy, rules_path: str, demo: str | None = None):
         self.policy, self.rules_path, self.demo = policy, rules_path, demo
+        self.server = None  # the local model server this app started (localmodel.ManagedServer)
         self.current: tuple[Decision, Event] | None = None
         self.last: Event | None = None  # the latest judged screen, for "This should have been blocked"
         # The panel: "ask" -> "why" (what do you need it for) -> "done" (a short
@@ -168,7 +169,19 @@ class Controller(NSObject):
         self.usage_line.setTitle_(usage)
         self.usage_line.setHidden_(not usage)
 
+    @objc.python_method
+    def ensure_server(self):
+        """With the model on this Mac, start its server unless something answers already."""
+        from .decide import backend
+        from .localmodel import ManagedServer
+
+        if self.demo or self.server is not None or backend(self.policy.settings) != "kev":
+            return
+        self.server = ManagedServer(lambda text: AppHelper.callAfter(self.set_status, text))
+        self.server.start()
+
     def tick_(self, timer):
+        self.ensure_server()  # also after [settings] backend changes to kev
         self._refresh()
         if self.dimmer.windows and not self.panel.isVisible():
             self.dimmer.hide()  # never leave the screen dimmed (and, blocking, unclickable) without a pop-up
@@ -190,6 +203,8 @@ class Controller(NSObject):
 
     @objc.python_method
     def set_status(self, text):
+        if text.startswith("model unreachable") and self.server and not self.server.ready.is_set():
+            return  # still loading: its own status says so
         self.status_line.setTitle_(text[:80])
         self._refresh()
 
@@ -238,6 +253,8 @@ class Controller(NSObject):
 
     def quit_(self, sender):
         self.policy.usage.save()
+        if self.server:
+            self.server.stop()
         NSApp.terminate_(self)
 
     # -- events from the watcher (main thread) --------------------------------
@@ -459,7 +476,7 @@ class Controller(NSObject):
 
         rule = next((r for r in self.policy.rules if r.id == d.rule), None)  # with the exceptions the model saw
         try:
-            text = evidence(make_client(), ev.state, rule, self.policy.settings.lang) if rule else ""
+            text = evidence(make_client(self.policy.settings), ev.state, rule, self.policy.settings.lang) if rule else ""
         except Exception:
             text = ""
         AppHelper.callAfter(self._set_evidence, d, text)
@@ -733,39 +750,59 @@ def _demo(ctrl: Controller, policy: Policy, kind: str) -> None:
     AppHelper.callLater(0.5, ctrl.handle, Event(screen, {}, reading if kind != "feed" else None, [d]))
 
 
-def run_app(policy: Policy, rules_path: str, budget: int, demo: str | None = None, review: bool = True) -> None:
+def run_app(policy: Policy | None, rules_path: str, budget: int, demo: str | None = None, review: bool = True,
+            data_dir: str | None = None) -> None:
+    """The app. With no policy yet (a first run), the setup window comes
+    first, and the rules it writes are loaded when it's done."""
+    import atexit
+
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    ctrl = Controller.alloc().init().setup(policy, str(Path(rules_path).resolve()), demo)
+    keep = []  # the controller and the setup window live as long as the app
 
-    def on_event(ev: Event):
-        print(f"[{datetime.now():%H:%M:%S}] {describe(ev)}", flush=True)
-        AppHelper.callAfter(ctrl.handle, ev)
+    def start(policy: Policy):
+        ctrl = Controller.alloc().init().setup(policy, str(Path(rules_path).resolve()), demo)
+        keep.append(ctrl)
+        atexit.register(lambda: ctrl.server and ctrl.server.stop())
 
-    def on_status(text: str):
-        print(f"  [{text}]", flush=True)
-        AppHelper.callAfter(ctrl.set_status, text)
+        def on_event(ev: Event):
+            print(f"[{datetime.now():%H:%M:%S}] {describe(ev)}", flush=True)
+            AppHelper.callAfter(ctrl.handle, ev)
 
-    from ApplicationServices import AXIsProcessTrusted
+        def on_status(text: str):
+            print(f"  [{text}]", flush=True)
+            AppHelper.callAfter(ctrl.set_status, text)
 
-    if not AXIsProcessTrusted():
-        print("! No Accessibility permission: Qualm can only see app names. Grant it in System Settings >"
-              " Privacy & Security > Accessibility, then restart.", flush=True)
-        AppHelper.callAfter(ctrl.set_status, "needs Accessibility permission (see System Settings)")
-    print("Qualm watching. Ctrl-C to stop.", flush=True)
+        from ApplicationServices import AXIsProcessTrusted
 
-    if demo:
-        _demo(ctrl, policy, demo)
+        if not AXIsProcessTrusted():
+            print("! No Accessibility permission: Qualm can only see app names. Grant it in System Settings >"
+                  " Privacy & Security > Accessibility, then restart.", flush=True)
+            AppHelper.callAfter(ctrl.set_status, "needs Accessibility permission (see System Settings)")
+        print("Qualm watching. Ctrl-C to stop.", flush=True)
+
+        if demo:
+            _demo(ctrl, policy, demo)
+        else:
+            ctrl.ensure_server()
+            watcher = Watcher(policy, on_event, on_status, budget=budget, rules_path=rules_path)
+            threading.Thread(target=watcher.run, daemon=True).start()
+        if review:
+            from .review import PORT, start_server
+
+            try:
+                server = start_server(policy.data_dir, Path(rules_path), PORT)
+                threading.Thread(target=server.serve_forever, daemon=True).start()
+                print(f"dashboard: http://127.0.0.1:{PORT}/", flush=True)
+            except OSError:
+                print(f"dashboard: port {PORT} is taken; `qualm review --web` is probably running", flush=True)
+
+    if policy is not None:
+        start(policy)
     else:
-        watcher = Watcher(policy, on_event, on_status, budget=budget, rules_path=rules_path)
-        threading.Thread(target=watcher.run, daemon=True).start()
-    if review:
-        from .review import PORT, start_server
+        from .onboard import Onboarding
+        from .rules import load_config
 
-        try:
-            server = start_server(policy.data_dir, Path(rules_path), PORT)
-            threading.Thread(target=server.serve_forever, daemon=True).start()
-            print(f"dashboard: http://127.0.0.1:{PORT}/", flush=True)
-        except OSError:
-            print(f"dashboard: port {PORT} is taken; `qualm review --web` is probably running", flush=True)
+        keep.append(Onboarding.alloc().init().setup(
+            lambda: start(Policy(*load_config(rules_path), data_dir or "data"))))
     AppHelper.runEventLoop(installInterrupt=True)

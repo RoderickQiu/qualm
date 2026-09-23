@@ -37,7 +37,7 @@ def main():
     settings, rules = load_config("rules.example.toml")
     events = []
     w = Watcher(Policy(settings, rules, tempfile.mkdtemp()), events.append)
-    client = make_client()
+    client = make_client(settings)
     for what, url in STEPS:
         w._judge(client, ScreenState(**screens[url]))
         ev = events[-1]

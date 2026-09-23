@@ -1,0 +1,122 @@
+# Qualm's starter rules. The app copies this to rules.toml (git-ignored)
+# the first time it runs; from then on that file is yours.
+#
+# Easiest from a terminal, and what an agent should use (every command has
+# --help; the ones that show something have --json):
+#   qualm rules list                 every rule in a sentence
+#   qualm rules add NAME --what "..."  a rule in your own words
+#   qualm rules test NAME            what it would do on your recent screens
+#   qualm rules set NAME key=value   change anything below
+# docs/PERSONALIZE.md walks through it; docs/POLICY.md explains the defaults:
+# block the mechanism (endless short video, feeds, live rooms), not the site.
+#
+# Editing by hand is fine too; the app reloads the file on save. Per rule:
+#   kind              "deny" (step in at once) or "check_in" (ask what for and for
+#                     how long on arrival; step in when that time is up)
+#   description       what the rule is about, in your words; the model reads this
+#   threshold         the model's score that counts as a hit; `rules tune` sets it
+#   sites             always a hit here: "douyin.com", "youtube.com/shorts",
+#                     "youtube.com/" (a trailing slash alone: the home page only)
+#   patterns          the same as URL regexes, for what sites can't say
+#   when              only at these times: "mon-fri 09:00-18:00", "weekends"; empty: always
+#   enabled           false: kept, but never asked and never fires
+#   target            "content" (the opened item; feeds never hit) or "page" (feeds can hit)
+#   feed_hit          any page the model reads as an entertainment feed hits
+#   allow_learning    lectures, tutorials and docs never hit this rule
+#   allow_intentional one item opened from search, a work app or a chat link is fine
+#   exceptions        things that look like a hit but are fine; "Not this one" adds more
+#   note              why it's set this way, for whoever reads this next
+
+[settings]
+# Check-ins: the wait before a session starts doubles with each session today
+# (the first is free) and again when you come back within 20 minutes of one
+# ending, up to max_wait_s. "5 more" when the time is up: `extensions` per session.
+max_wait_s = 60
+extensions = 1
+# Never read at all: password managers. Add chat apps or banking apps if
+# you'd rather they're never read either.
+no_monitor = [
+    "com.apple.keychainaccess",
+    "com.1password.1password",
+    "com.agilebits.onepassword7",
+    "com.bitwarden.desktop",
+]
+# Never judged. Clicking a link from these counts as opening it on purpose.
+allow_sites = ["github.com", "wikipedia.org", "arxiv.org", "stackoverflow.com", "sec.gov"]
+allow_urls = ["^https?://(docs|developer|devdocs)\\."]
+
+# Kinds of page no rule ever fires on, in your words. Each is one yes/no
+# question per reading; if the model says yes, the page is left alone even
+# when a rule scores high (a rule's own sites and patterns still apply).
+
+[[allow]]
+id = "shopping"
+description = "an online store: a product page, product listing, shopping cart or checkout"
+threshold = 0.35
+note = "Stores scored 0.42-0.92; every other trial page, stock pages included, 0.18 or less."
+
+[[allow]]
+id = "music"
+description = "a music player or music streaming site: songs, playlists, albums, radio"
+threshold = 0.5
+note = "Music players scored 0.96-0.97; every trial page (YouTube, Bilibili, Douyin included) 0.16 or less. Known music sites and apps are allowed without asking the model."
+sites = ["music.youtube.com", "open.spotify.com", "music.apple.com", "music.163.com", "y.qq.com", "kugou.com", "soundcloud.com"]
+apps = ["com.netease.163music", "com.spotify.client", "com.apple.Music", "com.tencent.QQMusicMac", "com.kugou.mac"]
+
+[[rules]]
+id = "shortvideo"
+kind = "deny"
+description = "short videos made for endless swiping, such as Douyin, Kuaishou, TikTok, YouTube Shorts, Instagram Reels"
+threshold = 0.15
+sites = ["youtube.com/shorts", "douyin.com", "tiktok.com", "kuaishou.com", "instagram.com/reel", "instagram.com/reels"]
+allow_intentional = true
+note = "A video someone sent you is fine; the next one in the scroll is not. Trials: precision 0.93, recall 1.00; held-out sites 1.00 / 1.00."
+
+[[rules]]
+id = "feeds"
+kind = "deny"
+target = "page"
+description = "algorithmic recommendation feeds, timelines and trending lists, such as the YouTube or Bilibili home page, Weibo hot search, Xiaohongshu explore, X For You, Reddit r/popular"
+threshold = 0.3
+sites = [
+    "youtube.com/",
+    "bilibili.com/",
+    "s.weibo.com/top",
+    "x.com/home",
+    "twitter.com/home",
+    "reddit.com/r/popular",
+]
+# The explore feed itself; a note opened from it (/explore/<id>) is a single post.
+patterns = ["^https?://(www\\.)?xiaohongshu\\.com/explore/?([?#]|$)"]
+feed_hit = true
+note = "Any page the model reads as an entertainment feed counts, on any site. Trials: precision 1.00, recall 0.47 from the score alone; feed_hit adds more."
+
+[[rules]]
+id = "livestream"
+kind = "deny"
+description = "entertainment livestreams: game streams, streamer channels, live shopping, such as Bilibili Live, Douyu, Huya, Twitch"
+threshold = 0.5
+patterns = [
+    "live\\.bilibili\\.com/\\d+",
+    "douyu\\.com/\\d+",
+    "huya\\.com/\\w+",
+    "twitch\\.tv/(?!directory|search|settings)[A-Za-z0-9_]+/?$",
+]
+allow_learning = true
+note = "A lecture or launch event streamed live is fine. Twitch pages carry no 'live' text in the Accessibility tree, so the model misses them; the patterns catch live rooms. Trials: 1.00 / 1.00, but only 8 live rooms on 2 sites."
+
+[[rules]]
+id = "videos"
+kind = "check_in"
+description = "watching entertainment videos on Bilibili or YouTube: comedy, gaming, variety shows, film clips"
+threshold = 0.25
+allow_learning = true
+note = "Courses, lectures, tutorials and talks never count. Trials: 1.00 / 1.00, but only 6 clips, all Bilibili: weak evidence."
+
+[[rules]]
+id = "social"
+kind = "check_in"
+description = "browsing social media, such as Xiaohongshu, Weibo, X/Twitter, Jike, Reddit"
+threshold = 0.3
+allow_intentional = true
+note = "The Reddit thread Google found for your error message doesn't count. Trials: precision 0.90, recall 0.95; held-out sites 0.90 / 0.90."

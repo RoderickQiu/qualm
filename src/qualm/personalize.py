@@ -54,6 +54,7 @@ def config_path(path: str) -> Config:
     if not p.exists():
         if SESSION["dry_run"]:
             _fail(f"{p} doesn't exist yet; run once without --dry-run", "not_found")
+        p.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(EXAMPLE, p)
         print(f"created {p} from the starter rules (rules.example.toml)", file=sys.stderr)
     for c in SESSION["configs"]:
@@ -283,7 +284,7 @@ def rules_test(args) -> None:
             print(f"\r  asking the model: {n}/{total}", end="" if n < total else "\n", file=sys.stderr, flush=True)
 
     try:
-        rows = run(make_client(), data, r, settings, last=args.last, on_progress=progress)
+        rows = run(make_client(settings), data, r, settings, last=args.last, on_progress=progress)
     except Exception as e:  # the server is down or slow
         _fail(f"couldn't ask the model ({type(e).__name__}: {e}). Is the Kev server running? `qualm status`", "unreachable")
     if not rows:
@@ -559,7 +560,7 @@ def doctor(args) -> None:
     """Everything Qualm needs, checked; exit 2 if something must be fixed."""
     from .doctor import FAIL, checks, report
 
-    results = checks(args.rules, args.data, args.kev_dir)
+    results = checks(args.rules, args.data)
     _out(args, {"checks": results}, report(results))
     if any(r["status"] == FAIL for r in results):
         raise SystemExit(EXIT["invalid"])
@@ -741,6 +742,8 @@ FIELDS = {
                         "false: you can click through the dim (also in the menu bar)",
         "max_questions": "questions one reading may ask (rules on at once + allow classes + 3 shared); "
                          "more slows the model sharply (25 is ~1.5 s on Kev-4B, 24 GB Mac)",
+        "backend": "where the model runs: kev (on this Mac; nothing leaves it) or jev (TypeSafe's hosted model: "
+                   "~0.2 s, little memory, each new screen's text is sent to TypeSafe; key via `qualm setup`)",
     },
 }
 
@@ -896,11 +899,11 @@ def register(sub, defaults: dict) -> None:
         "daily budgets are removed", changes=True)
 
     sp = sub.add_parser("doctor", help="is everything Qualm needs in place? each problem with its fix",
-                        description="Checks the Mac, memory and swap, Accessibility, rules.toml, the Kev repo, the model "
-                                    "server, the app and start-at-login, and says how to fix what isn't right.")
+                        description="Checks where your rules and data live, the model (local: the runtime, memory to "
+                                    "spare, the server; hosted: the key), Accessibility, rules.toml, the app and "
+                                    "start-at-login, and says how to fix what isn't right.")
     sp.add_argument("--rules", default=defaults["rules"])
     sp.add_argument("--data", default=defaults["data"])
-    sp.add_argument("--kev-dir", default="~/Documents/kev")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(fn=run, cmd_fn=doctor)
     sp = sub.add_parser("focus", help="a focus session: say what you're here to do; every rule steps in at once until it ends",
