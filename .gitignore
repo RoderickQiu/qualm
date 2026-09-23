@@ -5,3 +5,5 @@ __pycache__/
 rules.toml
 data/
 rules.toml.bak
+# API keys
+.env

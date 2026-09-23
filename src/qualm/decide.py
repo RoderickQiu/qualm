@@ -3,20 +3,59 @@
 The backend is anything that speaks TypeSafe's System One API: a local Kev
 server by default, or TypeSafe's hosted Jev when TYPESAFE_API_KEY is set and
 QUALM_BACKEND=jev.
+
+Every score in a Reading is on Kev's scale, because rules.toml's thresholds
+and the policy's constants were measured on Kev. Jev ranks pages as well but
+answers every question more confidently (HANDOFF, "Hosted Jev"), so each of
+its probabilities is moved down by one shift in log-odds before anything
+compares it. `raw` keeps the answers as the model gave them.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from typesafe_sdk import TypeSafeClient
 
 from .rules import AllowClass, Rule, build_questions
 
 
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"  # the checkout's, git-ignored
+
+
+def load_env(path: Path = ENV_FILE) -> None:
+    """KEY=value lines from .env into the environment; what's already set wins."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and not key.lstrip().startswith("#"):
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+SHIFT = {"kev": 0.0, "jev": 2.0}  # log-odds; Jev's 1.5-3 all matched Kev on the trial pages
+
+
+def score_shift() -> float:
+    """This backend's shift onto Kev's scale; QUALM_SHIFT overrides."""
+    if (s := os.environ.get("QUALM_SHIFT")) is not None:
+        return float(s)
+    return SHIFT.get(os.environ.get("QUALM_BACKEND", "kev"), 0.0)
+
+
+def shifted(p: float, shift: float) -> float:
+    if not shift:
+        return p
+    p = min(max(p, 1e-6), 1 - 1e-6)
+    return 1 / (1 + math.exp(shift - math.log(p / (1 - p))))
+
+
 def make_client() -> TypeSafeClient:
+    load_env()
     backend = os.environ.get("QUALM_BACKEND", "kev")
     if backend == "jev":
         return TypeSafeClient(model=os.environ.get("QUALM_MODEL", "jev-1.13.0"))
@@ -61,23 +100,25 @@ def ask(client: TypeSafeClient, state: dict, rules: list[Rule], lang: str = "zh"
     t0 = time.perf_counter()
     resp = client.system_one(state=state, questions=build_questions(rules, lang, allow))
     latency = (time.perf_counter() - t0) * 1000
-    a = resp.answers
+    a, k = resp.answers, score_shift()
+
+    def probs(ans) -> dict[str, float]:
+        return {c: shifted(float(p), k) for c, p in ans.probabilities.items()}
+
     verdicts = []
     for rule in rules:
-        ans = a[f"rule_{rule.id}"]
+        ans = probs(a[f"rule_{rule.id}"])
         hit = "violates" if rule.kind == "deny" else "in_scope"
-        verdicts.append(
-            RuleVerdict(rule.id, ans.choice, float(ans.probabilities.get(hit, 0.0)), dict(ans.probabilities))
-        )
+        verdicts.append(RuleVerdict(rule.id, a[f"rule_{rule.id}"].choice, ans.get(hit, 0.0), ans))
     return Reading(
-        sensitive=float(a["sensitive"].noul),
+        sensitive=shifted(float(a["sensitive"].noul), k),
         page_kind=a["page_kind"].choice,
-        page_probs=dict(a["page_kind"].probabilities),
+        page_probs=probs(a["page_kind"]),
         purpose=a["purpose"].choice,
-        purpose_probs=dict(a["purpose"].probabilities),
+        purpose_probs=probs(a["purpose"]),
         rules=verdicts,
         latency_ms=latency,
         input_tokens=getattr(resp.usage, "input_tokens", None),
         raw=resp.model_dump(mode="json"),
-        allow={c.id: float(a[f"allow_{c.id}"].noul) for c in allow if c.enabled},
+        allow={c.id: shifted(float(a[f"allow_{c.id}"].noul), k) for c in allow if c.enabled},
     )

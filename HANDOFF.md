@@ -22,8 +22,9 @@ The backend is anything that speaks TypeSafe's System One API:
 - **Kev**, local (default): open-source Jev-style models on Qwen3.5, 0.8B/4B/9B,
   Apache-2.0. It runs through MLX on this Mac, and screen content stays on the
   machine.
-- **Jev**, hosted: set `QUALM_BACKEND=jev` and `TYPESAFE_API_KEY`. There is no
-  key on this machine yet; early access is waitlisted at console.typesafe.ai.
+- **Jev**, hosted: `QUALM_BACKEND=jev`. The key is in `.env` (git-ignored,
+  read by `decide.load_env`; the shell wins). Its scores are shifted onto
+  Kev's scale, so the same rules.toml works for both (Measured, "Hosted Jev").
 
 ## Status
 
@@ -300,7 +301,9 @@ uv run qualm export --lang en   # labels -> Kev training JSONL (data/train.jsonl
 ```
 
 Env knobs: `KEV_URL`, `KEV_TIMEOUT` (default 30 s; the SDK's 10 s is shorter
-than 4B's warm-up), `QUALM_QUESTION_STYLE=rule|direct` (see Measured).
+than 4B's warm-up), `QUALM_QUESTION_STYLE=rule|direct` (see Measured),
+`QUALM_BACKEND=jev` (key from `.env`), `QUALM_MODEL`, `QUALM_SHIFT` (log-odds;
+default 0 for Kev, 2 for Jev).
 
 Permissions: the terminal app needs **Accessibility** (System Settings →
 Privacy & Security). It already has it on this Mac. The AppleScript URL
@@ -569,6 +572,56 @@ faster on a Mac with memory free; it's faster on this one because it
 doesn't swap. Latency here ran with the live bf16 server resident, so it
 understates 8-bit. 4-bit moves social and videos scores enough to lose
 real hits; not offered. Warm, alone: 0.58 s for 10 questions (8-bit).
+
+### Hosted Jev vs local Kev (2026-09-23, 119 trial pages, current rules, English)
+
+`QUALM_BACKEND=jev`, model `jev-1.13.0` (`jev-latest` resolves to it but
+answered in 3.5 s, not 0.2). Dumps: data/runs/{q8-en,jev-en}.jsonl; only
+the scripted trial pages were sent, none of your own screens.
+
+| | Kev-4B 8-bit, local | Jev 1.13.0, hosted |
+|---|---|---|
+| latency p50 / p95 | 1.1 / 1.6 s | 0.18-0.20 s / 0.8 s (one run had spikes to 6 s) |
+| AUC shortvideo / feeds / livestream / videos / social | 1.00 / 0.85 / 1.00 / 1.00 / 1.00 | 1.00 / **0.92** / 1.00 / 1.00 / 1.00 |
+| held-out sites P / R: feeds, livestream | 1.00 / 0.33, 1.00 / 0.50 | 1.00 / 0.53, 1.00 / 0.88 |
+| page_kind / purpose / sensitive accuracy | 0.82 / 0.92 / 0.98 | 0.83 / 0.95 / **0.80** |
+| scores on hits | low (thresholds 0.15-0.5) | confident (a Short: violates 0.97) |
+
+Jev ranks as well or better, but **run with Kev's settings the policy
+falls apart**: feeds P/R 0.23 / 0.20, social 0.33 / 0.10. The cause is
+`sensitive`: both models separate private pages equally well (AUC 0.994),
+but Jev's scores run high. Every private page scores 0.89+, and so do
+public ones (x.com/NASA 0.97, Bilibili home 0.85, Instagram 0.87), so the
+policy's fixed `sensitive >= 0.5` skips feeds and profiles. It is Kev's
+calibration problem in reverse.
+
+**The fix: one shift for everything.** Jev's probabilities are moved down
+by 2.0 in log-odds (`decide.SHIFT`, applied in `ask()` to every score;
+`raw` keeps the model's own) so they sit on Kev's scale, and rules.toml,
+`sensitive >= 0.5`, `ENTERTAIN_MIN` and the allow classes stay as they
+are. Measured live through `ask()` (data/runs/jev-shift2-en.jsonl), with
+the shipped rules unchanged:
+
+| Policy P / R | Kev-4B 8-bit | Jev, shift 2 |
+|---|---|---|
+| shortvideo | 1.00 / 1.00 | 1.00 / 1.00 |
+| feeds | 1.00 / 0.60 | 1.00 / **0.67** |
+| livestream | 1.00 / 1.00 | 1.00 / 1.00 |
+| videos | 1.00 / 0.83 | 1.00 / **1.00** |
+| social | 0.88 / 0.70 | **1.00** / 0.70 |
+| sensitive accuracy | 0.98 | 0.97 |
+
+Without URL patterns only shortvideo changes (recall 0.77, as with Kev).
+Any shift from 1.5 to 3 gives nearly the same table (2-2.25 best), so
+it's not a knife-edge fit; it's still one parameter fitted on 119 easy
+pages. Per-rule thresholds tuned for Jev instead did worse (feeds 0.91 /
+0.67, social 0.88 / 0.70). Stores still clear the shopping class (Amazon
+0.81, Apple Store 0.48 vs 0.35), every other page 0.03 or less.
+Scores logged, tuned and tested (`rules test` / `tune`) are all shifted,
+so thresholds carry over between backends.
+
+Jev sends each new screen's text to TypeSafe, so it stays a switch, not
+the default.
 
 ### State size (Kev tokenizer, state only)
 
