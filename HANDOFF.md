@@ -352,6 +352,28 @@ history:
 | Yahoo NVDA quote | stocks visit 1 of 3 |
 | Apple 10-K on sec.gov | allowed without a model call |
 
+### Latency against the number of rules (Kev-4B, this Mac, 2026-09-22)
+
+Synthetic rules, real screens, one call with all the rule questions (plus
+the 3 shared ones); median of 4 screens (2 for the grouped rows), with the
+app sharing the server:
+
+| Rules | Tokens | One call | In calls of 10 rules |
+|---|---|---|---|
+| 1 | 498 | 0.4 s | |
+| 5 | 788 | 0.4 s | |
+| 10 | 1159 | 0.6 s | |
+| 25 | 2259 | 1.8 s | 4.9 s |
+| 50 | 4105 | 7.9 s (4.5-17.7) | 5.7 s |
+| 100 | ~8000 | over 30 s: timed out, and swapped the Mac (14 GB swap; the app's calls timed out until it recovered) | 10.9 s |
+
+Kev answers every question in one forward pass and generates nothing, so up
+to ~10 rules costs about the same as one. Past that, one long pass grows
+faster than linearly on this Mac (memory, attention over thousands of
+tokens); calls of 10 rules keep it linear at ~1 s per 10. Hosted Jev on a
+GPU is unmeasured. Not built: grouping rules into calls automatically, or a
+first cheap question that picks which rules to ask.
+
 ### State size (Kev tokenizer, state only)
 
 | `--budget` | p50 | p95 | max | over 384 |
