@@ -447,6 +447,7 @@ function nearMiss(j) {
 function screens() {
   const by = new Map();
   for (const j of D.judgements) {
+    if (j.screen.window_title === "SeeNot" && !j.screen.url) continue;  // SeeNot's own panel
     const key = j.screen.url || (j.screen.app + "|" + (j.screen.window_title || ""));
     const e = by.get(key) || {key, items:[]};
     e.items.push(j);
@@ -495,9 +496,24 @@ function queue() {
   const open = screens()
     .filter(e => e.j.p_hit && !(e.review && e.review.verdict))
     .filter(e => quiet || outcome(e.j) !== "none" || nearMiss(e.j) >= 0.5);
+  // Within each outcome, closest calls first: your answer there moves a
+  // threshold the most. URL-pattern hits are certain, so they go last.
   return similarGroups(open)
-    .sort((a, b) => (PRIORITY[outcome(a.rep.j)] - PRIORITY[outcome(b.rep.j)]) || (b.members.length - a.members.length) ||
-                    (nearMiss(b.rep.j) - nearMiss(a.rep.j)) || (b.rep.last < a.rep.last ? -1 : 1));
+    .sort((a, b) => (PRIORITY[outcome(a.rep.j)] - PRIORITY[outcome(b.rep.j)]) ||
+                    (closeness(a.rep.j) - closeness(b.rep.j)) || (b.members.length - a.members.length) ||
+                    (b.rep.last < a.rep.last ? -1 : 1));
+}
+// How far the nearest rule is from its threshold, on a log scale (0 = right on it).
+function closeness(j) {
+  if (!j.p_hit) return 99;
+  const byPattern = new Set(j.decisions.filter(d => d.reason === "matches URL pattern").map(d => d.rule));
+  let best = 99;
+  for (const rid in j.p_hit) {
+    if (byPattern.has(rid)) continue;
+    const t = (j.thresholds || {})[rid] || 0.5;
+    best = Math.min(best, Math.abs(Math.log(Math.max(j.p_hit[rid], 1e-3) / t)));
+  }
+  return best;
 }
 
 // ---- plain-language sentences -----------------------------------------
