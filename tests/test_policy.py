@@ -214,3 +214,22 @@ def test_an_allow_class_stops_every_rule_but_not_a_url_pattern(tmp_path):
     short = reading(shortvideo=0.9)
     short.allow = {"shopping": 0.8}
     assert see(p, "https://www.youtube.com/shorts/x", short) == [("intervene", "shortvideo")]
+
+
+def test_explanations_in_words(policy):
+    from seenot_desktop.explain import reason
+    from seenot_desktop.policy import Decision
+
+    rule = RULES[0]  # shortvideo, threshold 0.15
+    r = reading(shortvideo=0.9)
+    assert reason(Decision("intervene", "shortvideo", "p_hit 0.90 >= 0.15"), r, rule, "en").startswith("Your shortvideo rule, a clear match: short videos.")
+    assert "a close call" in reason(Decision("intervene", "shortvideo", "x"), reading(shortvideo=0.16), rule, "en")
+    assert reason(Decision("intervene", "shortvideo", "matches URL pattern"), r, rule, "en").startswith("This address is on your list")
+    assert "for entertainment" in reason(Decision("intervene", "shortvideo", "x"), r, rule, "en")
+
+
+def test_snoozes_are_counted_for_the_growing_wait(policy):
+    assert policy.snoozes_in_last_hour() == 0
+    policy.snooze("shortvideo", 10, "a")
+    policy.snooze("shortvideo", 10, "b")
+    assert policy.snoozes_in_last_hour() == 2

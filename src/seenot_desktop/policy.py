@@ -82,6 +82,7 @@ class Policy:
         self.usage = Usage(self.data_dir / "usage.json")
         self.lock = threading.RLock()
         self.snoozed: dict[str, float] = {}  # rule id -> wall time the snooze ends
+        self._snooze_times: list[float] = []  # when "I need it" was used, for the growing wait
         self.paused_until = 0.0
         self.counting: set[str] = set()  # time_cap rules the current screen counts toward
         self._base_rules = rules
@@ -256,6 +257,7 @@ class Policy:
     def snooze(self, rule_id: str, minutes: float, reason: str = "", decision_id: str = "") -> None:
         with self.lock:
             self.snoozed[rule_id] = time.time() + minutes * 60
+            self._snooze_times.append(time.time())
         self.log_response(decision_id, "snooze", rule_id, reason=reason, minutes=minutes)
 
     def mark_fine(self, rule_id: str, url: str, title: str, decision_id: str = "") -> None:
@@ -266,6 +268,12 @@ class Policy:
         with self.lock:
             self._add_exception(e)
         self.log_response(decision_id, "fine", rule_id)
+
+    def snoozes_in_last_hour(self) -> int:
+        with self.lock:
+            cutoff = time.time() - 3600
+            self._snooze_times = [t for t in self._snooze_times if t > cutoff]
+            return len(self._snooze_times)
 
     def never_here(self, bundle_id: str, app_name: str, url: str, decision_id: str = "") -> str:
         """"Never in this app" (or, in a browser, "never on this site"): no rule fires there again."""

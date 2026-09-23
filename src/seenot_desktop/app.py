@@ -37,9 +37,13 @@ from Foundation import NSObject
 from PyObjCTools import AppHelper
 
 from .policy import Decision, Policy
-from .watcher import Event, Watcher, describe, go_back
+from .watcher import PANEL_TITLE, Event, Watcher, describe, go_back
 
 SNOOZE_MINUTES = 10
+# "I need it" unlocks after a wait that doubles with each snooze in the last
+# hour: 5, 10, 20, 40, 60 s. Research on one sec (PNAS 2023) found the
+# option to back out and a short wait both cut use; the message alone didn't.
+FIRST_WAIT_S, MAX_WAIT_S = 5, 60
 
 
 class Controller(NSObject):
@@ -146,11 +150,11 @@ class Controller(NSObject):
 
     @objc.python_method
     def _build_panel(self):
-        w, h = 600, 230
+        w, h = 600, 270
         panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0, 0, w, h), NSWindowStyleMaskTitled, NSBackingStoreBuffered, False
         )
-        panel.setTitle_("SeeNot")
+        panel.setTitle_(PANEL_TITLE)
         panel.setLevel_(NSStatusWindowLevel)
         panel.setCollectionBehavior_(
             NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary
@@ -163,10 +167,11 @@ class Controller(NSObject):
         self.body = NSTextField.wrappingLabelWithString_("")
         self.body.setFrame_(NSMakeRect(20, 96, w - 40, h - 146))
         self.why = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 60, w - 40, 24))
-        self.why.setPlaceholderString_("If you need it: what for? (optional)")
+        self.why.setPlaceholderString_("If you need it: what for?")
         back = NSButton.buttonWithTitle_target_action_("Take me back", self, "back:")
         back.setKeyEquivalent_("\r")
         need = NSButton.buttonWithTitle_target_action_(f"I need it: {SNOOZE_MINUTES} min", self, "need:")
+        self.need = need
         fine = NSButton.buttonWithTitle_target_action_("Not this one", self, "fine:")
         self.never = NSButton.buttonWithTitle_target_action_("Never here", self, "never:")
         back.setFrame_(NSMakeRect(w - 150, 16, 130, 32))
@@ -180,13 +185,19 @@ class Controller(NSObject):
     @objc.python_method
     def _show(self, d: Decision, ev: Event):
         self.current = (d, ev)
+        from .explain import reason
+
         rule = self.policy.rule(d.rule)
+        lang = self.policy.settings.lang
         where = ev.screen.window_title or ev.screen.app
-        self.headline.setStringValue_(f"This looks like: {rule.id}")
-        self.body.setStringValue_(
-            f"{where[:90]}\n\nYour rule: {rule.text(self.policy.settings.lang)}\n({d.reason})"
-        )
+        self.headline.setStringValue_(f"SeeNot: {rule.id}")
+        self._text = f"{where[:90]}\n\n{reason(d, ev.reading, rule, lang)}"
+        checking = ev.reading is not None and not self.demo
+        self.body.setStringValue_(self._text + ("\n\nChecking which part of the screen triggered it…" if checking else ""))
         self.why.setStringValue_("")
+        self._start_countdown()
+        if ev.reading is not None and not self.demo:
+            threading.Thread(target=self._find_evidence, args=(d, ev), daemon=True).start()
         from .policy import host_of
 
         place = host_of(ev.screen.url) or ev.screen.app.strip("\u200e")
@@ -194,6 +205,42 @@ class Controller(NSObject):
         self.panel.center()
         NSApp.activateIgnoringOtherApps_(True)
         self.panel.makeKeyAndOrderFront_(None)
+
+    @objc.python_method
+    def _find_evidence(self, d: Decision, ev: Event):
+        from .decide import make_client
+        from .explain import evidence
+
+        rule = next(r for r in self.policy.rules if r.id == d.rule)  # with the exceptions the model saw
+        try:
+            text = evidence(make_client(), ev.state, rule, self.policy.settings.lang)
+        except Exception:
+            text = ""
+        AppHelper.callAfter(self._set_evidence, d, text)
+
+    @objc.python_method
+    def _set_evidence(self, d: Decision, text: str):
+        if self.current and self.current[0] is d:
+            self.body.setStringValue_(self._text + (f"\n\n{text}" if text else ""))
+
+    @objc.python_method
+    def _start_countdown(self):
+        n = self.policy.snoozes_in_last_hour()
+        self._wait = min(MAX_WAIT_S, FIRST_WAIT_S * 2 ** n)
+        self._tick_countdown(self.current)
+
+    @objc.python_method
+    def _tick_countdown(self, which):
+        if self.current is not which:
+            return  # the panel closed or moved on
+        if self._wait <= 0:
+            self.need.setEnabled_(True)
+            self.need.setTitle_(f"I need it: {SNOOZE_MINUTES} min")
+            return
+        self.need.setEnabled_(False)
+        self.need.setTitle_(f"I need it ({self._wait})")
+        self._wait -= 1
+        AppHelper.callLater(1.0, self._tick_countdown, which)
 
     @objc.python_method
     def _close(self):
@@ -208,7 +255,12 @@ class Controller(NSObject):
             threading.Thread(target=go_back, args=(ev.screen.bundle_id,), daemon=True).start()
 
     def need_(self, sender):
-        reason = str(self.why.stringValue())
+        reason = str(self.why.stringValue()).strip()
+        if len(reason) < 3:
+            # Say what for first: a reason turns an impulse into a decision.
+            self.why.setPlaceholderString_("Say what you need it for first")
+            self.panel.makeFirstResponder_(self.why)
+            return
         d, ev = self._close()
         self.policy.snooze(d.rule, SNOOZE_MINUTES, reason, d.id)
 
@@ -246,7 +298,7 @@ def run_app(policy: Policy, rules_path: str, budget: int, demo: bool = False, re
         screen = ScreenState(app="Safari", bundle_id="com.apple.Safari",
                              window_title="Try Not To Smile #shorts - YouTube",
                              url="https://www.youtube.com/shorts/demo")
-        d = Decision("intervene", rule.id, "demo: matches URL pattern", "demo")
+        d = Decision("intervene", rule.id, "matches URL pattern", "demo")
         AppHelper.callLater(0.5, ctrl.handle, Ev(screen, {}, None, [d]))
     else:
         watcher = Watcher(policy, on_event, on_status, budget=budget, rules_path=rules_path)

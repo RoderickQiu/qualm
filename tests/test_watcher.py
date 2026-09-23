@@ -115,3 +115,8 @@ def test_a_popup_is_dropped_if_you_leave_first(monkeypatch, tmp_path):
 def test_going_back_to_a_page_uses_the_cache(monkeypatch, tmp_path):
     calls, events = judged(monkeypatch, tmp_path, [page("a")] * 6 + [page("b")] * 6 + [page("a")] * 6)
     assert calls == ["a", "b"] and events[-1].reading.cached
+
+
+def test_another_seenot_panel_is_never_judged(monkeypatch, tmp_path):
+    panel = ScreenState(app="python3", bundle_id="", window_title="SeeNot", text=["feeds, Weibo hot search"])
+    assert run(monkeypatch, tmp_path, [panel] * 5) == []

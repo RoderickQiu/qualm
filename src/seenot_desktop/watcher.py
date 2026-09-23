@@ -24,6 +24,7 @@ from .policy import Decision, Policy
 from .rules import build_questions, load_config
 from .state import DEFAULT_CHAR_BUDGET, ScreenState, capture
 
+PANEL_TITLE = "SeeNot"  # the intervention panel's window title
 CACHE_SIZE = 1000  # answers kept, keyed by exactly what the model reads and is asked
 DWELL_S = 4.0  # a pop-up waits until you've been on the page this long
 
@@ -133,6 +134,10 @@ class Watcher:
                 time.sleep(self.interval)
                 continue
             s = capture(skip=self.policy.settings.no_monitor)
+            if s.window_title == PANEL_TITLE:
+                # Another SeeNot's panel (a demo, a second copy): never judge ourselves.
+                time.sleep(self.interval)
+                continue
             if s.signature() != last_sig:
                 last_sig, changed_at = s.signature(), now
                 self._changed_at = now
