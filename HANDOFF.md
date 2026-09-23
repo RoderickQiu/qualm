@@ -87,8 +87,10 @@ uv run seenot-desktop eval --lang en
 uv run seenot-desktop app                # the MVP: menu bar + intervention panel
 uv run seenot-desktop app --demo         # show the panel once, learn nothing
 uv run seenot-desktop watch              # the same loop in the terminal, every judgement printed
-uv run seenot-desktop review             # every judgement, p_hit vs threshold; newest last
-uv run seenot-desktop review --fix <id> stocks=no   # a wrong one -> a label
+open http://127.0.0.1:8765/              # review page (the app serves it; or `review --web`)
+uv run seenot-desktop review             # the same judgements in the terminal
+uv run seenot-desktop review --fix <id> stocks=no   # answer one from the terminal
+uv run seenot-desktop eval --reviews --suggest      # re-ask the model on everything you reviewed
 uv run seenot-desktop harvest            # your answers to the panel -> data/labels.jsonl
 uv run seenot-desktop eval --suggest     # thresholds from your labels, for rules.toml
 uv run seenot-desktop export --lang en   # labels -> Kev training JSONL (data/train.jsonl)
@@ -110,7 +112,8 @@ fallback may trigger an **Automation** prompt per browser the first time.
 | `src/seenot_desktop/decide.py` | TypeSafe SDK client (Kev or Jev) and `ask()` |
 | `src/seenot_desktop/policy.py` | Reading -> skip / allow / count / intervene: thresholds, URL patterns, exemptions, "opened on purpose", budgets, snoozes, user exceptions, the decision log |
 | `src/seenot_desktop/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
-| `src/seenot_desktop/app.py` | Menu bar item and intervention panel (PyObjC) |
+| `src/seenot_desktop/app.py` | Menu bar item and intervention panel (PyObjC); serves the review page |
+| `src/seenot_desktop/review.py` | Review page (http://127.0.0.1:8765): your verdicts, threshold suggestions from them, applying thresholds and exceptions |
 | `src/seenot_desktop/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export` |
 | `rules.example.toml` | Six default rules, each in Chinese and English, with measured thresholds |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
@@ -118,8 +121,11 @@ fallback may trigger an **Automation** prompt per browser the first time.
 | `experiments/` | Trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |
 
 `rules.toml` and `data/` are git-ignored: they contain what you read on screen.
-In `data/`, the app keeps `judgements.jsonl` (every judgement with its capture,
-for `review`; sensitive pages and unmonitored apps without content),
+In `data/`, the app keeps `judgements.jsonl` (every judgement: the capture,
+exactly what the model read, every answer's probabilities, the screen before,
+what the policy did and why; sensitive pages and unmonitored apps without
+content), `shots/` (a ~900 px screenshot per new screen, none for sensitive
+pages), `reviews.jsonl` (your answers on the review page),
 `decisions.jsonl` (interventions and your answers), `exceptions.jsonl` ("Not
 this one") and `usage.json` (today's budgets).
 
@@ -290,11 +296,14 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 
 ## Next steps, in order
 
-1. **Use the app for a few days.** Run `seenot-desktop app` (Kev-4B server up
-   first). Answer the panel honestly; every answer is a label.
-2. **Re-tune from your own answers:** `seenot-desktop harvest`, then
-   `seenot-desktop eval --suggest`, and copy the thresholds into `rules.toml`.
-   Add `label` sessions for the pages the panel never sees (misses).
+1. **Use the app for a few days, and review.** Run `seenot-desktop app`
+   (Kev-4B server up first), browse normally, then go through the review page:
+   "Was SeeNot right?" per card; for wrong ones, "Is this X?" per rule. Use
+   the menu's "This should have been blocked" for misses as they happen.
+2. **Re-tune from your answers** on the same page (suggested thresholds, Apply;
+   exceptions in your own words). The app reloads rules.toml and exceptions
+   without a restart. When the wording of a rule is the problem, edit its
+   description in rules.toml.
 3. **Fix what the trials showed is weak:**
    - Feeds on sites that look like single items (X profiles, Guba lists).
    - Idle detection, so a Weibo tab left open overnight doesn't eat the budget.

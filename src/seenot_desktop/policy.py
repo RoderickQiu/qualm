@@ -27,6 +27,7 @@ LEARN_MIN = 0.6  # P(purpose = learn) needed for the learning exemption
 WORK_MIN = 0.6  # P(page_kind = work) needed to treat the screen as a work tool
 MAX_TICK_S = 5.0  # longer gaps (sleep, a stalled model call) don't count as usage
 MAX_EXCEPTIONS = 10  # per rule; the newest "Not this one" titles the model reads
+OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge SeeNot itself
 
 
 @dataclass
@@ -111,6 +112,8 @@ class Policy:
             self._allowed.setdefault(e["rule"], set()).add(e["url"])
         if e.get("title"):
             self._titles.setdefault(e["rule"], []).append(f'the page "{e["title"]}"')
+        if e.get("text"):  # typed on the review page
+            self._titles.setdefault(e["rule"], []).append(e["text"])
 
     # -- decisions -----------------------------------------------------------
 
@@ -121,6 +124,8 @@ class Policy:
                 d = Decision("skip", reason="paused")
             elif bundle_id in self.settings.no_monitor:
                 d = Decision("skip", reason="app not monitored")
+            elif url.startswith(OWN_URLS):
+                d = Decision("skip", reason="SeeNot's own page")
             elif url and any(re.search(p, url) for p in self.settings.allow_urls):
                 d = Decision("allow", reason="allowed URL")
             else:
@@ -134,6 +139,7 @@ class Policy:
     def _arrive(self, key: str, page_kind: str, purpose: str, app: str) -> None:
         cur = self._cur
         if key != cur["key"]:
+            cur["from"] = {k: cur[k] for k in ("key", "page_kind", "purpose", "app")} if cur["key"] else None
             # One item opened straight from search, a work tool, or a link in
             # another app (chat, mail) is on purpose. From a feed or from
             # another item it is drift.
@@ -231,6 +237,26 @@ class Policy:
             self._add_exception(e)
         self.log_response(decision_id, "fine", rule_id)
 
+    def add_exception_text(self, rule_id: str, text: str) -> None:
+        """An exception in your own words ("a lecture on YouTube is fine"); the model reads it."""
+        e = {"rule": rule_id, "text": text, "at": datetime.now().isoformat(timespec="seconds")}
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        with (self.data_dir / "exceptions.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+        with self.lock:
+            self._add_exception(e)
+
+    def reload_exceptions(self) -> None:
+        """exceptions.jsonl changed (the review page adds to it)."""
+        with self.lock:
+            self._allowed, self._titles = {}, {}
+            self._load_exceptions()
+
+    def reload(self, settings: Settings, rules: list[Rule]) -> None:
+        """rules.toml changed: new rules and settings, same history and usage."""
+        with self.lock:
+            self.settings, self._base_rules = settings, rules
+
     def pause(self, minutes: float) -> None:
         with self.lock:
             self.paused_until = time.time() + minutes * 60 if minutes else 0.0
@@ -251,23 +277,34 @@ class Policy:
 
     # -- the log that becomes labels -----------------------------------------
 
-    def log_judgement(self, screen: dict, reading: Reading | None, decisions: list[Decision]) -> str:
-        """Every judgement, to data/judgements.jsonl, for `seenot-desktop review`.
+    def log_judgement(self, screen: dict, reading: Reading | None, decisions: list[Decision],
+                      state: dict | None = None, shot: str = "") -> str:
+        """Every judgement, to data/judgements.jsonl, for `seenot-desktop review`:
+        what was on screen, exactly what the model read, every answer's
+        probabilities, the screen before, and what the policy did and why.
         Sensitive pages and unmonitored apps are logged without their content."""
         private = any(d.reason in ("sensitive page", "app not monitored") for d in decisions)
-        event = {
-            "id": uuid.uuid4().hex[:8],
-            "at": datetime.now().isoformat(timespec="seconds"),
-            "screen": {"app": screen.get("app", ""), "bundle_id": screen.get("bundle_id", "")} if private else screen,
-            "decisions": [{"action": d.action, "rule": d.rule, "reason": d.reason} for d in decisions],
-        }
+        with self.lock:
+            event = {
+                "id": uuid.uuid4().hex[:8],
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "screen": {"app": screen.get("app", ""), "bundle_id": screen.get("bundle_id", "")} if private else screen,
+                "decisions": [{"action": d.action, "rule": d.rule, "reason": d.reason} for d in decisions],
+                "thresholds": {r.id: r.threshold for r in self._base_rules},
+                "came_from": None if private else self._cur.get("from"),
+                "opened_on_purpose": self._cur["intentional"],
+            }
+        if shot and not private:
+            event["shot"] = shot
         if reading is not None and not private:
             event |= {
+                "state": state,  # exactly what the model read
                 "page_kind": reading.page_kind, "purpose": reading.purpose,
                 "page_probs": {k: round(v, 3) for k, v in reading.page_probs.items()},
                 "purpose_probs": {k: round(v, 3) for k, v in reading.purpose_probs.items()},
                 "sensitive": round(reading.sensitive, 3),
                 "p_hit": {v.rule_id: round(v.p_hit, 3) for v in reading.rules},
+                "answers": {v.rule_id: {k: round(x, 3) for k, x in v.probabilities.items()} for v in reading.rules},
                 "latency_ms": round(reading.latency_ms),
             }
         self.data_dir.mkdir(parents=True, exist_ok=True)

@@ -85,7 +85,7 @@ def cmd_watch(args) -> None:
             print(f"    -> {d.action} {d.rule} ({d.reason})", flush=True)
 
     Watcher(policy, on_event, lambda s: print(f"  [{s}]", flush=True), budget=args.budget,
-            heartbeat=args.heartbeat).run()
+            heartbeat=args.heartbeat, rules_path=args.rules).run()
 
 
 def cmd_app(args) -> None:
@@ -97,7 +97,7 @@ def cmd_app(args) -> None:
     settings, rules = _config(args)
     # The demo must not teach your real rules anything.
     data = tempfile.mkdtemp(prefix="seenot-demo-") if args.demo else args.data
-    run_app(Policy(settings, rules, data), args.rules, args.budget, demo=args.demo)
+    run_app(Policy(settings, rules, data), args.rules, args.budget, demo=args.demo, review=not args.demo)
 
 
 def _pick(prompt: str, options: tuple[str, ...]) -> str:
@@ -182,42 +182,40 @@ def cmd_harvest(args) -> None:
 
 
 def cmd_review(args) -> None:
-    """Every judgement the app or `watch` made, newest last. `--fix ID rule=yes|no`
-    records the right answer as a label; `eval --suggest` then re-tunes from it."""
-    from .rules import DENY_OPTIONS, PAGE_KINDS, PURPOSES, TIME_CAP_OPTIONS
+    """Every judgement the app or `watch` made. --web opens the review page
+    (the app already serves it); --fix ID rule=yes|no answers from the terminal."""
+    from .review import load_judgements, load_reviews, save_review, serve
 
     settings, rules = _config(args)
     by_id = {r.id: r for r in rules}
-    path = Path(args.data) / "judgements.jsonl"
-    if not path.exists():
-        sys.exit(f"{path} not found: run `seenot-desktop app` or `watch` first.")
-    events = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
+    data = Path(args.data)
+    if args.web:
+        serve(data, Path(args.rules))
+        return
+    events = load_judgements(data)
+    if not events:
+        sys.exit(f"no judgements in {data}: run `seenot-desktop app` or `watch` first.")
 
     if args.fix:
         jid, *pairs = args.fix
         ev = next((e for e in events if e["id"] == jid), None)
         if ev is None or "p_hit" not in ev:
             sys.exit(f"#{jid}: no such judgement with page content (sensitive and unmonitored pages have none)")
-        labels: dict = {"rules": {}}
+        answers, extra = {}, {}
         for pair in pairs:
             key, _, val = pair.partition("=")
-            if key in by_id:
-                deny = by_id[key].kind == "deny"
-                val = {"yes": "violates" if deny else "in_scope", "no": "safe" if deny else "out_of_scope"}.get(val, val)
-                if val not in (DENY_OPTIONS if deny else TIME_CAP_OPTIONS):
-                    sys.exit(f"{key}: use yes / no / unknown")
-                labels["rules"][key] = val
-            elif key == "page_kind" and val in PAGE_KINDS or key == "purpose" and val in PURPOSES:
-                labels[key] = val
-            elif key == "sensitive" and val in ("yes", "no"):
-                labels[key] = val == "yes"
+            if key in by_id and val in ("yes", "no", "unknown"):
+                answers[key] = None if val == "unknown" else val
+            elif key == "verdict" or key in ("page_kind", "purpose", "note"):
+                extra[key] = val
             else:
-                sys.exit(f"can't use {pair!r}: rule ids are {', '.join(by_id)}; also page_kind=, purpose=, sensitive=")
-        n = _save_label(args.labels, {"captured_at": ev["at"], "screen": ev["screen"], "labels": labels,
-                                      "note": f"review #{jid}"})
-        print(f"saved -> {args.labels} ({n} records). Re-tune with: seenot-desktop eval --suggest")
+                sys.exit(f"can't use {pair!r}: rule ids are {', '.join(by_id)} (=yes|no); "
+                         "also verdict=right|should_block|should_not_block, page_kind=, purpose=, note=")
+        save_review(data, jid, rules=answers, **extra)
+        print(f"saved #{jid}. The review page and `eval --reviews` use it.")
         return
 
+    reviews = load_reviews(data)
     shown = events
     if args.acted:
         shown = [e for e in shown if any(d["action"] in ("intervene", "allow", "count") for d in e["decisions"])]
@@ -229,14 +227,14 @@ def cmd_review(args) -> None:
         print(f"#{e['id']} {e['at'][11:]}  {s.get('app', '')} | {s.get('window_title', '')[:60]} | {s.get('url', '')[:70]}")
         acts = "; ".join(f"{d['action']} {d['rule']} ({d['reason']})".replace(" ()", "") for d in e["decisions"]) or "nothing"
         seen = f"page={e['page_kind']} purpose={e['purpose']}  " if "page_kind" in e else ""
-        print(f"    {seen}-> {acts}")
+        rv = reviews.get(e["id"])
+        mark = f"   [you: {rv.get('verdict') or ''} {rv.get('rules') or ''}]" if rv else ""
+        print(f"    {seen}-> {acts}{mark}")
         if "p_hit" in e:
-            cells = []
-            for rid, p in e["p_hit"].items():
-                t = by_id[rid].threshold if rid in by_id else 1.0
-                cells.append(f"{rid} {p:.2f}{'*' if p >= t else ''}")
+            cells = [f"{rid} {p:.2f}{'*' if p >= (by_id[rid].threshold if rid in by_id else 1) else ''}"
+                     for rid, p in e["p_hit"].items()]
             print("    p_hit: " + "  ".join(cells) + "   (* = at or over the rule's threshold)")
-    print(f"\n{len(shown)} judgements shown. Wrong one? seenot-desktop review --fix <id> <rule>=yes|no")
+    print(f"\n{len(shown)} judgements. Easier: seenot-desktop review --web")
 
 
 def _suggest(rule_id: str, pts: list[tuple[float, bool]], target: float) -> str:
@@ -265,9 +263,13 @@ def cmd_eval(args) -> None:
 
     settings, rules = _config(args)
     path = Path(args.labels)
-    records = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
+    records = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()] if path.exists() else []
+    if args.reviews:
+        from .review import review_labels
+
+        records += review_labels(Path(args.data), rules)
     if not records:
-        sys.exit(f"no records in {path}")
+        sys.exit(f"no records in {path}" + (" or your reviews" if args.reviews else ""))
     client = make_client()
     lat = []
     acc = {"page_kind": [0, 0], "purpose": [0, 0], "sensitive": [0, 0]}  # right, labelled
@@ -388,11 +390,14 @@ def main() -> None:
     sp.add_argument("--rule", help="only judgements near or over this rule's threshold")
     sp.add_argument("--acted", action="store_true", help="only those that intervened, allowed or counted")
     sp.add_argument("--fix", nargs="+", metavar="ID RULE=yes|no", help="record the right answer for a judgement")
+    sp.add_argument("--web", action="store_true", help="open the review page")
 
     sp = add("eval", cmd_eval)
     sp.add_argument("--labels", default=DEFAULT_LABELS)
     sp.add_argument("--dump", help="write every reading to this JSONL, for error analysis")
     sp.add_argument("--suggest", action="store_true", help="print per-rule thresholds for rules.toml")
+    sp.add_argument("--reviews", action="store_true", help="also score your answers from the review page")
+    sp.add_argument("--data", default=DEFAULT_DATA)
     sp.add_argument("--precision", type=float, default=0.9, help="precision --suggest aims for")
 
     sp = add("export", cmd_export)

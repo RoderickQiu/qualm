@@ -18,6 +18,9 @@ from ApplicationServices import (
     AXUIElementCopyAttributeValue,
     AXUIElementCreateApplication,
     AXUIElementSetAttributeValue,
+    AXValueGetValue,
+    kAXValueCGPointType,
+    kAXValueCGSizeType,
 )
 
 # Chinese runs about one token per character, English about four characters
@@ -44,6 +47,7 @@ class ScreenState:
     headings: list[str] = field(default_factory=list)
     text: list[str] = field(default_factory=list)
     ax_trusted: bool = True
+    frame: list[float] = field(default_factory=list)  # window x, y, w, h in points, for the review screenshot
 
     def signature(self) -> tuple[str, str, str]:
         """What counts as 'the screen changed' for the watcher."""
@@ -117,6 +121,15 @@ def _walk(window, state: ScreenState) -> None:
             queue.extend(children)
 
 
+def _frame(window) -> list[float]:
+    pos, size = _ax(window, "AXPosition"), _ax(window, "AXSize")
+    if pos is None or size is None:
+        return []
+    ok1, p = AXValueGetValue(pos, kAXValueCGPointType, None)
+    ok2, s = AXValueGetValue(size, kAXValueCGSizeType, None)
+    return [p.x, p.y, s.width, s.height] if ok1 and ok2 else []
+
+
 def _short_url(url: str) -> str:
     # Query strings and fragments are mostly ids: tokens with no signal.
     base = url.split("#", 1)[0]
@@ -155,6 +168,7 @@ def capture(skip: tuple[str, ...] = ()) -> ScreenState:
         window = _ax(root, "AXFocusedWindow")
         if window is not None:
             state.window_title = _clean(_ax(window, "AXTitle"))
+            state.frame = _frame(window)
             _walk(window, state)
     if not state.url:
         state.url = _browser_url(state.bundle_id)

@@ -47,6 +47,7 @@ class Controller(NSObject):
     def setup(self, policy: Policy, rules_path: str, demo: bool = False):
         self.policy, self.rules_path, self.demo = policy, rules_path, demo
         self.current: tuple[Decision, Event] | None = None
+        self.last: Event | None = None  # the latest judged screen, for "This should have been blocked"
         self._build_menu()
         self._build_panel()
         return self
@@ -76,8 +77,10 @@ class Controller(NSObject):
         self.status_line = self._item("starting…")
         self.usage_line = self._item(self.policy.usage_summary() or "no time limits")
         self.pause_item = self._item("Pause 30 min", "togglePause:")
-        for item in (self.status_line, self.usage_line, NSMenuItem.separatorItem(), self.pause_item,
-                     self._item("Open rules…", "openRules:"), NSMenuItem.separatorItem(),
+        for item in (self.status_line, self.usage_line, NSMenuItem.separatorItem(),
+                     self._item("This should have been blocked", "flagMiss:"),
+                     self._item("Open review page", "openReview:"), NSMenuItem.separatorItem(),
+                     self.pause_item, self._item("Open rules…", "openRules:"), NSMenuItem.separatorItem(),
                      self._item("Quit SeeNot", "quit:", "q")):
             menu.addItem_(item)
         self.status_item.setMenu_(menu)
@@ -103,6 +106,21 @@ class Controller(NSObject):
         self.pause_item.setTitle_("Pause 30 min" if paused else "Resume")
         self._set_icon(paused=not paused)
 
+    def flagMiss_(self, sender):
+        from .review import save_review
+
+        ev = self.last
+        if ev is None or ev.reading is None:
+            self.set_status("nothing judged yet to flag")
+            return
+        save_review(self.policy.data_dir, ev.id, verdict="should_block")
+        self.set_status(f"flagged: {ev.screen.window_title[:40] or ev.screen.app}. Mark which rule on the review page.")
+
+    def openReview_(self, sender):
+        from .review import PORT
+
+        subprocess.run(["open", f"http://127.0.0.1:{PORT}/"], check=False)
+
     def openRules_(self, sender):
         subprocess.run(["open", "-t", self.rules_path], check=False)
 
@@ -116,6 +134,8 @@ class Controller(NSObject):
     def handle(self, ev: Event):
         shown = [d for d in ev.decisions if d.action != "skip" or d.reason != "paused"]
         summary = ", ".join(f"{d.action} {d.rule}".strip() for d in shown) or "nothing"
+        if ev.reading is not None:
+            self.last = ev
         self.set_status(f"{ev.screen.app}: {summary}")
         self.usage_line.setTitle_(self.policy.usage_summary() or "no time limits")
         hit = next((d for d in ev.decisions if d.action == "intervene"), None)
@@ -191,7 +211,7 @@ class Controller(NSObject):
         self.policy.mark_fine(d.rule, ev.screen.url, ev.screen.window_title, d.id)
 
 
-def run_app(policy: Policy, rules_path: str, budget: int, demo: bool = False) -> None:
+def run_app(policy: Policy, rules_path: str, budget: int, demo: bool = False, review: bool = True) -> None:
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     ctrl = Controller.alloc().init().setup(policy, str(Path(rules_path).resolve()), demo)
@@ -218,7 +238,16 @@ def run_app(policy: Policy, rules_path: str, budget: int, demo: bool = False) ->
         d = Decision("intervene", rule.id, "demo: matches URL pattern", "demo")
         AppHelper.callLater(0.5, ctrl.handle, Ev(screen, {}, None, [d]))
     else:
-        watcher = Watcher(policy, on_event, on_status, budget=budget)
+        watcher = Watcher(policy, on_event, on_status, budget=budget, rules_path=rules_path)
         threading.Thread(target=watcher.run, daemon=True).start()
+    if review:
+        from .review import PORT, start_server
+
+        try:
+            server = start_server(policy.data_dir, Path(rules_path), PORT)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            print(f"review page: http://127.0.0.1:{PORT}/", flush=True)
+        except OSError:
+            print(f"review page: port {PORT} is taken; `seenot-desktop review --web` is probably running", flush=True)
     AppHelper.runEventLoop(installInterrupt=True)
 

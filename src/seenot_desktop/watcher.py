@@ -11,12 +11,14 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from AppKit import NSRunningApplication, NSWorkspace
 
 from .decide import Reading, ask, make_client
 from .policy import Decision, Policy
+from .rules import load_config
 from .state import DEFAULT_CHAR_BUDGET, ScreenState, capture
 
 BROWSERS = {
@@ -56,10 +58,55 @@ class Watcher:
         interval: float = 0.5,
         debounce: float = 0.5,
         heartbeat: float = 30.0,
+        rules_path: str | None = None,
+        shots: bool = True,
     ):
         self.policy, self.on_event, self.on_status = policy, on_event, on_status
         self.budget, self.interval, self.debounce, self.heartbeat = budget, interval, debounce, heartbeat
         self.stop = threading.Event()
+        self.rules_path = Path(rules_path) if rules_path else None
+        self._rules_mtime = self.rules_path.stat().st_mtime if self.rules_path else 0.0
+        self._exc_path = policy.data_dir / "exceptions.jsonl"
+        self._exc_mtime = self._exc_path.stat().st_mtime if self._exc_path.exists() else 0.0
+        self.shots = shots
+        self._shot_sig, self._shot = None, ""
+
+    def _reload_rules(self) -> None:
+        """Edits to rules.toml and exceptions (by hand or from the review page) apply without a restart."""
+        if self._exc_path.exists() and self._exc_path.stat().st_mtime != self._exc_mtime:
+            self._exc_mtime = self._exc_path.stat().st_mtime
+            self.policy.reload_exceptions()
+        if not self.rules_path:
+            return
+        try:
+            mtime = self.rules_path.stat().st_mtime
+            if mtime == self._rules_mtime:
+                return
+            self._rules_mtime = mtime
+            self.policy.reload(*load_config(self.rules_path))
+            self.on_status("rules reloaded")
+        except Exception as e:  # a half-saved or broken file: keep the old rules
+            self.on_status(f"rules.toml not reloaded: {e}")
+
+    def _screenshot(self, s: ScreenState) -> str:
+        """A small picture of the window, once per new screen, for the review page."""
+        if not self.shots or len(s.frame) != 4:
+            return ""
+        if s.signature() == self._shot_sig:
+            return self._shot
+        folder = self.policy.data_dir / "shots"
+        folder.mkdir(parents=True, exist_ok=True)
+        name = f"{time.time_ns() // 1_000_000}.jpg"
+        x, y, w, h = (int(v) for v in s.frame)
+        r = subprocess.run(["screencapture", "-x", "-t", "jpg", "-R", f"{x},{y},{w},{h}", str(folder / name)],
+                           capture_output=True)
+        if r.returncode != 0:
+            return ""
+        # Shrink off the loop: a retina window is ~1 MB, 900 px wide is ~60 KB.
+        threading.Thread(target=subprocess.run, daemon=True, args=(
+            ["sips", "-Z", "900", "-s", "formatOptions", "60", str(folder / name)],), kwargs={"capture_output": True}).start()
+        self._shot_sig, self._shot = s.signature(), name
+        return name
 
     def run(self) -> None:
         client = make_client()
@@ -67,6 +114,7 @@ class Watcher:
         me = os.getpid()
         while not self.stop.is_set():
             now = time.monotonic()
+            self._reload_rules()
             self.policy.tick()
             front = NSWorkspace.sharedWorkspace().frontmostApplication()
             if front is None or front.processIdentifier() == me:
@@ -89,9 +137,11 @@ class Watcher:
         pre = self.policy.precheck(s.bundle_id, s.url)
         if pre is not None:
             ev = Event(s, state, None, [pre])
-            ev.id = self.policy.log_judgement(s.as_record(), None, [pre])
+            shot = self._screenshot(s) if pre.action != "skip" else ""
+            ev.id = self.policy.log_judgement(s.as_record(), None, [pre], shot=shot)
             self.on_event(ev)
             return
+        shot = self._screenshot(s)
         try:
             reading = ask(client, state, self.policy.rules, self.policy.settings.lang)
         except Exception as e:  # server down, timeout: say so, keep watching
@@ -103,8 +153,12 @@ class Watcher:
         for d in decisions:
             if d.action == "intervene":
                 self.policy.log_intervention(d, s.as_record(), reading)
+        if reading.sensitive >= 0.5 and shot:
+            # Taken before the model said it was sensitive: don't keep it.
+            (self.policy.data_dir / "shots" / shot).unlink(missing_ok=True)
+            self._shot_sig, shot = None, ""
         ev = Event(s, state, reading, decisions)
-        ev.id = self.policy.log_judgement(s.as_record(), reading, decisions)
+        ev.id = self.policy.log_judgement(s.as_record(), reading, decisions, state=state, shot=shot)
         self.on_event(ev)
 
 

@@ -158,3 +158,32 @@ def test_every_judgement_is_logged_but_private_ones_without_content(policy, tmp_
     logged = [json.loads(line) for line in (tmp_path / "judgements.jsonl").open()]
     assert logged[0]["screen"]["text"] == ["x"] and logged[0]["p_hit"]["shortvideo"] == 0.9
     assert "text" not in logged[1]["screen"] and "p_hit" not in logged[1]
+
+
+def test_review_answers_and_tuning(tmp_path):
+    from seenot_desktop.review import rule_answers, save_review, set_threshold, tuning
+
+    j = {"id": "a", "p_hit": {"shortvideo": 0.9, "social": 0.1, "stocks": 0.5},
+         "decisions": [{"action": "intervene", "rule": "shortvideo", "reason": ""},
+                       {"action": "allow", "rule": "stocks", "reason": "opened on purpose"}]}
+    # "Right" confirms the pop-up and every quiet rule; the exempted one stays open.
+    save_review(tmp_path, "a", verdict="right")
+    from seenot_desktop.review import load_reviews
+    assert rule_answers(j, load_reviews(tmp_path)["a"]) == {"shortvideo": True, "social": False}
+    save_review(tmp_path, "a", rules={"social": "yes"})
+    assert rule_answers(j, load_reviews(tmp_path)["a"])["social"] is True
+
+    # Threshold suggestions need 3 yes and 3 no.
+    lines = []
+    for i, (p, y) in enumerate([(0.9, "yes"), (0.7, "yes"), (0.4, "yes"), (0.3, "no"), (0.1, "no"), (0.05, "no")]):
+        lines.append(json.dumps({"id": f"j{i}", "p_hit": {"social": p}, "decisions": []}))
+        save_review(tmp_path, f"j{i}", rules={"social": y})
+    (tmp_path / "judgements.jsonl").write_text("\n".join(lines) + "\n")
+    row = next(t for t in tuning(tmp_path, RULES) if t["rule"] == "social")
+    assert row["yes"] == 3 and row["no"] == 3 and row["suggested"] == 0.35 and row["suggested_recall"] == 1.0
+
+    rules = tmp_path / "rules.toml"
+    rules.write_text(open("rules.example.toml", encoding="utf-8").read(), encoding="utf-8")
+    set_threshold(rules, "social", 0.35)
+    assert next(r for r in load_config(rules)[1] if r.id == "social").threshold == 0.35
+    assert next(r for r in load_config(rules)[1] if r.id == "stocks").threshold == 0.13
