@@ -72,6 +72,18 @@ research on digital self-control tools:
   fired on shopping chats and on SeeNot's own review page. The trial numbers
   below still include it.
 - **[[allow]] classes, never here, thin screens, Chrome capture**: see below.
+- **Personalizing is all commands** (`personalize.py`, `config.py`, `trial.py`;
+  docs/PERSONALIZE.md): `rules`, `allow`, `except`, `never`, `settings`,
+  each with `--json`, so a person or an agent can do everything from a
+  terminal. Edits are surgical (comments survive), checked before saving,
+  and the old file is kept as `rules.toml.bak`. New per-rule fields:
+  `sites` (plain domains in place of regexes), `when` (hours and days),
+  `enabled`, `note`. `rules test` scores a rule on your own recent
+  screens through the live gate; `rules label` + `rules tune --apply` set
+  its threshold from your answers. A new rule's default threshold is 0.2,
+  not 0.5: at 0.5, Kev-4B's low scores meant a new rule would almost never fire.
+  `rules.example.toml` is English only now, and the app creates rules.toml
+  from it on first run.
 
 ### MVP (built after the trials)
 
@@ -116,12 +128,12 @@ KEV_DTYPE=bf16 uv run --extra serve python ~/Documents/seenot-desktop/experiment
 
 # 2. This repo
 cd ~/Documents/seenot-desktop
-cp rules.example.toml rules.toml         # already done once; edit freely
+uv run seenot-desktop rules list         # your rules (rules.toml is created from rules.example.toml if missing)
+uv run seenot-desktop rules --help       # add / set / on / off / test / tune …; docs/PERSONALIZE.md
 uv run seenot-desktop probe              # state only, no model; Ctrl-C to stop
 uv run seenot-desktop ask --delay 3      # switch windows within 3 s, get one reading
 uv run seenot-desktop label              # capture + label one moment -> data/labels.jsonl
-uv run seenot-desktop eval --lang zh     # precision/recall per threshold, latency
-uv run seenot-desktop eval --lang en
+uv run seenot-desktop eval               # precision/recall per threshold, latency
 uv run seenot-desktop install            # or: start model server + app at every login (uninstall to undo)
 uv run seenot-desktop app                # the MVP: menu bar + intervention panel
 uv run seenot-desktop app --demo         # show the panel once, learn nothing
@@ -147,14 +159,18 @@ fallback may trigger an **Automation** prompt per browser the first time.
 | File | What it does |
 |---|---|
 | `src/seenot_desktop/state.py` | Front window → `ScreenState` → compact `state` dict, cut to a character budget |
-| `src/seenot_desktop/rules.py` | Rules from `rules.toml`; builds the typed questions |
+| `src/seenot_desktop/rules.py` | Rules from `rules.toml` (checked on load: fields, sites, `when`, regexes); builds the typed questions |
+| `src/seenot_desktop/config.py` | Edits rules.toml in place, one key at a time; refuses a file that wouldn't load |
+| `src/seenot_desktop/personalize.py` | The `rules` / `allow` / `except` / `never` / `settings` commands |
+| `src/seenot_desktop/trial.py` | `rules test` / `label` / `tune`: a rule on your recent screens, and its threshold from your answers |
 | `src/seenot_desktop/decide.py` | TypeSafe SDK client (Kev or Jev) and `ask()` |
 | `src/seenot_desktop/policy.py` | Reading -> skip / allow / count / intervene: thresholds, URL patterns, exemptions, "opened on purpose", budgets, snoozes, user exceptions, the decision log |
 | `src/seenot_desktop/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
 | `src/seenot_desktop/app.py` | Menu bar item and intervention panel (PyObjC); serves the review page |
 | `src/seenot_desktop/review.py` | Review page (http://127.0.0.1:8765): your verdicts, threshold suggestions from them, applying thresholds and exceptions |
-| `src/seenot_desktop/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export` |
-| `rules.example.toml` | Six default rules, each in Chinese and English, with measured thresholds |
+| `src/seenot_desktop/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export`, plus the commands above |
+| `rules.example.toml` | The starter rules and allow classes, in English, with measured thresholds and why in `note` |
+| `docs/PERSONALIZE.md` | Every personalization command, and the test-then-tune loop for a new rule |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
 | `tests/test_policy.py` | The policy with made-up readings |
 | `experiments/` | Trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |
@@ -166,7 +182,8 @@ what the policy did and why; sensitive pages and unmonitored apps without
 content), `shots/` (a ~900 px screenshot per new screen, none for sensitive
 pages), `reviews.jsonl` (your answers on the review page),
 `decisions.jsonl` (interventions and your answers), `exceptions.jsonl` ("Not
-this one") and `usage.json` (today's budgets).
+this one", "Never here", `except`/`never` commands), `trials.jsonl` (`rules
+test` scores, per exact rule wording) and `usage.json` (today's budgets).
 
 Never flagged: `[[allow]]` classes in rules.toml are kinds of page described
 in words (shipped: shopping, "an online store: a product page, listing, cart
@@ -186,7 +203,8 @@ set: precision 0.96, recall 1.00 (was 0.96 / 0.92). The pop-up's
 "Never in <app>" / "Never on <site>" does the same for one app or site.
 
 Testing mode: `[settings] budgets = false` (the current default) makes every
-rule hit pop up at once, time caps included. Set it to true for real budgets.
+rule hit pop up at once, time caps included. `seenot-desktop settings set
+budgets=true` for real budgets.
 
 ## Design decisions, and why
 
@@ -357,9 +375,11 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    "Was SeeNot right?" per card; for wrong ones, "Is this X?" per rule. Use
    the menu's "This should have been blocked" for misses as they happen.
 2. **Re-tune from your answers** on the same page (suggested thresholds, Apply;
-   exceptions in your own words). The app reloads rules.toml and exceptions
-   without a restart. When the wording of a rule is the problem, edit its
-   description in rules.toml.
+   exceptions in your own words), or `rules tune ID --apply`. The app reloads
+   rules.toml and exceptions without a restart. When the wording of a rule is
+   the problem: `rules set ID what="..."`, then `rules test ID` and `rules tune`.
+   Not run yet: the CLI loop on a rule someone new writes from scratch, with
+   real answers (it's been exercised end to end with made-up answers only).
 3. **Fix what the trials showed is weak:**
    - Feeds on sites that look like single items (X profiles, Guba lists).
 4. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
@@ -372,11 +392,14 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
      notifications) plus `NSWorkspace.didActivateApplicationNotification`.
    - Add a Vision OCR fallback (`VNRecognizeTextRequest`, zh-Hans) when the
      Accessibility tree yields no text.
-6. **Ship it:** a signed `SeeNot.app` (Swift `MenuBarExtra`, or py2app) with its own
+6. **Personalizing, the rest:** `pause` / `snooze` commands (they need the
+   running app; the review server on 8765 could take them), and the review
+   page's Tune tab on top of `config.py` (add / edit / test a rule there too).
+7. **Ship it:** a signed `SeeNot.app` (Swift `MenuBarExtra`, or py2app) with its own
    name and permissions; `install` covers start-at-login meanwhile. Port
    SeeNot's session intents: "I'm here to do X for 20 minutes" before a
    session, in place of the per-rule snooze.
-7. **Graded friction past the pop-up** (InteractOut, CHI 2024: slowing
+8. **Graded friction past the pop-up** (InteractOut, CHI 2024: slowing
    interaction beat lockouts): dim or blur the window when you keep going
    back to a page after "Take me back".
 

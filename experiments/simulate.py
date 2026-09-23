@@ -20,7 +20,7 @@ ap.add_argument("--no-patterns", action="store_true"); ap.add_argument("--errors
 a = ap.parse_args()
 settings, rules = load_config(a.rules)
 if a.no_patterns:
-    rules = [replace(r, patterns=()) for r in rules]
+    rules = [replace(r, patterns=(), sites=()) for r in rules]
 labels = {json.loads(l)["note"]: json.loads(l)["labels"] for l in open(a.labels, encoding="utf-8")}
 tally = {r.id: [0, 0, 0] for r in rules}  # tp, fp, fn
 exempt = []

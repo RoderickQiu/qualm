@@ -154,33 +154,10 @@ def review_labels(data_dir: Path, rules: list[Rule]) -> list[dict]:
 
 
 def set_threshold(rules_path: Path, rule_id: str, value: float) -> None:
-    """Rewrite one rule's `threshold = ...` line in rules.toml, keeping everything else."""
-    text = rules_path.read_text(encoding="utf-8")
-    blocks = re.split(r"(?m)^(?=\[\[rules\]\])", text)
-    for i, block in enumerate(blocks):
-        if re.search(rf'(?m)^id\s*=\s*"{re.escape(rule_id)}"\s*$', block):
-            stamp = f"threshold = {value:g}  # set from review, {datetime.now():%Y-%m-%d}"
-            if re.search(r"(?m)^threshold\s*=", block):
-                block = re.sub(r"(?m)^threshold\s*=.*$", stamp, block, count=1)
-            else:
-                block = re.sub(r"(?m)^(kind\s*=.*)$", rf"\1\n{stamp}", block, count=1)
-            blocks[i] = block
-            new = "".join(blocks)
-            load_config_text(new)  # refuse to write a file that no longer parses
-            rules_path.write_text(new, encoding="utf-8")
-            return
-    raise ValueError(f"no rule {rule_id!r} in {rules_path}")
+    """Set one rule's threshold in rules.toml, keeping everything else."""
+    from .config import Config
 
-
-def load_config_text(text: str) -> None:
-    import tempfile
-
-    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False, encoding="utf-8") as f:
-        f.write(text)
-    try:
-        load_config(f.name)
-    finally:
-        Path(f.name).unlink()
+    Config(rules_path).edit("rules", rule_id, {"threshold": value})
 
 
 def add_exception(data_dir: Path, rule_id: str, text: str) -> None:
@@ -279,7 +256,7 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
             "judgements": load_judgements(data_dir),
             "reviews": load_reviews(data_dir),
             "rules": [{"id": r.id, "kind": r.kind, "text": r.text(settings.lang), "threshold": r.threshold,
-                       "exceptions": list(r.exceptions)} for r in rules],
+                       "exceptions": list(r.exceptions)} for r in rules if r.enabled],
             "exceptions": [e for e in exceptions(data_dir) if not e.get("never")],
             "never": never_places(data_dir),
             "week": week(data_dir),

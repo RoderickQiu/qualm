@@ -4,3 +4,4 @@ __pycache__/
 # Your rules and labels contain what you read on screen. Keep them local.
 rules.toml
 data/
+rules.toml.bak

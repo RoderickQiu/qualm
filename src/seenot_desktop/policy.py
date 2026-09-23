@@ -36,6 +36,41 @@ def host_of(url: str) -> str:
     return m.group(1).lower().removeprefix("www.") if m else ""
 
 
+def gate(rule: Rule, p: float, state: dict, reading: Reading, settings: Settings,
+         intentional: bool = False) -> tuple[str, str] | None:
+    """One rule on one reading, before anything you said at runtime (snoozes,
+    "Not this one", budgets): None (no hit), ("hit", why), or ("allow" |
+    "skip", why) for a hit an exemption covers. Shared by the live policy and
+    `rules test`, so a test shows what the rule would really do."""
+    url = state.get("url", "")
+    pattern = rule.matches_url(url)
+    feed = rule.feed_hit and reading.page_kind == "feed" and reading.purpose == "entertain"
+    if not (pattern or feed or p >= rule.threshold):
+        return None
+    # A feed of candidates doesn't break "don't show me X"; scrolling it
+    # still counts toward a time budget.
+    if rule.kind == "deny" and rule.target == "content" and reading.page_kind == "feed" and not pattern:
+        return None
+    # An app that shows nothing but its name (WhatsApp, games, players)
+    # leaves the model guessing; only a URL pattern may fire then.
+    if not pattern and not url and not state.get("headings") and not state.get("visible_text"):
+        return "skip", f"too little on screen to judge (p_hit {p:.2f})"
+    # A kind of page you said is never flagged ([[allow]]: shopping, ...).
+    allowed_as = next((c.id for c in settings.allow if c.enabled and reading.allow.get(c.id, 0) >= c.threshold), None)
+    if allowed_as and not pattern:
+        return "allow", f"{allowed_as} is never flagged"
+    # The model's best guess is a work tool (editor, terminal, docs): leave
+    # it alone. Code and notes are full of words any rule can match.
+    if reading.page_kind == "work" and not pattern:
+        return "allow", "work tool"
+    if rule.allow_learning and reading.page_kind != "feed" and reading.purpose_probs.get("learn", 0) >= LEARN_MIN:
+        return "allow", "learning material"
+    if rule.allow_intentional and intentional:
+        return "allow", "opened on purpose"
+    return "hit", ("matches URL pattern" if pattern else f"p_hit {p:.2f} >= {rule.threshold:.2f}"
+                   if p >= rule.threshold else "an entertainment feed")
+
+
 @dataclass
 class Decision:
     action: str
@@ -105,10 +140,15 @@ class Policy:
 
     @property
     def rules(self) -> list[Rule]:
+        """The rules on right now (enabled, inside their `when`), with what you taught them."""
         return [
             replace(r, exceptions=r.exceptions + tuple(self._titles.get(r.id, [])[-MAX_EXCEPTIONS:]))
-            for r in self._base_rules
+            for r in self.active_rules()
         ]
+
+    def active_rules(self) -> list[Rule]:
+        now = datetime.now()
+        return [r for r in self._base_rules if r.active(now)]
 
     def rule(self, rule_id: str) -> Rule:
         return next(r for r in self._base_rules if r.id == rule_id)
@@ -132,12 +172,16 @@ class Policy:
             if n.get("host"):
                 (self._never_hosts.discard if e.get("removed") else self._never_hosts.add)(n["host"])
             return
+        titles = self._titles.setdefault(e["rule"], [])
+        said = [f'the page "{e["title"]}"'] if e.get("title") else []
+        said += [e["text"]] if e.get("text") else []  # typed on the review page or `except add`
+        if e.get("removed"):  # `except remove`
+            self._allowed.get(e["rule"], set()).discard(e.get("url"))
+            titles[:] = [t for t in titles if t not in said]
+            return
         if e.get("url"):
             self._allowed.setdefault(e["rule"], set()).add(e["url"])
-        if e.get("title"):
-            self._titles.setdefault(e["rule"], []).append(f'the page "{e["title"]}"')
-        if e.get("text"):  # typed on the review page
-            self._titles.setdefault(e["rule"], []).append(e["text"])
+        titles += said
 
     # -- decisions -----------------------------------------------------------
 
@@ -150,11 +194,11 @@ class Policy:
                 d = Decision("skip", reason="app not monitored")
             elif url.startswith(OWN_URLS) or title.startswith(OWN_TITLES):
                 d = Decision("skip", reason="SeeNot's own page")
-            elif url and any(re.search(p, url) for p in self.settings.allow_urls):
+            elif self.settings.allowed_url(url):
                 d = Decision("allow", reason="allowed URL")
             elif bundle_id in self._never_apps or host_of(url) in self._never_hosts:
                 d = Decision("allow", reason="you said never here")
-            elif (c := next((c for c in self.settings.allow if c.matches(bundle_id, url)), None)) is not None:
+            elif (c := next((c for c in self.settings.allow if c.enabled and c.matches(bundle_id, url)), None)) is not None:
                 d = Decision("allow", reason=f"{c.id} is never flagged")
             else:
                 return None
@@ -184,45 +228,20 @@ class Policy:
                 self._arrive(key, "other", "task", bundle_id)
                 return [Decision("skip", reason="sensitive page")]
             self._arrive(key, reading.page_kind, reading.purpose, bundle_id)
-            # An app that shows nothing but its name (WhatsApp, games, players)
-            # leaves the model guessing; only a URL pattern may fire then.
-            thin = not url and not state.get("headings") and not state.get("visible_text")
-            # A kind of page you said is never flagged ([[allow]]: shopping, ...).
-            allowed_as = next((c.id for c in self.settings.allow if reading.allow.get(c.id, 0) >= c.threshold), None)
-            # The model's best guess is a work tool (editor, terminal, docs): leave
-            # it alone. Code and notes are full of words any rule can match.
-            work = reading.page_kind == "work"
-            learning = reading.page_kind != "feed" and reading.purpose_probs.get("learn", 0) >= LEARN_MIN
             out, counted, now = [], set(), time.time()
-            for rule in self._base_rules:
+            for rule in self.active_rules():
                 v = reading.verdict(rule.id)
-                pattern = rule.matches_url(url)
-                p = v.p_hit if v else 0.0
-                feed = rule.feed_hit and reading.page_kind == "feed" and reading.purpose == "entertain"
-                if not (pattern or feed or p >= rule.threshold):
+                g = gate(rule, v.p_hit if v else 0.0, state, reading, self.settings, self._cur["intentional"])
+                if g is None:
                     continue
-                # A feed of candidates doesn't break "don't show me X"; scrolling
-                # it still counts toward a time budget.
-                if rule.kind == "deny" and rule.target == "content" and reading.page_kind == "feed" and not pattern:
-                    continue
-                if thin and not pattern:
-                    out.append(Decision("skip", rule.id, f"too little on screen to judge (p_hit {p:.2f})"))
-                    continue
-                why = ("matches URL pattern" if pattern else f"p_hit {p:.2f} >= {rule.threshold:.2f}" if p >= rule.threshold
-                       else "an entertainment feed")
-                if allowed_as and not pattern:
-                    out.append(Decision("allow", rule.id, f"{allowed_as} is never flagged"))
+                action, why = g
+                if action != "hit":
+                    out.append(Decision(action, rule.id, why))
                 elif url and url in self._allowed.get(rule.id, ()):
                     out.append(Decision("allow", rule.id, "you marked this page fine"))
                 elif self.snoozed.get(rule.id, 0) > now:
                     until = datetime.fromtimestamp(self.snoozed[rule.id]).strftime("%H:%M")
                     out.append(Decision("allow", rule.id, f"snoozed until {until}"))
-                elif work and not pattern:
-                    out.append(Decision("allow", rule.id, "work tool"))
-                elif rule.allow_learning and learning:
-                    out.append(Decision("allow", rule.id, "learning material"))
-                elif rule.allow_intentional and self._cur["intentional"]:
-                    out.append(Decision("allow", rule.id, "opened on purpose"))
                 elif rule.kind == "deny" or not self.settings.budgets:
                     out.append(Decision("intervene", rule.id, why, uuid.uuid4().hex[:12]))
                 else:
@@ -324,7 +343,7 @@ class Policy:
     def usage_summary(self) -> str:
         with self.lock:
             parts = []
-            for r in self._base_rules:
+            for r in self.active_rules():
                 if r.kind != "time_cap":
                     continue
                 seconds, visits = self.usage.get(r.id)
@@ -350,7 +369,7 @@ class Policy:
                 "at": datetime.now().isoformat(timespec="seconds"),
                 "screen": {"app": screen.get("app", ""), "bundle_id": screen.get("bundle_id", "")} if private else screen,
                 "decisions": [{"action": d.action, "rule": d.rule, "reason": d.reason} for d in decisions],
-                "thresholds": {r.id: r.threshold for r in self._base_rules},
+                "thresholds": {r.id: r.threshold for r in self.active_rules()},
                 "came_from": None if private else self._cur.get("from"),
                 "opened_on_purpose": self._cur["intentional"],
             }

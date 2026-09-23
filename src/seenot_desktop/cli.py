@@ -19,12 +19,9 @@ THRESHOLDS = (0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 0.85)
 
 def _config(args):
     """(settings, rules), with --lang overriding [settings] lang."""
-    from .rules import load_config
+    from .personalize import config_path
 
-    p = Path(args.rules)
-    if not p.exists():
-        sys.exit(f"{args.rules} not found. Copy rules.example.toml to rules.toml and edit it.")
-    settings, rules = load_config(p)
+    settings, rules = config_path(args.rules).load()
     if getattr(args, "lang", None):
         settings.lang = args.lang
     return settings, rules
@@ -424,8 +421,18 @@ def main() -> None:
     sp.add_argument("--labels", default=DEFAULT_LABELS)
     sp.add_argument("--out", default="data/train.jsonl")
 
+    from .personalize import register
+
+    register(sub, {"rules": DEFAULT_RULES, "data": DEFAULT_DATA})
+
     args = p.parse_args()
     try:
         args.fn(args)
     except KeyboardInterrupt:
         pass
+    except ValueError as e:  # a rules.toml that doesn't load, with what to fix
+        sys.exit(f"error: {e}")
+
+
+if __name__ == "__main__":
+    main()

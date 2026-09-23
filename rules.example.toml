@@ -1,30 +1,39 @@
-# Copy to rules.toml (git-ignored) and make it yours. docs/POLICY.md explains
-# the defaults: block the mechanism (endless short video, feeds, live rooms,
-# compulsive checking), not the site.
+# SeeNot's starter rules. The app copies this to rules.toml (git-ignored)
+# the first time it runs; from then on that file is yours.
 #
-# Per rule:
-#   kind              "deny" (intervene) or "time_cap" (count, intervene over budget)
+# Easiest from a terminal, and what an agent should use (every command has
+# --help; the ones that show something have --json):
+#   seenot-desktop rules list                 every rule in a sentence
+#   seenot-desktop rules add NAME --what "..."  a rule in your own words
+#   seenot-desktop rules test NAME            what it would do on your recent screens
+#   seenot-desktop rules set NAME key=value   change anything below
+# docs/PERSONALIZE.md walks through it; docs/POLICY.md explains the defaults:
+# block the mechanism (endless short video, feeds, live rooms), not the site.
+#
+# Editing by hand is fine too; the app reloads the file on save. Per rule:
+#   kind              "deny" (step in) or "time_cap" (count; step in over budget)
 #   description       what the rule is about, in your words; the model reads this
-#   description_en    optional English version; used when [settings] lang = "en"
-#   threshold         p_hit that counts as a hit; tune with `eval --suggest`
-#   feed_hit          any page the model reads as an entertainment feed hits (page rules)
+#   threshold         the model's score that counts as a hit; `rules tune` sets it
+#   sites             always a hit here: "douyin.com", "youtube.com/shorts",
+#                     "youtube.com/" (a trailing slash alone: the home page only)
+#   patterns          the same as URL regexes, for what sites can't say
+#   when              only at these times: "mon-fri 09:00-18:00", "weekends"; empty: always
+#   enabled           false: kept, but never asked and never fires
 #   target            "content" (the opened item; feeds never hit) or "page" (feeds can hit)
-#   patterns          URL regexes that hit without the model; for sites it misses
+#   feed_hit          any page the model reads as an entertainment feed hits
 #   allow_learning    lectures, tutorials and docs never hit this rule
-#   allow_intentional one item opened from search, a work app or a link in chat is exempt
-#   minutes_per_day   time_cap budget
-#   visits_per_day    time_cap: separate visits allowed per day (0 = no limit)
+#   allow_intentional one item opened from search, a work app or a chat link is fine
+#   minutes_per_day   time_cap: daily minutes
+#   visits_per_day    time_cap: separate visits a day (0 = no limit)
 #   exceptions        things that look like a hit but are fine; "Not this one" adds more
+#   note              why it's set this way, for whoever reads this next
 
 [settings]
 # false while testing: every rule hit pops up at once, time caps included.
 # Set true to count minutes and visits and only step in over budget.
 budgets = false
-# Kev was trained on English; in the trials English rule text was as good or
-# better (social: recall 0.90 vs 0.50 at precision 0.9). "zh" sends `description`.
-lang = "en"
-# Never read at all: password managers, banking. Add chat apps if you'd rather
-# they're never read either.
+# Never read at all: password managers. Add chat apps or banking apps if
+# you'd rather they're never read either.
 no_monitor = [
     "com.apple.keychainaccess",
     "com.1password.1password",
@@ -32,106 +41,82 @@ no_monitor = [
     "com.bitwarden.desktop",
 ]
 # Never judged. Clicking a link from these counts as opening it on purpose.
-allow_urls = [
-    "^https?://(docs|developer|devdocs)\\.",
-    "^https?://github\\.com/",
-    "^https?://([a-z]+\\.)?wikipedia\\.org/",
-    "^https?://arxiv\\.org/",
-    "^https?://stackoverflow\\.com/",
-    "^https?://www\\.sec\\.gov/",
-]
+allow_sites = ["github.com", "wikipedia.org", "arxiv.org", "stackoverflow.com", "sec.gov"]
+allow_urls = ["^https?://(docs|developer|devdocs)\\."]
 
 # Kinds of page no rule ever fires on, in your words. Each is one yes/no
-# question per reading; if the model says yes (P >= threshold), the page is
-# left alone even when a rule scores high. Add your own.
+# question per reading; if the model says yes, the page is left alone even
+# when a rule scores high (a rule's own sites and patterns still apply).
+
 [[allow]]
 id = "shopping"
-description = "网店：商品页、商品列表、购物车或结算页"
-description_en = "an online store: a product page, product listing, shopping cart or checkout"
-threshold = 0.35  # stores scored 0.42-0.92, every other trial page (stock pages included) 0.18 or less
+description = "an online store: a product page, product listing, shopping cart or checkout"
+threshold = 0.35
+note = "Stores scored 0.42-0.92; every other trial page, stock pages included, 0.18 or less."
 
 [[allow]]
 id = "music"
-description = "音乐播放器或音乐网站：歌曲、歌单、专辑、电台"
-description_en = "a music player or music streaming site: songs, playlists, albums, radio"
-threshold = 0.5  # music players scored 0.96-0.97, every trial page (YouTube, Bilibili, Douyin included) 0.16 or less
-# Known music sites and apps: allowed without asking the model.
-patterns = [
-    "^https://music\\.youtube\\.com",
-    "^https://open\\.spotify\\.com",
-    "^https://music\\.apple\\.com",
-    "^https://music\\.163\\.com",
-    "^https://y\\.qq\\.com",
-    "^https://www\\.kugou\\.com",
-    "^https://soundcloud\\.com",
-]
+description = "a music player or music streaming site: songs, playlists, albums, radio"
+threshold = 0.5
+note = "Music players scored 0.96-0.97; every trial page (YouTube, Bilibili, Douyin included) 0.16 or less. Known music sites and apps are allowed without asking the model."
+sites = ["music.youtube.com", "open.spotify.com", "music.apple.com", "music.163.com", "y.qq.com", "kugou.com", "soundcloud.com"]
 apps = ["com.netease.163music", "com.spotify.client", "com.apple.Music", "com.tencent.QQMusicMac", "com.kugou.mac"]
 
 [[rules]]
 id = "shortvideo"
 kind = "deny"
-description = "短视频：抖音、快手、TikTok、YouTube Shorts、Reels 这类竖屏连刷的视频"
-description_en = "short videos made for endless swiping, such as Douyin, Kuaishou, TikTok, YouTube Shorts, Instagram Reels"
-threshold = 0.15  # trials: precision 0.93, recall 1.00; held-out sites 1.00 / 1.00
-patterns = [
-    "youtube\\.com/shorts/",
-    "douyin\\.com",
-    "tiktok\\.com",
-    "kuaishou\\.com",
-    "instagram\\.com/reels?/",
-]
-# A video someone sent you is fine; the next one in the scroll is not.
+description = "short videos made for endless swiping, such as Douyin, Kuaishou, TikTok, YouTube Shorts, Instagram Reels"
+threshold = 0.15
+sites = ["youtube.com/shorts", "douyin.com", "tiktok.com", "kuaishou.com", "instagram.com/reel", "instagram.com/reels"]
 allow_intentional = true
+note = "A video someone sent you is fine; the next one in the scroll is not. Trials: precision 0.93, recall 1.00; held-out sites 1.00 / 1.00."
 
 [[rules]]
 id = "feeds"
 kind = "deny"
 target = "page"
-description = "推荐流、时间线和热榜：B站或YouTube首页推荐、微博热搜、小红书发现页、X的For You、Reddit r/popular"
-description_en = "algorithmic recommendation feeds, timelines and trending lists, such as the YouTube or Bilibili home page, Weibo hot search, Xiaohongshu explore, X For You, Reddit r/popular"
-threshold = 0.3  # trials: precision 1.00, recall 0.47 alone; feed_hit adds more
-patterns = [
-    "^https://www\\.(youtube|bilibili)\\.com/?$",
-    "s\\.weibo\\.com/top",
-    "xiaohongshu\\.com/explore",
-    "^https://(x|twitter)\\.com/home",
-    "reddit\\.com/r/popular",
+description = "algorithmic recommendation feeds, timelines and trending lists, such as the YouTube or Bilibili home page, Weibo hot search, Xiaohongshu explore, X For You, Reddit r/popular"
+threshold = 0.3
+sites = [
+    "youtube.com/",
+    "bilibili.com/",
+    "s.weibo.com/top",
+    "xiaohongshu.com/explore",
+    "x.com/home",
+    "twitter.com/home",
+    "reddit.com/r/popular",
 ]
-# Any page the model reads as an entertainment feed counts, on any site.
 feed_hit = true
+note = "Any page the model reads as an entertainment feed counts, on any site. Trials: precision 1.00, recall 0.47 from the score alone; feed_hit adds more."
 
 [[rules]]
 id = "livestream"
 kind = "deny"
-description = "娱乐直播：游戏直播、主播直播间、带货直播，比如B站直播、斗鱼、虎牙、Twitch"
-description_en = "entertainment livestreams: game streams, streamer channels, live shopping, such as Bilibili Live, Douyu, Huya, Twitch"
-threshold = 0.5  # trials: 1.00 / 1.00, but only 8 live rooms on 2 sites
-# Twitch pages carry no "live" text in the Accessibility tree; the model misses them.
+description = "entertainment livestreams: game streams, streamer channels, live shopping, such as Bilibili Live, Douyu, Huya, Twitch"
+threshold = 0.5
 patterns = [
     "live\\.bilibili\\.com/\\d+",
     "douyu\\.com/\\d+",
     "huya\\.com/\\w+",
     "twitch\\.tv/(?!directory|search|settings)[A-Za-z0-9_]+/?$",
 ]
-# A lecture or launch event streamed live is fine.
 allow_learning = true
+note = "A lecture or launch event streamed live is fine. Twitch pages carry no 'live' text in the Accessibility tree, so the model misses them; the patterns catch live rooms. Trials: 1.00 / 1.00, but only 8 live rooms on 2 sites."
 
 [[rules]]
 id = "videos"
 kind = "time_cap"
-description = "看娱乐视频：B站、YouTube上的搞笑、游戏、综艺、影视剪辑"
-description_en = "watching entertainment videos on Bilibili or YouTube: comedy, gaming, variety shows, film clips"
-threshold = 0.25  # trials: 1.00 / 1.00, but only 6 clips, all Bilibili: weak evidence
+description = "watching entertainment videos on Bilibili or YouTube: comedy, gaming, variety shows, film clips"
+threshold = 0.25
 minutes_per_day = 45
-# Courses, lectures, tutorials and talks never count.
 allow_learning = true
+note = "Courses, lectures, tutorials and talks never count. Trials: 1.00 / 1.00, but only 6 clips, all Bilibili: weak evidence."
 
 [[rules]]
 id = "social"
 kind = "time_cap"
-description = "刷社交媒体：小红书、微博、X/Twitter、即刻、Reddit"
-description_en = "browsing social media, such as Xiaohongshu, Weibo, X/Twitter, Jike, Reddit"
-threshold = 0.3  # trials: precision 0.90, recall 0.95; held-out sites 0.90 / 0.90
+description = "browsing social media, such as Xiaohongshu, Weibo, X/Twitter, Jike, Reddit"
+threshold = 0.3
 minutes_per_day = 20
-# The Reddit thread Google found for your error message doesn't count.
 allow_intentional = true
+note = "The Reddit thread Google found for your error message doesn't count. Trials: precision 0.90, recall 0.95; held-out sites 0.90 / 0.90."

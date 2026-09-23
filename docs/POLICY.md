@@ -104,13 +104,20 @@ Every intervention offers two ways out besides going back:
 ## Personalizing
 
 Everything that differs between people lives in `rules.toml`, in your own
-words and language:
+words, and every part of it is a command (docs/PERSONALIZE.md), so an
+agent can set it up as well as you can:
 
-- which modes you care about, and in what words;
+- which modes you care about, and in what words (`rules add`, `rules set ID what=...`);
 - per-rule `threshold`, `minutes_per_day`, `visits_per_day`;
 - per-rule `allow_learning` and `allow_intentional`;
+- when a rule applies (`when = ["mon-fri 09:00-18:00"]`), and whether it's on at all;
+- the sites a rule always covers, as plain domains (`sites`);
 - `exceptions` (typed, or added by "Not this one");
-- `[settings] no_monitor` (apps never read) and `allow_urls` (never judged).
+- `[settings] no_monitor` (apps never read) and `allow_sites` (never judged).
+
+A new rule is tested before it's trusted: `rules test` asks the model that
+rule on your own recent screens and shows what it would do on each, and
+`rules tune` picks its threshold from your yes/no answers.
 
 It also learns from you over time:
 
@@ -124,6 +131,7 @@ It also learns from you over time:
    (`seenot-desktop export`; see HANDOFF.md).
 
 Who you are changes the defaults a lot. A trader would never add a stocks rule, a video
-creator needs `shortvideo` off during work hours, and a student may want
-`videos` at 0 minutes during exam weeks. The rules file is where that goes.
+creator needs `shortvideo` off during work hours (`rules set shortvideo
+'when=["sat-sun", "mon-fri 18:00-24:00"]'`), and a student may want `videos`
+to step in at once during exam weeks (`rules set videos kind=deny`). The rules file is where that goes.
 There's deliberately no built-in site list to fight against.

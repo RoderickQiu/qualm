@@ -79,5 +79,5 @@ def ask(client: TypeSafeClient, state: dict, rules: list[Rule], lang: str = "zh"
         latency_ms=latency,
         input_tokens=getattr(resp.usage, "input_tokens", None),
         raw=resp.model_dump(mode="json"),
-        allow={c.id: float(a[f"allow_{c.id}"].noul) for c in allow},
+        allow={c.id: float(a[f"allow_{c.id}"].noul) for c in allow if c.enabled},
     )

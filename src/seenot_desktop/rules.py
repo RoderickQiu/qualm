@@ -13,6 +13,7 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -35,18 +36,78 @@ PURPOSES = ("learn", "task", "entertain")
 QUESTION_STYLE = os.environ.get("SEENOT_QUESTION_STYLE", "rule")
 
 
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+DAY_WORDS = {"daily": DAYS, "weekdays": DAYS[:5], "weekends": DAYS[5:]}
+
+
+def site_pattern(site: str) -> str:
+    """A site as people write it -> a URL regex. "douyin.com" is the site and
+    its subdomains; "youtube.com/shorts" is that path and everything under
+    it; "youtube.com/" (just a slash) is the home page only."""
+    s = re.sub(r"^[a-z]+://", "", site.strip().lower()).removeprefix("www.")
+    host, slash, path = s.partition("/")
+    if not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", host):
+        raise ValueError(f"site {site!r}: write a domain, like douyin.com or youtube.com/shorts")
+    h = re.escape(host)
+    if slash and not path:
+        return rf"^https?://(www\.)?{h}/?([?#]|$)"
+    return rf"^https?://([^/?#]*\.)?{h}" + (re.escape("/" + path.rstrip("/")) if path else "") + r"([/?#:]|$)"
+
+
+def _parse_when(spec: str) -> tuple[frozenset[int], int, int]:
+    """ "mon-fri 09:00-18:00", "weekends", "22:00-02:00", "mon,wed 12:00-13:00"
+    -> (days, start minute, end minute). No days: every day; no hours: all day."""
+    days, start, end = set(), 0, 24 * 60
+    for tok in spec.lower().replace(", ", ",").split():
+        if m := re.fullmatch(r"(\d{1,2}):(\d\d)-(\d{1,2}):(\d\d)", tok):
+            h1, m1, h2, m2 = map(int, m.groups())
+            if h1 > 23 or h2 > 24 or m1 > 59 or m2 > 59:
+                raise ValueError(f"when {spec!r}: bad time")
+            start, end = h1 * 60 + m1, h2 * 60 + m2
+            continue
+        for part in tok.split(","):
+            if part in DAY_WORDS:
+                days |= {DAYS.index(d) for d in DAY_WORDS[part]}
+            elif m := re.fullmatch(r"([a-z]{3})-([a-z]{3})", part):
+                a, b = (DAYS.index(x) if x in DAYS else -1 for x in m.groups())
+                if a < 0 or b < 0:
+                    raise ValueError(f"when {spec!r}: days are {', '.join(DAYS)}")
+                days |= {(a + i) % 7 for i in range((b - a) % 7 + 1)}
+            elif part in DAYS:
+                days.add(DAYS.index(part))
+            else:
+                raise ValueError(f"when {spec!r}: can't read {part!r}; e.g. \"mon-fri 09:00-18:00\" or \"weekends\"")
+    return frozenset(days or range(7)), start, end
+
+
+def in_window(specs: tuple[str, ...], now: datetime) -> bool:
+    """True if `now` falls in any of the windows; no windows means always.
+    A window past midnight ("fri 22:00-02:00") belongs to the day it starts."""
+    if not specs:
+        return True
+    day, minute = now.weekday(), now.hour * 60 + now.minute
+    for spec in specs:
+        days, start, end = _parse_when(spec)
+        if start < end and day in days and start <= minute < end:
+            return True
+        if start >= end and (day in days and minute >= start or (day - 1) % 7 in days and minute < end):
+            return True
+    return False
+
+
 @dataclass
 class Rule:
     id: str
     kind: Kind
-    description: str  # as the user wrote it, usually Chinese
-    description_en: str = ""  # optional English version; `lang = "en"` sends it
+    description: str  # what the rule is about, in your words; the model reads it
+    description_en: str = ""  # optional English version; `lang = "en"` sends it instead
     exceptions: tuple[str, ...] = ()  # repair rules: typed, or added by "Not this one"
-    # p_hit at or above this is a hit. Set it from `eval --suggest`: Kev-4B
-    # ranks well but its p_hit runs low (0.06-0.20 in the trials).
-    threshold: float = 0.5
+    # p_hit at or above this is a hit. Kev-4B ranks well but its p_hit runs
+    # low: tuned thresholds are 0.15-0.5. `rules tune` sets it from your answers.
+    threshold: float = 0.2
     target: Target = "content"
-    patterns: tuple[str, ...] = ()  # URL regexes that hit without the model's say
+    sites: tuple[str, ...] = ()  # "douyin.com", "youtube.com/shorts": hit without the model's say
+    patterns: tuple[str, ...] = ()  # the same as URL regexes, for what sites can't say
     allow_learning: bool = False  # lectures, tutorials, docs never hit this rule
     allow_intentional: bool = False  # one item opened from search or a work app is exempt
     # Any page the model reads as a feed for entertainment hits this rule too,
@@ -55,12 +116,22 @@ class Rule:
     feed_hit: bool = False
     minutes_per_day: float = 0  # time_cap: daily budget
     visits_per_day: int = 0  # time_cap: 0 = no visit limit
+    enabled: bool = True  # off: never asked, never fires
+    when: tuple[str, ...] = ()  # "mon-fri 09:00-18:00"; empty = always
+    note: str = ""  # for you (or an agent) reading the file: why it's set this way
 
     def text(self, lang: str) -> str:
         return self.description_en if lang == "en" and self.description_en else self.description
 
+    def text_field(self, lang: str) -> str:
+        """The field the model reads: what `rules set ID what=...` edits."""
+        return "description_en" if lang == "en" and self.description_en else "description"
+
     def matches_url(self, url: str) -> bool:
-        return bool(url) and any(re.search(p, url) for p in self.patterns)
+        return bool(url) and any(re.search(p, url) for p in (*map(site_pattern, self.sites), *self.patterns))
+
+    def active(self, now: datetime | None = None) -> bool:
+        return self.enabled and in_window(self.when, now or datetime.now())
 
 
 @dataclass
@@ -72,51 +143,96 @@ class AllowClass:
     description: str
     description_en: str = ""
     threshold: float = 0.5  # P(yes) at or above this: the page is this class
-    patterns: tuple[str, ...] = ()  # URL regexes known to be this class: allowed without the model
+    sites: tuple[str, ...] = ()  # known to be this class: allowed without the model
+    patterns: tuple[str, ...] = ()  # the same as URL regexes
     apps: tuple[str, ...] = ()  # bundle ids known to be this class
+    enabled: bool = True
+    note: str = ""
 
     def text(self, lang: str) -> str:
         return self.description_en if lang == "en" and self.description_en else self.description
 
+    def text_field(self, lang: str) -> str:
+        return "description_en" if lang == "en" and self.description_en else "description"
+
     def matches(self, bundle_id: str, url: str) -> bool:
-        return bundle_id in self.apps or bool(url) and any(re.search(p, url) for p in self.patterns)
+        return bundle_id in self.apps or bool(url) and any(
+            re.search(p, url) for p in (*map(site_pattern, self.sites), *self.patterns))
 
 
 @dataclass
 class Settings:
-    lang: str = "en"  # which rule description the model reads
+    lang: str = "en"  # "en": rules with a description_en send that instead of description
     no_monitor: tuple[str, ...] = ()  # bundle ids that are never read at all
-    allow_urls: tuple[str, ...] = ()  # URL regexes that are never judged
+    allow_sites: tuple[str, ...] = ()  # sites that are never judged ("github.com")
+    allow_urls: tuple[str, ...] = ()  # the same as URL regexes
     # False: a time_cap hit steps in at once, like a deny rule, instead of
     # counting minutes and visits. Clearer while testing.
     budgets: bool = True
     allow: tuple[AllowClass, ...] = ()  # [[allow]]: kinds of page never flagged
 
+    def allowed_url(self, url: str) -> bool:
+        return bool(url) and any(re.search(p, url) for p in (*map(site_pattern, self.allow_sites), *self.allow_urls))
+
 
 RULE_FIELDS = set(Rule.__dataclass_fields__)
+ALLOW_FIELDS = set(AllowClass.__dataclass_fields__)
+SETTINGS_FIELDS = set(Settings.__dataclass_fields__) - {"allow"}
+ID_RE = r"[a-z][a-z0-9_]*"
 
 
-def load_config(path: str | Path) -> tuple[Settings, list[Rule]]:
-    data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+def _make(cls, fields: set[str], table: str, raw: dict):
+    """One [[rules]] or [[allow]] entry, checked, with a message that says what to fix."""
+    rid = raw.get("id")
+    if not isinstance(rid, str) or not re.fullmatch(ID_RE, rid):
+        raise ValueError(f"[[{table}]] id {rid!r}: lowercase letters, digits and _, starting with a letter")
+    unknown = set(raw) - fields
+    if unknown:
+        raise ValueError(f"{table} {rid!r}: unknown keys {sorted(unknown)}; known: {sorted(fields)}")
+    if not raw.get("description"):
+        raise ValueError(f"{table} {rid!r}: needs a description (what it's about, in your words)")
+    obj = cls(**{k: tuple(v) if isinstance(v, list) else v for k, v in raw.items()})
+    if not 0 < obj.threshold < 1:
+        raise ValueError(f"{table} {rid!r}: threshold must be between 0 and 1")
+    for p in obj.patterns:
+        re.compile(p)
+    for site in obj.sites:
+        site_pattern(site)
+    return obj
+
+
+def parse_config(text: str) -> tuple[Settings, list[Rule]]:
+    data = tomllib.loads(text)
     s = data.get("settings", {})
+    unknown = set(s) - SETTINGS_FIELDS
+    if unknown:
+        raise ValueError(f"[settings]: unknown keys {sorted(unknown)}; known: {sorted(SETTINGS_FIELDS)}")
     settings = Settings(
         lang=s.get("lang", "en"),
         no_monitor=tuple(s.get("no_monitor", ())),
+        allow_sites=tuple(s.get("allow_sites", ())),
         allow_urls=tuple(s.get("allow_urls", ())),
         budgets=bool(s.get("budgets", True)),
-        allow=tuple(AllowClass(**{**a, "id": str(a["id"]), "patterns": tuple(a.get("patterns", ())),
-                                   "apps": tuple(a.get("apps", ()))}) for a in data.get("allow", ())),
+        allow=tuple(_make(AllowClass, ALLOW_FIELDS, "allow", a) for a in data.get("allow", ())),
     )
-    rules = []
-    for r in data["rules"]:
-        unknown = set(r) - RULE_FIELDS
-        if unknown:
-            raise ValueError(f"rule {r.get('id')!r}: unknown keys {sorted(unknown)}")
-        r = {**r, "id": str(r["id"])}
-        for key in ("exceptions", "patterns"):
-            r[key] = tuple(r.get(key, ()))
-        rules.append(Rule(**r))
+    for site in settings.allow_sites:
+        site_pattern(site)
+    rules = [_make(Rule, RULE_FIELDS, "rules", r) for r in data.get("rules", ())]
+    for r in rules:
+        if r.kind not in ("deny", "time_cap"):
+            raise ValueError(f"rule {r.id!r}: kind is deny (step in) or time_cap (count, step in over budget)")
+        if r.target not in ("content", "page"):
+            raise ValueError(f"rule {r.id!r}: target is content or page")
+        for w in r.when:
+            _parse_when(w)
+    ids = [r.id for r in rules] + [c.id for c in settings.allow]
+    if len(ids) != len(set(ids)):
+        raise ValueError(f"duplicate ids: {sorted({i for i in ids if ids.count(i) > 1})}")
     return settings, rules
+
+
+def load_config(path: str | Path) -> tuple[Settings, list[Rule]]:
+    return parse_config(Path(path).read_text(encoding="utf-8"))
 
 
 def load_rules(path: str | Path) -> list[Rule]:
@@ -210,6 +326,8 @@ def allow_question(c: AllowClass, lang: str = "zh") -> Noul:
 def build_questions(rules: list[Rule], lang: str = "zh", allow: tuple[AllowClass, ...] = ()) -> dict:
     questions = {"sensitive": SENSITIVE, "page_kind": PAGE_KIND, "purpose": PURPOSE}
     for c in allow:
+        if not c.enabled:
+            continue
         questions[f"allow_{c.id}"] = allow_question(c, lang)
     for rule in rules:
         questions[f"rule_{rule.id}"] = rule_question(rule, lang)
