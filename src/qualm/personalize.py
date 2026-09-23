@@ -744,6 +744,9 @@ FIELDS = {
                          "more slows the model sharply (25 is ~1.5 s on Kev-4B, 24 GB Mac)",
         "backend": "where the model runs: kev (on this Mac; nothing leaves it) or jev (TypeSafe's hosted model: "
                    "~0.2 s, little memory, each new screen's text is sent to TypeSafe; key via `qualm setup`)",
+        "keep_days": "days the logs keep every judgement and pop-up (what you read on screen); 0: forever. "
+                     "Reviewed judgements, your answers and what you taught Qualm are always kept",
+        "keep_shots_days": "days screenshots (for the dashboard) are kept; 0: forever",
     },
 }
 

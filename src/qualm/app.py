@@ -45,6 +45,7 @@ from AppKit import (
     NSMakeRect,
     NSMenu,
     NSMenuItem,
+    NSScreen,
     NSSegmentedControl,
     NSStatusBar,
     NSTextField,
@@ -66,6 +67,11 @@ FOCUS_SNOOZE_MINUTES = 5  # in a focus session, "I need it" is a short break
 # the option to back out and a short wait both cut use; the message alone didn't.
 FIRST_WAIT_S = 5
 FOCUS_LENGTHS = (25, 50, 90)  # minutes offered by the focus prompt
+# In a focus session a hit first gets a corner nudge (no dim, focus not
+# taken); still on such a page NUDGE_S later, the full panel. Frequent full
+# alerts were found disruptive in focus (HANDOFF, next steps: graded friction).
+NUDGE_S = 20
+NUDGE_W, NUDGE_H = 400.0, 122.0
 W, PAD = 560.0, 28.0  # panel width and margin
 BADGE = 46.0
 
@@ -87,6 +93,8 @@ class Controller(NSObject):
         self._build_menu()
         self._build_panel()
         self._build_focus_prompt()
+        self._build_nudge()
+        self._nudged: dict[tuple[str, str], float] = {}  # (rule, site or app) -> when nudged
         self._refresh()
         self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             5.0, self, "tick:", None, True)
@@ -305,12 +313,39 @@ class Controller(NSObject):
         from .decide import backend
         from .localmodel import ManagedServer
 
-        if self.demo or self.server is not None or backend(self.policy.settings) != "kev":
+        from .localmodel import listening
+
+        if self.demo or backend(self.policy.settings) != "kev":
             return
+        if self.server is not None:
+            s = self.server
+            if s.proc is None and s.ready.is_set() and not listening(s.port):
+                self.server = None  # a server we didn't start (`qualm serve`) went away: start our own
+            else:
+                return
         self.server = ManagedServer(lambda text: AppHelper.callAfter(self.set_status, text))
         self.server.start()
 
+    @objc.python_method
+    def prune(self):
+        """Old judgements and screenshots out (retention.py), once at start and once a day."""
+        from . import retention
+
+        self._pruned_on = datetime.now().date()
+
+        def run():
+            try:
+                gone = retention.prune(self.policy.data_dir, self.policy.settings)
+                if any(gone.values()):
+                    print(f"  [retention: removed {gone}]", flush=True)
+            except Exception as e:  # never let housekeeping stop the app
+                print(f"  [retention failed: {e}]", flush=True)
+
+        threading.Thread(target=run, daemon=True).start()
+
     def tick_(self, timer):
+        if not self.demo and getattr(self, "_pruned_on", None) not in (None, datetime.now().date()):
+            self.prune()
         self.ensure_server()  # also after [settings] backend changes to kev
         self._refresh()
         if self.dimmer.windows and not self.panel.isVisible():
@@ -402,7 +437,83 @@ class Controller(NSObject):
         self.set_status(f"{ev.screen.app.strip(chr(0x200e))}: {summary}")
         hit = next((d for d in ev.decisions if d.action == "intervene"), None)
         if hit and not self.panel.isVisible():
+            if self._nudge_first(hit, ev):
+                return
             self._show(hit, ev)
+
+    # -- the focus nudge -----------------------------------------------------
+
+    @objc.python_method
+    def _build_nudge(self):
+        self.nudge, view = ui.hud(NUDGE_W, NUDGE_H, PANEL_TITLE)
+        box, icon = ui.badge("focus", 34)
+        for v in (box, icon):
+            v.setFrame_(NSMakeRect(16, NUDGE_H - 16 - 34, 34, 34))
+        tx, tw = 16 + 34 + 12, NUDGE_W - (16 + 34 + 12) - 18
+        self.nudge_title = ui.label("", 13, 0.3, width=tw)
+        self.nudge_title.setFrameOrigin_((tx, NUDGE_H - 14 - 17))
+        self.nudge_text = ui.label("", 12, 0.0, NSColor.secondaryLabelColor(), width=tw, wrap=True)
+        self.nudge_text.setFrame_(NSMakeRect(tx, NUDGE_H - 14 - 17 - 4 - 32, tw, 32))  # two lines at most
+        back = NSButton.buttonWithTitle_target_action_("Take me back", self, "nudgeBack:")
+        back.sizeToFit()
+        back.setFrameOrigin_((tx - 6, 12))  # the bezel's inset: its text lines up with the words above
+        later = ui.link("Not now", self, "nudgeLater:")
+        bf, lf = back.frame(), later.frame()
+        later.setFrameOrigin_((bf.origin.x + bf.size.width + 10, bf.origin.y + (bf.size.height - lf.size.height) / 2))
+        for v in (box, icon, self.nudge_title, self.nudge_text, back, later):
+            view.addSubview_(v)
+        self.nudge_ev = None
+
+    @objc.python_method
+    def _nudge_first(self, d: Decision, ev: Event) -> bool:
+        """True if this hit gets the corner nudge instead of the panel."""
+        focus = self.policy.focusing()
+        if focus is None or d.panel or self.demo == "focus":
+            return False
+        key = (d.rule, host_of(ev.screen.url) or ev.screen.bundle_id)
+        now = time.time()
+        if now - self._nudged.get(key, 0) < 3 * NUDGE_S:
+            return False  # nudged a moment ago and still here: the panel
+        self._nudged[key] = now
+        from .explain import label
+
+        rule = self.policy.rule(d.rule)
+        self.nudge_title.setStringValue_(f"You're here to: {focus['intent']}"[:60])
+        self.nudge_text.setStringValue_(f"This looks like {label(rule, self.policy.settings.lang)}.")
+        self.nudge_ev = (d, ev)
+        screen = NSScreen.mainScreen().visibleFrame()
+        self.nudge.setFrameOrigin_((screen.origin.x + screen.size.width - NUDGE_W - 16,
+                                    screen.origin.y + screen.size.height - NUDGE_H - 12))
+        self.nudge.setAlphaValue_(0.0)
+        self.nudge.orderFrontRegardless()  # shown, but the page keeps the keyboard
+        ui.fade(self.nudge, 1.0)
+        self.policy.rejudge_in(NUDGE_S)  # still here then: the full panel
+        which = self.nudge_ev
+        AppHelper.callLater(NUDGE_S, lambda: self._hide_nudge() if self.nudge_ev is which else None)
+        return True
+
+    @objc.python_method
+    def _hide_nudge(self):
+        self.nudge_ev = None
+        nudge = self.nudge
+        ui.fade(nudge, 0.0, 0.15, lambda: nudge.orderOut_(None))
+
+    def nudgeBack_(self, sender):
+        if self.nudge_ev is None:
+            return
+        d, ev = self.nudge_ev
+        self._hide_nudge()
+        self.policy.log_response(d.id, "back", d.rule)
+        self._nudged.pop((d.rule, host_of(ev.screen.url) or ev.screen.bundle_id), None)
+        if not self.demo:
+            threading.Thread(target=go_back, args=(ev.screen.bundle_id, ev.screen.url, self.policy.page_fine),
+                             daemon=True).start()
+
+    def nudgeLater_(self, sender):
+        if self.nudge_ev is not None:
+            d, _ = self.nudge_ev
+            self.policy.log_response(d.id, "not now", d.rule)
+            self._hide_nudge()
 
     # -- the panel -----------------------------------------------------------
 
@@ -514,7 +625,8 @@ class Controller(NSObject):
         rule = self.policy.rule(d.rule)
         lang = self.policy.settings.lang
         focus = self.policy.focusing()
-        eyebrow, head = headline(d, rule, lang, focus)
+        shown = self.policy.popups_today(d.rule, but=d.id)
+        eyebrow, head = headline(d, rule, lang, focus, n=len(shown))
         self.mode = {"check_in": "checkin", "times_up": "timesup"}.get(d.panel, "ask")
         kind = "focus" if focus else {"checkin": "checkin", "timesup": "timesup"}.get(self.mode, "deny")
         ui.recolor(self.badge_box, kind)
@@ -526,7 +638,8 @@ class Controller(NSObject):
         host = host_of(ev.screen.url)
         self.place.setStringValue_(f"{where} — {host}" if host and host not in where.lower() else where)
         self.body.setStringValue_(reason(d, ev.reading, rule, lang))
-        self.context_text = context(self.policy.popups_today(d.rule, but=d.id), self.policy.last_snooze(d.rule))
+        self.headline.setToolTip_("The wording changes now and then, so it doesn't turn into wallpaper.")
+        self.context_text = context(shown, self.policy.last_snooze(d.rule))
         checking = ev.reading is not None and not self.demo and self.mode == "ask"
         self.evidence_text = "Checking which part of the screen triggered it…" if checking else ""
         self.why.setStringValue_("")
@@ -544,8 +657,10 @@ class Controller(NSObject):
         else:
             self.why.setPlaceholderString_("What's it for? A few words.")
             self._default(self.back)
-            self._start_countdown(min(self.policy.settings.max_wait_s,
-                                      FIRST_WAIT_S * 2 ** self.policy.snoozes_in_last_hour()))
+            # Doubles with each "I need it" in the last hour and each return
+            # after going back from this rule's pages in the last 30 minutes.
+            self._start_countdown(min(self.policy.settings.max_wait_s, FIRST_WAIT_S * 2 ** (
+                self.policy.snoozes_in_last_hour() + self.policy.returns(d.rule))))
         self._layout()
         if checking:
             threading.Thread(target=self._find_evidence, args=(d, ev), daemon=True).start()
@@ -918,8 +1033,13 @@ def run_app(policy: Policy | None, rules_path: str, budget: int, demo: str | Non
         if demo:
             _demo(ctrl, policy, demo)
         else:
+            ctrl.prune()
             ctrl.ensure_server()
-            watcher = Watcher(policy, on_event, on_status, budget=budget, rules_path=rules_path)
+            from .events import FrontWindowEvents
+
+            wake = threading.Event()
+            keep.append(FrontWindowEvents(wake).start())  # the front app and window's changes wake the watcher
+            watcher = Watcher(policy, on_event, on_status, budget=budget, rules_path=rules_path, wake=wake)
             ctrl.watcher = watcher
             threading.Thread(target=watcher.run, daemon=True).start()
         if review:

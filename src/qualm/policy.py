@@ -32,6 +32,7 @@ LEARN_MIN = 0.6  # P(purpose = learn) needed for the learning exemption
 # scored 0.82 or more; the pages it wrongly fired on in real use (an Apple Ads
 # "recommendations" page, a job board) won the argmax at 0.41-0.55.
 ENTERTAIN_MIN = 0.6
+RETURN_S = 1800  # coming back to a rule's pages within this long after going back: a return
 MAX_TICK_S = 5.0  # longer gaps (sleep, a stalled model call) don't count as usage
 MAX_EXCEPTIONS = 10  # per rule; the newest "Not this one" titles the model reads
 OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge Qualm itself
@@ -247,6 +248,7 @@ class Policy:
         self.lock = threading.RLock()
         self.snoozed: dict[str, float] = {}  # rule id -> wall time the snooze ends
         self._snooze_times: list[float] = []  # when "I need it" was used, for the growing wait
+        self._back_times: dict[str, list[float]] = {}  # rule -> when "Take me back" / "Done" was answered
         self._snoozes: dict[str, tuple[float, float, str]] = {}  # rule id -> (ends at, minutes, what for)
         self.paused_until = 0.0
         self.focus: dict | None = None  # {"intent", "started", "until"}: see start_focus()
@@ -676,8 +678,12 @@ class Policy:
         """Every judgement, to data/judgements.jsonl, for `qualm review`:
         what was on screen, exactly what the model read, every answer's
         probabilities, the screen before, and what the policy did and why.
-        Sensitive pages and unmonitored apps are logged without their content."""
-        private = any(d.reason in ("sensitive page", "app not monitored") for d in decisions)
+        Sensitive pages and unmonitored apps are logged without their content.
+        A sensitive page keeps its site (the host, nothing after it) and its
+        score, so a page wrongly taken for private can be found later: the
+        first day's 69 Chrome ones could only be guessed from their neighbours."""
+        sensitive = any(d.reason == "sensitive page" for d in decisions)
+        private = sensitive or any(d.reason == "app not monitored" for d in decisions)
         with self.lock:
             event = {
                 "id": uuid.uuid4().hex[:8],
@@ -690,6 +696,11 @@ class Policy:
             }
             if (focus := self.focusing()) is not None:
                 event["focus"] = focus["intent"]
+            if sensitive:
+                if site := host_of(screen.get("url", "")):
+                    event["screen"]["site"] = site
+                if reading is not None:
+                    event["sensitive"] = round(reading.sensitive, 3)
         if shot and not private:
             event["shot"] = shot
         if reading is not None and not private:
@@ -722,7 +733,19 @@ class Policy:
         })
 
     def log_response(self, decision_id: str, response: str, rule_id: str, **extra) -> None:
+        if response in ("back", "done"):
+            with self.lock:
+                self._back_times.setdefault(rule_id, []).append(time.time())
         self._log({"type": "response", "id": decision_id, "rule": rule_id, "response": response, **extra})
+
+    def returns(self, rule_id: str, within: float = RETURN_S) -> int:
+        """How often you went back from this rule's pages lately, and are here again.
+        Graded friction (InteractOut, CHI 2024): each return makes "I need it"
+        wait longer, instead of blocking harder."""
+        with self.lock:
+            cutoff = time.time() - within
+            kept = self._back_times[rule_id] = [t for t in self._back_times.get(rule_id, []) if t > cutoff]
+            return len(kept)
 
     def _log(self, event: dict) -> None:
         _log_line(self.data_dir, event)

@@ -183,6 +183,11 @@ class Settings:
     # TypeSafe's hosted model, each new screen's text is sent there. The
     # environment's QUALM_BACKEND wins over this.
     backend: str = "kev"
+    # How long the logs keep what you read on screen (retention.py): every
+    # judgement and pop-up for keep_days, screenshots for keep_shots_days.
+    # 0 keeps them forever. Your reviews and what you taught Qualm are kept.
+    keep_days: int = 90
+    keep_shots_days: int = 30
     allow: tuple[AllowClass, ...] = ()  # [[allow]]: kinds of page never flagged
 
     def allowed_url(self, url: str) -> bool:
@@ -240,6 +245,8 @@ def parse_config(text: str) -> tuple[Settings, list[Rule]]:
         block_clicks=bool(s.get("block_clicks", Settings.block_clicks)),
         max_questions=int(s.get("max_questions", Settings.max_questions)),
         backend=s.get("backend", Settings.backend),
+        keep_days=int(s.get("keep_days", Settings.keep_days)),
+        keep_shots_days=int(s.get("keep_shots_days", Settings.keep_shots_days)),
         allow=tuple(_make(AllowClass, ALLOW_FIELDS, "allow", a) for a in data.get("allow", ())),
     )
     for site in settings.allow_sites:
@@ -248,6 +255,9 @@ def parse_config(text: str) -> tuple[Settings, list[Rule]]:
         raise ValueError("[settings] max_wait_s: seconds, between 0 and 600")
     if settings.backend not in BACKENDS:
         raise ValueError(f"[settings] backend: one of {', '.join(BACKENDS)} (kev on this Mac, jev hosted by TypeSafe)")
+    for key in ("keep_days", "keep_shots_days"):
+        if not 0 <= getattr(settings, key) <= 3650:
+            raise ValueError(f"[settings] {key}: days, between 0 (forever) and 3650")
     if not 0 <= settings.extensions <= 5:
         raise ValueError("[settings] extensions: between 0 and 5")
     rules = [_make(Rule, RULE_FIELDS, "rules", r) for r in data.get("rules", ())]

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 import unicodedata
 from dataclasses import asdict, dataclass, field
 
@@ -30,6 +31,21 @@ DEFAULT_CHAR_BUDGET = 700
 MAX_NODES = 1500  # breadth-first cap on the accessibility tree walk
 HEADING_LIMIT = 8
 TEXT_LIMIT = 12
+OCR_BELOW = 20  # characters of AX text under which a non-browser window is read from its picture (ocr.py)
+FIRST_WAIT_S = 0.3  # a Chromium/Electron tree switched on just now: one more look after this
+
+# Safari's AutoFill popover sits in the window's AX tree outside the page, and
+# stayed there for pages after a sign-in ("Apple Account / Continue with Touch
+# ID / <your name>"), making them look like login pages. The walk drops what's
+# outside the page once it finds one; these lines are dropped from windows
+# where it doesn't.
+AUTOFILL_LINES = ("Continue with Touch ID", "Apple Account", "Apple 账户")
+AUTOFILL_PREFIXES = ("Sign in to your Apple Account for ",)
+SKIP_ROLES = ("AXMenu", "AXMenuBar", "AXPopover")  # never the page: menus and popovers
+# Terminals, editors and notes keep their text in text areas, which the walk
+# doesn't read; a window with one is never pictured for OCR (it could hold
+# anything you typed, and with the hosted model the text would leave the Mac).
+TEXT_AREA_ROLES = ("AXTextArea", "AXTextView")
 
 BROWSER_UI = ("chrome://", "chrome-extension://", "chrome-untrusted://", "edge://", "about:", "devtools://")
 
@@ -51,6 +67,7 @@ class ScreenState:
     text: list[str] = field(default_factory=list)
     ax_trusted: bool = True
     frame: list[float] = field(default_factory=list)  # window x, y, w, h in points, for the review screenshot
+    ocr: bool = False  # `text` was read from a picture of the window, not the AX tree
 
     def signature(self) -> tuple[str, str, str]:
         """What counts as 'the screen changed' for the watcher."""
@@ -78,7 +95,10 @@ class ScreenState:
         return out
 
     def as_record(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if not d["ocr"]:
+            del d["ocr"]  # records from before OCR stay byte for byte the same
+        return d
 
 
 def _ax(element, attr: str):
@@ -108,23 +128,32 @@ def _title(title: str, app: str) -> str:
     return t or title
 
 
-def _walk(window, state: ScreenState) -> None:
+def _walk(window, state: ScreenState) -> int:
+    """Breadth first. What's found before the page (toolbars, a popover left
+    open) is dropped when the page turns up: only the page's text is kept.
+    Returns how many text areas it passed (see TEXT_AREA_ROLES)."""
     queue = [window]
-    seen = 0
+    seen = areas = 0
     seen_text: set[str] = set()
+    in_page = False
     while queue and seen < MAX_NODES:
         node = queue.pop(0)
         seen += 1
         role = _ax(node, "AXRole") or ""
-        if role == "AXWebArea" and not state.url:
+        if role in SKIP_ROLES and not in_page:
+            continue
+        areas += role in TEXT_AREA_ROLES
+        if role == "AXWebArea" and not in_page:
             url = _clean(_ax(node, "AXURL"))
             if url.startswith(BROWSER_UI):
                 # Chrome's own UI (the address-bar dropdown, extension popups)
                 # is a web area too; skip it and keep looking for the page.
                 continue
-            state.url = url
-            # The page is what matters; drop the queued tabs and toolbars.
-            queue = []
+            state.url = state.url or url
+            # The page is what matters; drop the queued tabs and toolbars, and
+            # anything read from them.
+            in_page, queue = True, []
+            state.headings, state.text, seen_text = [], [], set()
         if role == "AXHeading" and len(state.headings) < HEADING_LIMIT:
             t = _clean(_ax(node, "AXTitle") or _ax(node, "AXDescription") or _ax(node, "AXValue"))
             if t and t not in seen_text:
@@ -138,6 +167,18 @@ def _walk(window, state: ScreenState) -> None:
         children = _ax(node, "AXChildren")
         if children:
             queue.extend(children)
+    if not in_page:
+        state.headings = [t for t in state.headings if not _autofill(t)]
+        state.text = [t for t in state.text if not _autofill(t)]
+    return areas
+
+
+def _autofill(line: str) -> bool:
+    return line in AUTOFILL_LINES or line.startswith(AUTOFILL_PREFIXES)
+
+
+def _chars(state: ScreenState) -> int:
+    return sum(map(len, state.headings)) + sum(map(len, state.text))
 
 
 def _frame(window) -> list[float]:
@@ -168,6 +209,9 @@ def _browser_url(bundle_id: str) -> str:
         return ""
 
 
+_switched_on: set[int] = set()  # pids whose web accessibility tree capture() has asked for
+
+
 def capture(skip: tuple[str, ...] = ()) -> ScreenState:
     """The front window. Apps in `skip` (settings.no_monitor) are named but
     never read: no title, no URL, no text."""
@@ -180,16 +224,49 @@ def capture(skip: tuple[str, ...] = ()) -> ScreenState:
     if state.bundle_id in skip:
         return state
     if state.ax_trusted:
-        root = AXUIElementCreateApplication(app.processIdentifier())
+        pid = app.processIdentifier()
+        root = AXUIElementCreateApplication(pid)
         # Chromium and Electron apps build their web accessibility tree only
         # when a client asks; without this, a browser shows a title and no text.
         AXUIElementSetAttributeValue(root, "AXManualAccessibility", True)
+        first = pid not in _switched_on
+        _switched_on.add(pid)
         window = _ax(root, "AXFocusedWindow")
         if window is not None:
             state.window_title = _title(_clean(_ax(window, "AXTitle")), state.app)
             state.frame = _frame(window)
-            _walk(window, state)
+            areas = _walk(window, state)
+            if first and not _chars(state):
+                # Asked just now: the tree appears a moment later (the set
+                # call itself returns -25205). One more look, once per process.
+                time.sleep(FIRST_WAIT_S)
+                state.headings, state.text, state.url = [], [], ""
+                areas = _walk(window, state)
+            if (_chars(state) < OCR_BELOW and not areas and not state.url
+                    and state.bundle_id not in BROWSER_APPLESCRIPT):
+                _read_pixels(state, pid)
     if not state.url:
         state.url = _browser_url(state.bundle_id)
     state.url = _short_url(state.url)
     return state
+
+
+def _read_pixels(state: ScreenState, pid: int) -> None:
+    """A window that draws its text (a video player, a canvas): read it from a picture."""
+    from .ocr import window_text
+
+    try:
+        lines = window_text(pid, state.frame, state.window_title)
+    except Exception:  # no Screen Recording, Vision unavailable: keep what AX gave
+        return
+    seen = set(state.headings) | set(state.text)
+    title = state.window_title.replace(" ", "")
+    extra = []
+    for line in lines:
+        t = _clean(line)
+        if t and t not in seen and t.replace(" ", "") != title:  # the title bar, read back
+            seen.add(t)
+            extra.append(t)
+    if extra:
+        state.text = (state.text + extra)[:TEXT_LIMIT]
+        state.ocr = True

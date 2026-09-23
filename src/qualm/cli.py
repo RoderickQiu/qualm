@@ -358,9 +358,42 @@ def cmd_serve(args) -> None:
 
 
 def cmd_uninstall(args) -> None:
-    from .autostart import uninstall
+    from . import autostart
 
-    uninstall()
+    if not args.all:
+        autostart.uninstall()
+        return
+    from .localmodel import listening
+    from .review import PORT
+
+    items = autostart.everything()
+    if not items:
+        print("Nothing of Qualm's is left on this Mac.")
+    else:
+        print("This removes:")
+        for what, where in items:
+            print(f"  {what}" + (f": {where}" if where else ""))
+    kept = autostart.left_behind()
+    if kept:
+        print("It leaves the model downloads, which other tools may share:")
+        for repo, size in kept:
+            print(f"  {repo} ({size / 2**30:.1f} GB)")
+        print("  remove them yourself if nothing else uses them:")
+        print(f"  {autostart.forget_downloads_command([r for r, _ in kept])}")
+    if not items or args.dry_run:
+        return
+    if listening(PORT):
+        sys.exit("Qualm is running: quit it first (menu bar > Quit Qualm), then run this again.")
+    if not args.yes:
+        if not sys.stdin.isatty():
+            sys.exit("Not run from a terminal: add --yes to remove all of this.")
+        if input('Type "yes" to remove all of this: ').strip().lower() != "yes":
+            print("Nothing removed.")
+            return
+    for line in autostart.uninstall_all():
+        print(f"✓ {line}")
+    if kept:
+        print(f"Left: {', '.join(r for r, _ in kept)}. To remove them: {autostart.forget_downloads_command([r for r, _ in kept])}")
 
 
 def _ask(prompt: str, default: str) -> str:
@@ -510,7 +543,11 @@ def main() -> None:
     sp.add_argument("--bits", type=int, choices=(8, 16), default=8,
                     help="8 (default): half the memory, the same answers on the trials; 16: bf16 as trained")
     add("install", cmd_install, model=False)
-    add("uninstall", cmd_uninstall, model=False)
+    sp = add("uninstall", cmd_uninstall, model=False)
+    sp.add_argument("--all", action="store_true",
+                    help="also remove your rules and data, the model runtime, the logs, the key and the `qualm` command")
+    sp.add_argument("--yes", action="store_true", help="don't ask first")
+    sp.add_argument("--dry-run", action="store_true", help="only list what --all would remove")
 
     sp = add("setup", cmd_setup, model=False)
     sp.add_argument("--backend", choices=("kev", "jev"), help="kev: on this Mac; jev: hosted by TypeSafe")

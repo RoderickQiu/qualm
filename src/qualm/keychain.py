@@ -36,6 +36,28 @@ def api_key() -> str | None:
     return os.environ.get(ACCOUNT) or stored()
 
 
+def forget() -> bool:
+    """Remove the key from the keychain; False if there was none."""
+    if stored() is None:
+        return False
+    subprocess.run(["security", "-i"], input=f"delete-generic-password -s {SERVICE} -a {ACCOUNT}\n",
+                   capture_output=True, text=True)
+    if stored() is not None:
+        raise RuntimeError("couldn't remove the key from the keychain")
+    return True
+
+
+def migrate_env_key() -> bool:
+    """A key only in a checkout's .env (or the environment) goes into the keychain,
+    where Qualm.app, which reads neither, finds it. True if one was stored."""
+    load_env()
+    key = os.environ.get(ACCOUNT)
+    if not key or stored() is not None:
+        return False
+    store(key)
+    return True
+
+
 def store(key: str) -> None:
     key = key.strip()
     if not key or any(c in key for c in " \"'\\\n"):

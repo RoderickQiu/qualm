@@ -38,6 +38,14 @@ def load_judgements(data_dir: Path) -> list[dict]:
     return [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
 
 
+def _with_shots(data_dir: Path, judgements: list[dict]) -> list[dict]:
+    """Screenshots are kept for fewer days than judgements (retention.py):
+    an old one's file is gone, so the page shows "no screenshot" instead of a broken image."""
+    shots = {p.name for p in (data_dir / "shots").glob("*.jpg")} if (data_dir / "shots").exists() else set()
+    return [{k: v for k, v in j.items() if k != "shot"} if j.get("shot") and j["shot"] not in shots else j
+            for j in judgements]
+
+
 def load_reviews(data_dir: Path) -> dict[str, dict]:
     path = data_dir / "reviews.jsonl"
     out: dict[str, dict] = {}
@@ -359,7 +367,7 @@ def start_server(data_dir: Path, rules_path: Path, port: int = PORT) -> Threadin
 
         settings, rules = load_config(rules_path)
         return {
-            "judgements": load_judgements(data_dir),
+            "judgements": _with_shots(data_dir, load_judgements(data_dir)),
             "reviews": load_reviews(data_dir),
             "rules": [{"id": r.id, "kind": r.kind, "text": r.text(settings.lang), "threshold": r.threshold,
                        "exceptions": list(r.exceptions)} for r in rules if r.enabled],

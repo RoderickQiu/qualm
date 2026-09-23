@@ -8,7 +8,7 @@ from qualm.rules import Settings
 from qualm.state import ScreenState
 
 
-def run(monkeypatch, tmp_path, screens, fail_first=False):
+def run(monkeypatch, tmp_path, screens, fail_first=False, wake=None, captures=None):
     """screens: one ScreenState per 1-second tick. Returns the ticks the model was asked on."""
     clock = {"t": 0.0}
     feed = iter(screens)
@@ -18,9 +18,12 @@ def run(monkeypatch, tmp_path, screens, fail_first=False):
     monkeypatch.setattr(w, "NSWorkspace", types.SimpleNamespace(sharedWorkspace=lambda: workspace))
     monkeypatch.setattr(w, "make_client", lambda settings=None: types.SimpleNamespace(backend="kev"))
     monkeypatch.setattr(w.time, "monotonic", lambda: clock["t"])
-    watcher = w.Watcher(Policy(Settings(), [], tmp_path), lambda ev: None, interval=0, debounce=0.5, recheck=30, presence=False)
+    watcher = w.Watcher(Policy(Settings(), [], tmp_path), lambda ev: None, interval=0, debounce=0.5, recheck=30,
+                        presence=False, wake=wake(clock) if wake else None)
 
     def capture(skip=()):
+        if captures is not None:
+            captures.append(clock["t"])
         try:
             return next(feed)
         except StopIteration:
@@ -51,6 +54,30 @@ def test_qualms_own_windows_are_never_judged(monkeypatch, tmp_path):
     setup = ScreenState(app="Qualm", bundle_id="python3", window_title="Set up Qualm", text=["Short videos: TikTok, Shorts"])
     app = ScreenState(app="Qualm", bundle_id="com.qualm.app", window_title="Anything", text=["Douyin"])
     assert run(monkeypatch, tmp_path, [setup] * 5 + [app] * 5) == []
+
+
+class IdleWake:
+    """events.py's Event, with no event ever coming: each nap lasts the whole idle time."""
+
+    def __init__(self, clock):
+        self.clock = clock
+
+    def wait(self, seconds):
+        self.clock["t"] += seconds
+
+    def clear(self):
+        pass
+
+
+def test_with_events_an_idle_screen_is_read_every_few_seconds(monkeypatch, tmp_path):
+    seen = []
+    # screens[i] is what a read returns; each read after the first costs 3 s of idle nap.
+    screens = [page("a")] * 3 + [page("b")] * 3
+    asked = run(monkeypatch, tmp_path, screens, wake=IdleWake, captures=seen)
+    # a: asked 1 s after it appeared (the settle keeps the 1 s pace), then idle 3 s naps;
+    # b: seen at the next read, asked on the one after (the debounce), fast again meanwhile.
+    assert asked == [1.0, 8.0]
+    assert seen[:4] == [0.0, 1.0, 4.0, 7.0]
 
 
 def test_an_unchanged_screen_is_asked_once(monkeypatch, tmp_path):

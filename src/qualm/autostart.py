@@ -23,7 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import localmodel, paths
+from . import keychain, localmodel, paths
 
 AGENTS = Path.home() / "Library" / "LaunchAgents"
 APP_LABEL = "com.qualm.app"
@@ -117,13 +117,83 @@ def uninstall(quiet: bool = False) -> None:
             print(f"not installed: {label}")
 
 
+SHIM = Path.home() / ".local" / "bin" / "qualm"
+HF_HUB = Path.home() / ".cache" / "huggingface" / "hub"
+HF_REPOS = {"models--jaredpalmer--kev-4b": "model/jaredpalmer/kev-4b",
+            "models--Qwen--Qwen3.5-4B-Base": "model/Qwen/Qwen3.5-4B-Base"}
+
+
+def _ours(shim: Path) -> bool:
+    return shim.is_file() and "Qualm.app" in shim.read_text(encoding="utf-8", errors="ignore")
+
+
+def _size(path: Path) -> int:
+    """Bytes of the files under `path`, each counted once: the HF cache links a
+    repo's files into a shared store (hub/blobs), so links are followed."""
+    seen, total = set(), 0
+    for f in path.rglob("*"):
+        real = f.resolve()
+        if real not in seen and real.is_file():
+            seen.add(real)
+            total += real.stat().st_size
+    return total
+
+
+def everything() -> list[tuple[str, Path | None]]:
+    """What `uninstall --all` removes: (what, where), where there's a path."""
+    items: list[tuple[str, Path | None]] = []
+    for label in (APP_LABEL, *OLD_LABELS):
+        if (p := AGENTS / f"{label}.plist").exists():
+            items.append(("the login item", p))
+    if keychain.stored() is not None:
+        items.append(("the TypeSafe API key in your keychain", None))
+    if _ours(SHIM):
+        items.append(("the `qualm` command", SHIM))
+    if paths.home().exists():
+        items.append(("your rules and data, the local model's runtime and its 8-bit weights", paths.home()))
+    if paths.LOGS.exists():
+        items.append(("the logs", paths.LOGS))
+    return items
+
+
+def left_behind() -> list[tuple[str, int]]:
+    """Downloads other tools may share, so `uninstall --all` leaves them: (repo id, bytes)."""
+    return [(repo, _size(HF_HUB / d)) for d, repo in HF_REPOS.items() if (HF_HUB / d).exists()]
+
+
+def forget_downloads_command(repos: list[str]) -> str:
+    """How to remove them: Hugging Face's own tool frees the shared store too (deleting the folder doesn't)."""
+    return f"{paths.uv() or 'uv'} tool run --from huggingface_hub hf cache rm {' '.join(repos)}"
+
+
+def uninstall_all() -> list[str]:
+    """Everything `everything()` lists, removed. Returns what was done, in words."""
+    import shutil
+
+    done = []
+    for what, where in everything():
+        if what == "the login item":
+            if "removed the login item" not in done:
+                uninstall(quiet=True)  # every Qualm agent, old ones too
+                done.append("removed the login item")
+            continue
+        if where is None:
+            keychain.forget()
+        elif where.is_dir():
+            shutil.rmtree(where)
+        else:
+            where.unlink()
+        done.append(f"removed {what} ({where})" if where else f"removed {what}")
+    return done
+
+
 def cli_shim() -> Path | None:
     """From Qualm.app: a `qualm` command in ~/.local/bin that runs the app's copy."""
     b = paths.bundle()
     if not b:
         return None
-    target = Path.home() / ".local" / "bin" / "qualm"
-    if target.exists() and "Qualm.app" not in target.read_text(encoding="utf-8", errors="ignore"):
+    target = SHIM
+    if target.exists() and not _ours(target):
         return None  # someone else's qualm (a uv tool install): leave it
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(f'#!/bin/sh\nexec "{b}/Contents/MacOS/Qualm" -m qualm "$@"\n', encoding="utf-8")

@@ -75,6 +75,8 @@ class Watcher:
         rules_path: str | None = None,
         shots: bool = True,
         presence: bool = True,
+        wake: threading.Event | None = None,
+        idle: float = 3.0,
     ):
         self.policy, self.on_event, self.on_status = policy, on_event, on_status
         self.budget, self.interval, self.debounce, self.recheck = budget, interval, debounce, recheck
@@ -93,6 +95,10 @@ class Watcher:
         self._rejudge = False  # set when focus or pause changed, or the policy asks
         self.dwell = DWELL_S
         self.presence = Presence() if presence else None
+        # With `wake` (events.py sets it when the front app, window or title
+        # changes), an idle loop looks every `idle` s instead of every
+        # `interval`: while a screen settles or a pop-up waits, it stays fast.
+        self.wake, self.idle = wake, idle
 
     def _away(self, front) -> bool:
         if self.presence is None:
@@ -209,7 +215,15 @@ class Watcher:
                 client = self._client(client)
                 if not self._judge(client, s):
                     judged_state = None  # the model didn't answer: ask again next time
+            settling = changed_at > last_asked or self._pending is not None or self._rejudge or judged_state is None
+            self._nap(busy=settling)
+
+    def _nap(self, busy: bool) -> None:
+        if self.wake is None or busy:
             time.sleep(self.interval)
+            return
+        self.wake.wait(self.idle)
+        self.wake.clear()
 
     def _ask(self, client, state: dict) -> Reading:
         """The model's answer, or the cached one if it already read exactly

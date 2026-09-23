@@ -14,6 +14,11 @@ page looks like and why, plainly; the option to back out does the work,
 not a lecture. Nothing here counts against you ("again?", "wasted"): the
 context line is neutral, and the time you asked for is echoed back when
 it's up.
+
+The headline rotates between a few wordings, one per pop-up, and says so
+(a tooltip; README): a fixed message wears off, rotating ones hold up if
+people know they rotate (Kovacs et al., CSCW 2018). Your own words in a
+focus session never rotate.
 """
 
 from __future__ import annotations
@@ -42,8 +47,13 @@ def label(rule: Rule, lang: str = "en") -> str:
     return head or rule.id
 
 
-def headline(d: Decision, rule: Rule, lang: str, focus: dict | None = None) -> tuple[str, str]:
-    """(eyebrow, headline) for the pop-up."""
+DENY_WORDS = ("This looks like {}.", "Qualm reads this as {}.", "A second look: this seems to be {}.")
+FEED_WORDS = ("This is a feed, picked for you.", "A feed of recommendations, chosen by the site.",
+              "Nothing here is your pick yet: it's a feed.")
+
+
+def headline(d: Decision, rule: Rule, lang: str, focus: dict | None = None, n: int = 0) -> tuple[str, str]:
+    """(eyebrow, headline) for the pop-up; `n`: this rule's pop-ups earlier today, to rotate the wording."""
     name = rule.id.replace("_", " ")
     if focus is not None:
         left = max(1, round((focus["until"] - datetime.now().timestamp()) / 60))
@@ -53,8 +63,8 @@ def headline(d: Decision, rule: Rule, lang: str, focus: dict | None = None) -> t
     if d.panel == "times_up":
         return f"{name} · time's up", d.reason[0].upper() + d.reason[1:] + "."
     if d.reason == "an entertainment feed":
-        return name, "This is a feed, picked for you."
-    return name, f"This looks like {label(rule, lang)}."
+        return name, FEED_WORDS[n % len(FEED_WORDS)]
+    return name, DENY_WORDS[n % len(DENY_WORDS)].format(label(rule, lang))
 
 
 def reason(d: Decision, reading: Reading | None, rule: Rule, lang: str) -> str:

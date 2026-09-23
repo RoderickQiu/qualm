@@ -263,10 +263,13 @@ def test_every_judgement_is_logged_but_private_ones_without_content(policy, tmp_
     screen = {"app": "Safari", "bundle_id": "com.apple.Safari", "window_title": "t", "url": "https://a.com", "text": ["x"]}
     r = reading(shortvideo=0.9)
     policy.log_judgement(screen, r, policy.decide(screen, r))
-    policy.log_judgement(screen, r, policy.decide(screen, reading(sensitive=0.9)))
+    s = reading(sensitive=0.9)
+    policy.log_judgement({**screen, "url": "https://www.bank.com/login?u=me"}, s, policy.decide(screen, s), shot="x.jpg")
     logged = [json.loads(line) for line in (tmp_path / "judgements.jsonl").open()]
     assert logged[0]["screen"]["text"] == ["x"] and logged[0]["p_hit"]["shortvideo"] == 0.9
-    assert "text" not in logged[1]["screen"] and "p_hit" not in logged[1]
+    # Private: the site and the score, for audits; never the title, the text, the path or a screenshot.
+    assert logged[1]["screen"] == {"app": "Safari", "bundle_id": "com.apple.Safari", "site": "bank.com"}
+    assert logged[1]["sensitive"] == 0.9 and "p_hit" not in logged[1] and "shot" not in logged[1]
 
 
 def test_review_answers_and_tuning(tmp_path):
@@ -506,3 +509,27 @@ def test_pages_judged_fine_are_remembered_for_take_me_back(policy):
     decide(policy, "https://www.youtube.com/shorts/x", reading(shortvideo=0.9))
     assert policy.page_fine("https://www.youtube.com/watch?v=lecture")
     assert not policy.page_fine("https://www.youtube.com/shorts/x") and not policy.page_fine("https://never.seen/")
+
+
+def test_going_back_and_returning_counts_toward_the_wait(policy, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr("qualm.policy.time.time", lambda: now[0])
+    assert policy.returns("shortvideo") == 0
+    policy.log_response("a", "back", "shortvideo")
+    policy.log_response("b", "fine", "shortvideo")  # not a going-back
+    policy.log_response("c", "back", "feeds")
+    assert policy.returns("shortvideo") == 1 and policy.returns("feeds") == 1
+    now[0] += 1801  # half an hour later: forgotten
+    assert policy.returns("shortvideo") == 0
+
+
+def test_the_headline_rotates_but_focus_words_do_not():
+    from qualm.explain import DENY_WORDS, headline
+
+    rule = Rule(id="shortvideo", kind="deny", description="short videos made for endless swiping, such as TikTok")
+    d = Decision("intervene", "shortvideo", "p_hit 0.9 >= 0.15", "x")
+    heads = [headline(d, rule, "en", n=n)[1] for n in range(len(DENY_WORDS) + 1)]
+    assert len(set(heads[:-1])) == len(DENY_WORDS) and heads[-1] == heads[0]
+    assert all("short videos made for endless swiping" in h for h in heads)
+    focus = {"intent": "write the report", "until": time.time() + 600}
+    assert {headline(d, rule, "en", focus, n=n)[1] for n in range(3)} == {"You're here to: write the report."}
