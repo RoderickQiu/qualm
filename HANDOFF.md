@@ -204,6 +204,16 @@ daily budgets"): it reads as an allowance, puts no friction on the first
   "Checked in" as a pop-up outcome, and "what you said, and what you did".
 - The model's question for these rules is word for word the old
   time-cap question, so thresholds and trial numbers still hold.
+- **Take me back leaves the site** (reported by the user on Chrome: one
+  Cmd-[ on 小红书 went from a note to the feed, which popped up again; and
+  the dimmer doesn't take clicks, so they had browsed on meanwhile and the
+  keystroke hit another page). `watcher.leave()` goes back until the tab is
+  off the pop-up's host or on a page judged fine (`Policy.page_fine`), else
+  a new-tab page; Chromium through AppleScript (`go back`, `URL of active
+  tab`), Safari by keystroke with the URL read back. Verified live in a
+  scratch Chrome window: iana.org/domains → example.com in 2 s, two steps.
+  Also: the feeds pattern `xiaohongshu\.com/explore` matched every note
+  (`/explore/<id>`); now only the explore page itself.
 
 Verified: 75 tests (the session life cycle, the wait, the migration, and a
 watcher test where only the re-check can say time's up; it caught a bug

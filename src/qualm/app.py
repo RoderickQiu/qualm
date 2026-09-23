@@ -530,7 +530,8 @@ class Controller(NSObject):
             self.policy.log_response(d.id, "back", d.rule)
         self.policy.rejudge_in(RECHECK_S)  # still here then (no Back in that app): step in again
         if not self.demo:
-            threading.Thread(target=go_back, args=(ev.screen.bundle_id,), daemon=True).start()
+            threading.Thread(target=go_back, args=(ev.screen.bundle_id, ev.screen.url, self.policy.page_fine),
+                             daemon=True).start()
 
     def need_(self, sender):
         if self.current is None or self.mode == "done":

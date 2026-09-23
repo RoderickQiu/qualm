@@ -82,11 +82,12 @@ sites = [
     "youtube.com/",
     "bilibili.com/",
     "s.weibo.com/top",
-    "xiaohongshu.com/explore",
     "x.com/home",
     "twitter.com/home",
     "reddit.com/r/popular",
 ]
+# The explore feed itself; a note opened from it (/explore/<id>) is a single post.
+patterns = ["^https?://(www\\.)?xiaohongshu\\.com/explore/?([?#]|$)"]
 feed_hit = true
 note = "Any page the model reads as an entertainment feed counts, on any site. Trials: precision 1.00, recall 0.47 from the score alone; feed_hit adds more."
 

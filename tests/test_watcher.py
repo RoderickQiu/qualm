@@ -230,3 +230,45 @@ def test_a_check_in_session_on_an_unchanged_page_ends_with_times_up(monkeypatch,
     monkeypatch.setattr(w.time, "sleep", sleep)
     watcher.run()
     assert seen == ["check_in", "allow", "times_up"]
+
+
+class FakeTab:
+    """A tab with a history; back() moves one step."""
+
+    def __init__(self, history):
+        self.history, self.blanked = list(history), False
+
+    def url(self):
+        return self.history[-1]
+
+    def back(self):
+        if len(self.history) > 1:
+            self.history.pop()
+
+    def blank(self):
+        self.blanked = True
+
+
+def test_take_me_back_leaves_the_site_not_just_one_page():
+    tab = FakeTab(["https://docs.python.org/3/", "https://www.xiaohongshu.com/explore", "https://www.xiaohongshu.com/user/1",
+                   "https://www.xiaohongshu.com/explore/abc"])
+    assert w.leave(tab, "https://www.xiaohongshu.com/explore/abc", poll=0, patience=0) == "left"
+    assert tab.url() == "https://docs.python.org/3/"
+
+
+def test_take_me_back_stops_at_a_page_of_the_same_site_that_was_fine():
+    lecture = "https://www.youtube.com/watch?v=lecture"
+    tab = FakeTab(["https://news.example/", lecture, "https://www.youtube.com/", "https://www.youtube.com/shorts/x"])
+    w.leave(tab, "https://www.youtube.com/shorts/x", fine=lambda u: u == lecture, poll=0, patience=0)
+    assert tab.url() == lecture
+
+
+def test_take_me_back_with_no_history_opens_a_new_tab_page():
+    tab = FakeTab(["https://www.xiaohongshu.com/explore"])
+    assert w.leave(tab, "https://www.xiaohongshu.com/explore", poll=0, patience=0) == "new tab" and tab.blanked
+
+
+def test_take_me_back_does_nothing_if_you_already_left():
+    tab = FakeTab(["https://www.xiaohongshu.com/explore", "https://mail.example/"])
+    assert w.leave(tab, "https://www.xiaohongshu.com/explore", poll=0, patience=0) == "left"
+    assert tab.url() == "https://mail.example/" and not tab.blanked

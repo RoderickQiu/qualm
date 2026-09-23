@@ -20,7 +20,7 @@ from typing import Callable
 from AppKit import NSRunningApplication, NSWorkspace
 
 from .decide import Reading, ask, make_client
-from .policy import Decision, Policy
+from .policy import Decision, Policy, host_of
 from .presence import Presence
 from .rules import build_questions, load_config
 from .state import DEFAULT_CHAR_BUDGET, ScreenState, capture
@@ -283,8 +283,74 @@ class Watcher:
         self.on_event(ev)
 
 
-def go_back(bundle_id: str) -> None:
-    """Leave the page: Back in a browser, hide any other app."""
+CHROMIUM = {"com.google.Chrome", "com.brave.Browser", "com.microsoft.edgemac"}
+MAX_BACK = 12  # history steps "Take me back" tries before giving up on a tab
+
+
+def _osa(script: str) -> str | None:
+    """Run AppleScript; its output, or None if it failed (no Automation
+    permission for that browser, no window)."""
+    try:
+        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+class Tab:
+    """The front tab of a browser, driven through its AppleScript dictionary:
+    reads the address after each step instead of pressing keys blind."""
+
+    def __init__(self, bundle_id: str):
+        self.app = f'application id "{bundle_id}"'
+        self.chromium = bundle_id in CHROMIUM
+        self.ref = "active tab of front window" if self.chromium else "current tab of front window"
+
+    def url(self) -> str | None:
+        return _osa(f"tell {self.app} to get URL of {self.ref}")
+
+    def back(self) -> None:
+        if self.chromium:
+            _osa(f"tell {self.app} to tell {self.ref} to go back")
+        else:  # Safari has no "go back": its menu shortcut, with Safari in front
+            _osa(f'tell {self.app} to activate\ndelay 0.2\n'
+                 'tell application "System Events" to keystroke "[" using command down')
+
+    def blank(self) -> None:
+        _osa(f'tell {self.app} to set URL of {self.ref} to "{"chrome://newtab/" if self.chromium else "favorites://"}"')
+
+
+def leave(tab, url: str, fine: Callable[[str], bool] = lambda u: False, poll: float = 0.15, patience: float = 2.0) -> str:
+    """Go back until the tab is off the pop-up's site (the host of `url`) or
+    on a page of it Qualm found fine (the lecture before the Shorts). One
+    step back often lands on the same site's feed, so one step isn't enough.
+    Nothing to go back to: a new-tab page. Returns what it did."""
+    host = host_of(url)
+    cur = tab.url()
+    if cur is None:
+        return "no tab"
+    for _ in range(MAX_BACK):
+        if not host or host_of(cur) != host or fine(cur):
+            return "left"
+        tab.back()
+        waited = 0.0
+        while True:  # single-page sites change the address late
+            time.sleep(poll)
+            waited += poll
+            new = tab.url() or cur
+            if new != cur or waited >= patience:
+                break
+        if new == cur:
+            break  # no history left
+        cur = new
+    if host_of(cur) == host and not fine(cur):
+        tab.blank()
+        return "new tab"
+    return "left"
+
+
+def go_back(bundle_id: str, url: str = "", fine: Callable[[str], bool] = lambda u: False) -> None:
+    """Leave the page: in a browser, back off the site (see leave()); any other app is hidden."""
     apps = NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle_id)
     if not apps:
         return
@@ -292,6 +358,10 @@ def go_back(bundle_id: str) -> None:
     if bundle_id not in BROWSERS:
         app.hide()
         return
+    if bundle_id in CHROMIUM or bundle_id == "com.apple.Safari":
+        if leave(Tab(bundle_id), url, fine) != "no tab":
+            return
+    # Other browsers, or no Automation permission: Cmd-[ once, as before.
     app.activateWithOptions_(0)
     time.sleep(0.25)
     # Cmd-[ is Back in every major browser; needs Accessibility, which the

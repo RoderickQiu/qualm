@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
@@ -255,6 +256,7 @@ class Policy:
         self._started_today: list[float] = []  # when each check-in session today began, for the wait
         self.last_end = 0.0  # when the latest session ended
         self._rejudge_at: list[float] = []  # when the watcher should judge the screen again
+        self._seen: OrderedDict[str, bool] = OrderedDict()  # recent URLs -> judged fine
         self._restore_sessions()
         self._base_rules = rules
         self._allowed: dict[str, set[str]] = {}  # rule id -> URLs marked "Not this one"
@@ -334,6 +336,8 @@ class Policy:
             else:
                 return None
             self.counting = set()
+            if url and d.action == "allow":
+                self._remember(url, True)
             # Leaving an allowed page (docs, a repo) for a link counts as on purpose.
             kind = "work" if d.action == "allow" else "other"
             self._arrive(url or bundle_id, kind, "task", bundle_id)
@@ -379,7 +383,20 @@ class Policy:
                     check_ins.append((rule, why))
             out += self._check_in(check_ins, counted, now)
             self.counting = counted
+            if url:
+                self._remember(url, not any(d.action == "intervene" or d.reason.startswith(("your ", "snoozed")) for d in out))
             return out
+
+    def _remember(self, url: str, fine: bool) -> None:
+        self._seen[url] = fine
+        self._seen.move_to_end(url)
+        while len(self._seen) > 500:
+            self._seen.popitem(last=False)
+
+    def page_fine(self, url: str) -> bool:
+        """Qualm judged this page and nothing on it needed you to step in
+        (a lecture, a docs page): where "Take me back" may stop."""
+        return self._seen.get(url, False)
 
     def _check_in(self, hits: list[tuple[Rule, str]], counted: set[str], now: float) -> list[Decision]:
         """The check-in rules this page hits: one pop-up at most. A running

@@ -111,6 +111,17 @@ drifted into. The watcher can, because it sees the screen before:
 The exemption covers that one item. Clicking the next one from there is a
 new decision.
 
+## "Take me back"
+
+One step back is rarely out: from a 小红书 note it lands on the explore
+feed, from there on a profile. So Take me back (and Done) goes back until
+the tab is off the pop-up's site, or on a page of it Qualm judged fine
+(the lecture you came from before the Shorts), up to 12 steps; with nothing
+to go back to, a new-tab page. Chrome, Brave and Edge are driven through
+their AppleScript dictionary (macOS asks once to allow it), Safari with its
+Back shortcut; other browsers get one Back. If you already left the site
+while the pop-up was up, it does nothing.
+
 ## When the user says "I need this"
 
 Every intervention offers two ways out besides going back:

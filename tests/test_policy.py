@@ -499,3 +499,10 @@ def test_a_session_that_ran_out_while_qualm_was_off_ended_at_its_time(policy, tm
     c.until = time.time() - 30 * 60  # e.g. the Mac slept
     policy.tick()
     assert policy.last_end == c.until and policy.check_in_wait(5) == 5  # not doubled: it ended 30 min ago
+
+
+def test_pages_judged_fine_are_remembered_for_take_me_back(policy):
+    decide(policy, "https://www.youtube.com/watch?v=lecture", reading(purpose="learn"))
+    decide(policy, "https://www.youtube.com/shorts/x", reading(shortvideo=0.9))
+    assert policy.page_fine("https://www.youtube.com/watch?v=lecture")
+    assert not policy.page_fine("https://www.youtube.com/shorts/x") and not policy.page_fine("https://never.seen/")

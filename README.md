@@ -37,7 +37,8 @@ search is on purpose. The fifth thread opened from a feed is drift.
   tools, search, private pages and things opened on purpose. Check-in sessions, pauses, and what
   you taught it.
 - **Steps in gently.** A dark, blurred panel dims the screen and says why. *Take me back* is the
-  default. *I need it* unlocks after a short wait that grows each time you use it, and asks what
+  default: it goes back off the site (to the lecture before the Shorts, not the next feed), or to
+  a new tab if there's nothing to go back to. *I need it* unlocks after a short wait that grows each time you use it, and asks what
   for. *Not this one* teaches the rule an exception, and *Never here* silences an app or site.
 - **Checks in instead of counting a daily budget.** For entertainment video and social media,
   it asks on arrival: what are you here for, and for 5, 15 or 30 minutes? Then it stays quiet
