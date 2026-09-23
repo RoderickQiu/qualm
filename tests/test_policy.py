@@ -332,3 +332,23 @@ def test_example_allow_classes_load():
     settings, _ = load_config("rules.example.toml")
     ids = {c.id for c in settings.allow}
     assert ids == {"shopping", "music"} and any(c.matches("", "https://music.youtube.com/x") for c in settings.allow)
+
+
+def test_insights_join_pop_ups_to_answers_and_focus_sessions(tmp_path):
+    from qualm.policy import start_focus
+    from qualm.review import insights
+
+    p = Policy(Settings(), RULES, tmp_path)
+    start_focus(tmp_path, "write the report", 50)
+    p.log_intervention(Decision("intervene", "social", "x", "d1"), {"window_title": "Reddit"}, reading())
+    p.log_response("d1", "back", "social")
+    p.log_intervention(Decision("intervene", "shortvideo", "x", "d2"), {"window_title": "Shorts"}, reading())
+    p.snooze("shortvideo", 10, "a recipe", "d2")
+    got = insights(tmp_path, RULES)
+    today = got["days"][-1]
+    assert got["outcomes"][today]["back"] == 1 and got["outcomes"][today]["snooze"] == 1
+    assert [x["ended"] for x in got["today"]] == ["back", "snooze"]
+    assert got["unlocks"][-1]["reason"] == "a recipe"
+    f = got["focus"][-1]
+    assert f["intent"] == "write the report" and f["running"] and f["popups"] == 2 and f["back"] == 1 and f["minutes"] == 0
+    assert sum(map(sum, got["heat"])) == 2
