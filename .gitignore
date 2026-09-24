@@ -12,3 +12,5 @@ backups/
 # App builds (packaging/build_app.py)
 dist/
 build/
+.vercel/
+.env.local
