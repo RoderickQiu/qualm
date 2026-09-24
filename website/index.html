@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qualm: a second thought before the scroll</title>
+<meta name="description" content="Qualm reads your Mac's screen with a model that runs on the Mac, and steps in when you drift into endless short video, feeds or livestreams.">
+<meta property="og:title" content="Qualm: a second thought before the scroll">
+<meta property="og:description" content="A screen-time app for the Mac that blocks the mechanism, not the site.">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,300..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="#top" aria-label="Qualm">
+    <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb36b"/><stop offset="1" stop-color="#f0645a"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#lg)"/><circle cx="31" cy="30" r="14" fill="none" stroke="#fff" stroke-width="6"/><path d="M40 39 L49 48" stroke="#fff" stroke-width="6" stroke-linecap="round"/></svg>
+    Qualm
+  </a>
+  <nav>
+    <a href="#judge">Try it</a>
+    <a class="nav-get" href="https://github.com/RoderickQiu/qualm/releases">Download</a>
+  </nav>
+</header>
+
+<main id="top">
+
+<!-- ============ The story: one Mac window, pinned; the page scrolls it through a bad ten minutes ============ -->
+<section class="story" id="story" data-step="0">
+  <div class="haze" aria-hidden="true"></div>
+  <div class="stage">
+    <div class="caps" aria-live="polite">
+      <h1 class="cap" data-cap="0">A second thought before&nbsp;the&nbsp;scroll.</h1>
+      <p class="cap" data-cap="1">You came for the lecture.</p>
+      <p class="cap" data-cap="2">Then one Short.</p>
+      <p class="cap" data-cap="3">Then the fourth. Nobody chose it.</p>
+      <p class="cap" data-cap="4">Qualm dims the screen, and says why.</p>
+      <p class="cap" data-cap="5"><em>Take me back</em> goes to the lecture. Not the next feed.</p>
+      <p class="cap" data-cap="6">Same site, different page. The thread you searched for stays.</p>
+      <p class="cap" data-cap="7">r/popular after it gets the pop-up.</p>
+      <p class="cap" data-cap="8">Films and social media aren't blocked. They ask: what for, how long?</p>
+    </div>
+
+    <div class="mac" id="mac">
+      <div class="mac-bar"><span class="lights"><i></i><i></i><i></i></span><span class="mac-title" id="mac-title">Lecture 3: Linear Regression - YouTube</span></div>
+      <div class="mac-url"><span id="mac-url">youtube.com/watch?v=4b4MUYve_U8</span></div>
+      <div class="screen">
+
+        <div class="page lecture" id="pg-lecture">
+          <div class="vid play"><span class="t">41:12 / 1:22:05</span></div>
+          <h4>Lecture 3: Linear Regression and Gradient Descent</h4>
+          <p>Stanford Online · 2.4M views</p>
+          <div class="rail"><i class="thumb s1"></i><span><b>Try Not To Smile Challenge</b><br>#shorts · 4.1M</span></div>
+        </div>
+
+        <div class="page feed" id="pg-feed">
+          <div class="feed-track"><div class="feed-roll" id="roll">
+            <div class="short s1"><b>Try Not To Smile Challenge</b><i>#shorts · 4.1M</i></div>
+            <div class="short s2"><b>wait for it</b><i>#fyp · 12M</i></div>
+            <div class="short s3"><b>POV: you said "one more"</b><i>#relatable · 8.7M</i></div>
+            <div class="short s4"><b>this cat has had enough</b><i>#cats · 2.3M</i></div>
+            <div class="short s5"><b>day 47 of scrolling</b><i>#shorts · 990K</i></div>
+            <div class="short s1"><b>Try Not To Smile Challenge</b><i>#shorts · 4.1M</i></div>
+          </div></div>
+          <div class="feed-side"><span class="up"></span><span class="down"></span></div>
+          <div class="count" id="count">1st</div>
+        </div>
+
+        <div class="page reddit" id="pg-thread">
+          <p class="h">TypeError: cannot read properties of undefined (reading 'map')</p>
+          <p class="m">r/reactjs · 3y ago · 41 comments</p>
+          <div class="post"><i></i><div><div class="l w90"></div><div class="l w80"></div></div></div>
+          <div class="post"><i></i><div><div class="l w60"></div><div class="l w40"></div></div></div>
+          <div class="tag ok">Opened from a search. Left alone.</div>
+        </div>
+
+        <div class="page reddit" id="pg-popular">
+          <p class="h">Popular</p>
+          <p class="m">Hot · New · Top · Rising</p>
+          <div class="post"><i></i><div><div class="l w80"></div><div class="l w40"></div></div></div>
+          <div class="post"><i></i><div><div class="l w90"></div><div class="l w60"></div></div></div>
+          <div class="post"><i></i><div><div class="l w60"></div><div class="l w40"></div></div></div>
+          <div class="tag bad">A feed, picked for you. Pop-up.</div>
+        </div>
+
+        <div class="page netflix" id="pg-film">
+          <div class="vid play dark"></div>
+          <h4>The Grand Budapest Hotel</h4>
+          <p>2014 · 1h 40m · Comedy</p>
+        </div>
+
+        <div class="scrim"></div>
+
+        <div class="panel hero-panel" id="panel" role="dialog" aria-labelledby="panel-h">
+          <div class="panel-head">
+            <span class="panel-icon hand"></span>
+            <div>
+              <span class="panel-rule">shortvideo</span>
+              <h3 id="panel-h">This looks like short videos made for endless swiping.</h3>
+            </div>
+          </div>
+          <p class="panel-page"><span class="fav chrome"></span>Try Not To Smile Challenge #shorts - YouTube — youtube.com</p>
+          <p class="panel-why">A clear match for your shortvideo rule. Qualm read the screen as a single page or item, for entertainment.</p>
+          <p class="panel-meta">2nd time today · last at 00:03</p>
+          <div class="panel-actions">
+            <button class="p-quiet" data-act="notthis">Not this one</button>
+            <button class="p-quiet" data-act="never">Never on youtube.com</button>
+            <span class="spacer"></span>
+            <button class="p-wait" id="p-wait" data-act="need" disabled>Wait 3 s</button>
+            <button class="p-back" data-act="back">Take me back</button>
+          </div>
+        </div>
+
+        <div class="panel hero-panel" id="panel-feed" role="dialog">
+          <div class="panel-head">
+            <span class="panel-icon hand"></span>
+            <div>
+              <span class="panel-rule">feeds</span>
+              <h3>This is a feed, picked for you.</h3>
+            </div>
+          </div>
+          <p class="panel-page"><span class="fav chrome"></span>Popular posts - Reddit — reddit.com</p>
+          <p class="panel-why">Nothing here is your pick yet. The thread you came for was; the feed after it isn't.</p>
+          <p class="panel-meta">1st time today</p>
+          <div class="panel-actions">
+            <button class="p-quiet">Not this one</button>
+            <button class="p-quiet">Never on reddit.com</button>
+            <span class="spacer"></span>
+            <button class="p-wait" disabled>Wait 3 s</button>
+            <button class="p-back">Take me back</button>
+          </div>
+        </div>
+
+        <div class="panel hero-panel" id="panel-ci" role="dialog">
+          <div class="panel-head">
+            <span class="panel-icon timer"></span>
+            <div>
+              <span class="panel-rule">videos · check in</span>
+              <h3>What are you here for?</h3>
+            </div>
+          </div>
+          <p class="panel-page"><span class="fav safari"></span>The Grand Budapest Hotel — netflix.com</p>
+          <p class="panel-why">Say what for and how long, and Qualm stays out of the way until then.</p>
+          <div class="panel-form">
+            <input class="p-input" id="ci-what" type="text" placeholder="A few words: what's it for?" maxlength="60" autocomplete="off">
+            <div class="seg" id="ci-min" role="radiogroup" aria-label="How long">
+              <button role="radio" aria-checked="true" data-min="5">5 min</button>
+              <button role="radio" aria-checked="false" data-min="15">15 min</button>
+              <button role="radio" aria-checked="false" data-min="30">30 min</button>
+            </div>
+          </div>
+          <div class="panel-actions">
+            <button class="p-quiet">Not this one</button>
+            <span class="spacer"></span>
+            <button class="p-back" id="ci-start">Start 5 min</button>
+            <button class="p-grey">Take me back</button>
+          </div>
+        </div>
+
+        <div class="panel hero-panel" id="panel-up" role="dialog">
+          <div class="panel-head">
+            <span class="panel-icon glass"></span>
+            <div>
+              <span class="panel-rule">videos · time's up</span>
+              <h3 id="up-h">Your 5 minutes for “the film” are up.</h3>
+            </div>
+          </div>
+          <p class="panel-page"><span class="fav safari"></span>The Grand Budapest Hotel — netflix.com</p>
+          <p class="panel-why">Done takes you back.</p>
+          <p class="panel-meta">Each session today makes the next one wait a little longer.</p>
+          <div class="panel-actions">
+            <button class="p-quiet">Not this one</button>
+            <span class="spacer"></span>
+            <button class="p-wait ready" id="ci-more">5 more</button>
+            <button class="p-back" id="ci-done">Done</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="hint" id="hint"><span>Scroll</span><i></i></p>
+    <ol class="dots" id="dots" aria-hidden="true"></ol>
+  </div>
+
+  <div class="steps" aria-hidden="true">
+    <div class="step"></div><div class="step"></div><div class="step"></div><div class="step"></div><div class="step"></div><div class="step"></div><div class="step"></div><div class="step"></div><div class="step"></div>
+  </div>
+</section>
+
+<!-- ============ Try it: pick a page, watch the model answer ============ -->
+<section class="judge" id="judge">
+  <h2>Pick a page. Watch it decide.</h2>
+  <p class="sub">A blocker sees a domain. Qualm reads the page as text, asks a small model a few typed questions in one pass, and plain code decides.</p>
+  <div class="judge-pick" id="judge-pick" role="tablist" aria-label="Pages to judge"></div>
+  <div class="judge-stage">
+    <div class="mini-mac">
+      <div class="mac-bar"><span class="lights"><i></i><i></i><i></i></span><span class="mac-title" id="jm-title"></span></div>
+      <div class="mac-url"><span id="jm-url"></span></div>
+      <div class="mini-screen" id="jm-screen"></div>
+      <div class="mini-verdict" id="jm-verdict"></div>
+    </div>
+    <div class="readout">
+      <div class="read-label">Read as text, about 700 characters</div>
+      <pre id="jm-read"></pre>
+      <div class="read-label">Answered in one pass, about a second, on the Mac</div>
+      <dl id="jm-answers"></dl>
+      <p class="read-decision" id="jm-decision"></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Three things ============ -->
+<section class="lines" id="local">
+  <div class="haze haze-b" aria-hidden="true"></div>
+  <div class="three">
+    <div class="thing">
+      <div class="art rule-art" aria-hidden="true">
+        <code><span class="k">description</span> = <span class="s">"short videos made for endless swiping"</span></code>
+        <ul><li>Douyin</li><li>TikTok</li><li>YouTube Shorts</li><li>Reels</li><li class="new">a site nobody listed</li></ul>
+      </div>
+      <p>Rules are sentences, not site lists. <span>Write it in your words. It catches what you meant, on sites you never named.</span></p>
+    </div>
+    <div class="thing">
+      <div class="art flow-art" aria-hidden="true">
+        <i>Screen, as text</i><b></b><i>Model, on this Mac</i><b></b><i>Decision</i>
+        <em>Nothing leaves. Logins and banking are never touched.</em>
+      </div>
+      <p>Runs on your Mac. <span>Apple silicon, about a second per check. Password managers are never read at all.</span></p>
+    </div>
+    <div class="thing">
+      <div class="art week-art" id="week-art" aria-hidden="false">
+        <div class="week"><i style="--h:.2"></i><i style="--h:.55"></i><i style="--h:.35"></i><i style="--h:.7"></i><i style="--h:.3"></i><i style="--h:.9"></i><i style="--h:.5"></i></div>
+        <div class="worth" id="worth" role="group" aria-label="Was that time worth it?">
+          <button data-w="yes">Yes, mostly</button><button data-w="some">Some of it</button><button data-w="no">Not really</button>
+        </div>
+        <em id="worth-reply">Was that time worth it?</em>
+      </div>
+      <p>No score. No streaks. <span>A slow week is information, not a failure. Once a week, one question.</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ The end: Qualm steps in on this page ============ -->
+<section class="end" id="end">
+  <div class="ghost" aria-hidden="true">
+    <p>Loved by thousands. <span>Testimonials, logos, a wall of five-star quotes.</span></p>
+    <div class="row"><i></i><i></i><i></i></div>
+    <p>Compare plans. <span>Free, Pro, Team. A table with ticks in it.</span></p>
+    <p>Frequently asked questions. <span>Twelve of them, each one a click to open.</span></p>
+  </div>
+  <div class="scrim-page"></div>
+  <div class="panel end-panel" id="end-panel" role="dialog" aria-labelledby="end-h">
+    <div class="panel-head">
+      <span class="panel-icon hand"></span>
+      <div>
+        <span class="panel-rule">this page</span>
+        <h3 id="end-h">This looks like a website made for endless scrolling.</h3>
+      </div>
+    </div>
+    <p class="panel-page"><span class="fav qualm"></span>Qualm: a second thought before the scroll — this page</p>
+    <p class="panel-why">You've read enough. Get the app, or go back to the top.</p>
+    <p class="panel-meta">Apple silicon · macOS 14 or later · open source</p>
+    <div class="panel-actions">
+      <a class="p-quiet" href="https://github.com/RoderickQiu/qualm">Source on GitHub</a>
+      <span class="spacer"></span>
+      <a class="p-grey" href="#top">Take me back</a>
+      <a class="p-back" href="https://github.com/RoderickQiu/qualm/releases">Download for Mac</a>
+    </div>
+  </div>
+  <p class="foot">Made by <a href="https://github.com/RoderickQiu">Tianrun Qiu</a> with Claude Code.</p>
+</section>
+
+</main>
+<script src="main.js"></script>
+</body>
+</html>
