@@ -63,6 +63,12 @@ note = "Music players scored 0.96-0.97; every trial page (YouTube, Bilibili, Dou
 sites = ["music.youtube.com", "open.spotify.com", "music.apple.com", "music.163.com", "y.qq.com", "kugou.com", "soundcloud.com"]
 apps = ["com.netease.163music", "com.spotify.client", "com.apple.Music", "com.tencent.QQMusicMac", "com.kugou.mac"]
 
+[[allow]]
+id = "chat"
+description = "a chat conversation in a messaging app: messages between people, in a private or group chat"
+threshold = 0.5
+note = "On a real user's history: WeChat chat windows 0.56-0.81, WhatsApp median 0.81, Slack 0.56; social media pages (Xiaohongshu, Reddit, LinkedIn) 0.16 or less. Without it, WeChat chats scored 0.15-0.41 on social. Moments or Channels inside WeChat: not measured."
+
 [[rules]]
 id = "shortvideo"
 kind = "deny"

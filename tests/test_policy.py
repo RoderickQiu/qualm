@@ -403,7 +403,7 @@ def test_a_known_music_site_or_app_is_allowed_without_the_model(tmp_path):
 def test_example_allow_classes_load():
     settings, _ = load_config("rules.example.toml")
     ids = {c.id for c in settings.allow}
-    assert ids == {"shopping", "music"} and any(c.matches("", "https://music.youtube.com/x") for c in settings.allow)
+    assert ids == {"shopping", "music", "chat"} and any(c.matches("", "https://music.youtube.com/x") for c in settings.allow)
 
 
 def test_insights_join_pop_ups_to_answers_and_focus_sessions(tmp_path):
