@@ -21,14 +21,28 @@ The menu starts a focus session ("I'm here to write the report, for 50
 min"), pauses, and opens the dashboard. Pause and focus live in
 data/session.json, so `qualm focus` and `qualm pause` do the same from a
 terminal.
+
+What stops Qualm from working (no Accessibility, a hosted model that turns
+the key down or stops answering, a rules.toml that doesn't load) stays in the
+icon and the menu's first line until it's fixed, with the fix one click away.
+A rules.toml that doesn't load never stops the app: it starts on the last
+saved version that loads, or the starter rules, never reads the apps the
+broken file lists in no_monitor, and sends nothing to a hosted model until
+the file loads (it can't tell what else was meant). One copy runs at a time: a
+lock in the Qualm folder, dropped by the system when the copy ends, and a
+look for an older copy that takes no lock.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
+import sys
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -48,6 +62,7 @@ from AppKit import (
     NSPasteboard,
     NSPasteboardTypeString,
     NSScrollView,
+    NSSecureTextField,
     NSScreen,
     NSSegmentedControl,
     NSStatusBar,
@@ -60,9 +75,10 @@ from Foundation import NSObject
 from PyObjCTools import AppHelper
 
 from . import ui
-from .policy import (CHECK_IN_MINUTES, EXTEND_MINUTES, EXTEND_WAIT_S, RECHECK_S, Decision, Policy, end_focus,
-                     host_of, start_focus)
-from .watcher import PANEL_TITLE, Event, Watcher, describe, go_back
+from .explain import cut
+from .policy import (CHECK_IN_MINUTES, EXTEND_MINUTES, EXTEND_WAIT_S, RECHECK_S, Decision, Policy, clock, end_focus,
+                     host_of, start_focus, write_session)
+from .watcher import BROWSERS, PANEL_TITLE, Event, Watcher, describe, go_back
 
 SNOOZE_MINUTES = 10
 FOCUS_SNOOZE_MINUTES = 5  # in a focus session, "I need it" is a short break
@@ -71,6 +87,7 @@ FOCUS_SNOOZE_MINUTES = 5  # in a focus session, "I need it" is a short break
 # the option to back out and a short wait both cut use; the message alone didn't.
 FIRST_WAIT_S = 5
 FOCUS_LENGTHS = (25, 50, 90)  # minutes offered by the focus prompt
+FOCUS_HINT = "Every rule steps in at once, and the pop-up reminds you of this."
 # In a focus session a hit first gets a corner nudge (no dim, focus not
 # taken); still on such a page NUDGE_S later, the full panel. Frequent full
 # alerts were found disruptive in focus (HANDOFF, next steps: graded friction).
@@ -78,6 +95,61 @@ NUDGE_S = 20
 NUDGE_W, NUDGE_H = 400.0, 122.0
 W, PAD = 560.0, 28.0  # panel width and margin
 BADGE = 46.0
+KEY_GUARD_S = 0.6  # the pop-up ignores keys this long after it takes the keyboard
+NOTICE_W, NOTICE_S = 400.0, 30.0  # the corner notice: width, and how long it stays
+MODEL_ERRORS = 3  # hosted failures in a row (not a turned-down key) before it's called down
+LOCK = "app.lock"  # in the Qualm folder: held by the copy that's running
+ACTION_WORDS = {"intervene": "stepped in", "allow": "let through", "skip": "skipped"}  # the menu's status line
+# CJK scripts say "what for" in one or two characters: 学, 工作.
+CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]")
+
+
+def enough(answer: str) -> bool:
+    """An answer to "what for?": two characters, or one in a CJK script."""
+    return len(answer) >= 2 or bool(CJK.search(answer))
+
+
+def model_trouble(status: str) -> str:
+    """What a watcher status says about the hosted model: "nokey" (none saved,
+    or the keychain wouldn't give it), "key" (turned down), "quota" (its usage
+    limit), "down" (any other failure), or ""."""
+    if status.startswith("no TypeSafe API key"):
+        return "nokey"
+    if not status.startswith("model unreachable"):
+        return ""
+    if "Authentication" in status or "PermissionDenied" in status:
+        return "key"
+    return "quota" if "RateLimit" in status else "down"
+
+
+# Per kind of trouble: the status line, the notice's title, and what it means.
+TROUBLE = {
+    "nokey": ("hosted model: no TypeSafe key is saved", "No TypeSafe key is saved",
+              "The hosted model needs one, so Qualm can't judge what's on screen."),
+    "key": ("hosted model: TypeSafe turned down the key", "Your TypeSafe key doesn't work",
+            "TypeSafe turned it down, so Qualm can't judge what's on screen."),
+    "quota": ("hosted model: TypeSafe's usage limit is reached", "TypeSafe's usage limit is reached",
+              "Until it resets, Qualm can't judge what's on screen with the hosted model."),
+    "down": ("hosted model: TypeSafe isn't answering", "TypeSafe isn't answering",
+             f"Qualm couldn't reach the hosted model {MODEL_ERRORS} times in a row, so it can't judge what's "
+             "on screen."),
+}
+
+
+LOAD_WORDS = re.compile(r" (doesn't load|is empty|isn't UTF-8 text|can't be read)\b")
+
+
+def rules_mistake(error: str) -> str:
+    """What's wrong with rules.toml, from its load error, for the menu and the
+    notice: without the file's path and the advice rules.py adds to it, and
+    with commands a stock shell can run: "doesn't load (line 38): [settings]:
+    no_monitor has an empty item"."""
+    from . import agent
+
+    if m := LOAD_WORDS.search(error):
+        error = error[m.start() + 1:]
+    error = error.split(". Correct it in the file")[0].strip()  # rules.correct_it
+    return error.replace("`qualm ", f"`{agent.command()} ")
 
 
 class Controller(NSObject):
@@ -92,13 +164,27 @@ class Controller(NSObject):
         # The panel: "ask" -> "why" (what do you need it for) -> "done" (a short
         # "got it"); "checkin" -> "done"; "timesup" -> "done" or "checkin".
         self.mode = "ask"
-        self.evidence_text = self.context_text = ""
+        self.evidence_text = self.context_text = self.hint_text = ""
+        # The pop-up's page or app is on the rule's own list ("site", "app" or ""); it's a browser whose
+        # address couldn't be read.
+        self._own, self._no_never = "", False
+        self._focus = None  # the focus session the pop-up was shown in
+        # What stops Qualm from working, until it's fixed: "access", "model" or "rules" -> the menu's first line.
+        self.problems: dict[str, str] = {}
+        self._model_fix = None  # what the model's line does when clicked
+        self._model_errors = 0  # hosted failures in a row
+        self._noticed: set[str] = set()  # kinds of trouble already told in a notice: once each
+        self._broken = ""  # the rules.toml mistake last told in a notice
+        self._broken_notice = 0  # which notice told it (self._notices), to take it down once the file loads
+        self._using = "the rules it last loaded"  # what Qualm judges with while rules.toml doesn't load
         self.dimmer = ui.Dimmer()
         self._build_menu()
         self._build_panel()
         self._build_focus_prompt()
         self._build_nudge()
+        self._build_notice()
         self._nudged: dict[tuple[str, str], float] = {}  # (rule, site or app) -> when nudged
+        self._check_access()
         self._refresh()
         self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             5.0, self, "tick:", None, True)
@@ -126,6 +212,11 @@ class Controller(NSObject):
         self.status_item.setVisible_(True)
         menu = NSMenu.alloc().init()
         menu.setAutoenablesItems_(False)
+        # Problems first, hidden while there are none.
+        self.access_line = self._item("Qualm can't read windows: allow Accessibility…", "grantAccess:")
+        self.model_line = self._item("", "fixModel:")
+        self.rules_line = self._item("", "openAgent:")
+        self.problem_sep = NSMenuItem.separatorItem()
         self.status_line = self._item("starting…")
         self.usage_line = self._item("")
         self.focus_line = self._item("")
@@ -138,6 +229,7 @@ class Controller(NSObject):
         self.pause_item.setEnabled_(True)
         self.pause_item.setSubmenu_(pause_menu)
         self.resume_item = self._item("Resume", "resume:")
+        self.planned_item = self._item("", "cancelPlanned:")  # a pause planned for later: `qualm pause --from`
         self.block_item = self._item("Pop-ups block clicks behind them", "toggleBlock:")
 
         # Where the model runs: both choices, the one in use ticked; switching
@@ -146,8 +238,11 @@ class Controller(NSObject):
         self.model_menu.setAutoenablesItems_(False)
         self.model_local = self._item("On this Mac (Kev)", "pickModel:", tag=0)
         self.model_hosted = self._item("Hosted by TypeSafe (Jev)", "pickModel:", tag=1)
+        self.model_key = self._item("Add a TypeSafe key…", "openKey:")
         self.model_note = self._item("")
-        for item in (self.model_local, self.model_hosted, NSMenuItem.separatorItem(), self.model_note):
+        self.model_log = self._item("Show the local model's log", "openModelLog:")  # what it said when it failed
+        for item in (self.model_local, self.model_hosted, NSMenuItem.separatorItem(), self.model_key,
+                     NSMenuItem.separatorItem(), self.model_note, self.model_log):
             self.model_menu.addItem_(item)
         self.model_item = self._item("Model")
         self.model_item.setEnabled_(True)
@@ -163,9 +258,11 @@ class Controller(NSObject):
 
         self.login_item = self._item("Open at login", "toggleLogin:") if paths.bundle() else None
         menu.setDelegate_(self)
-        for item in (self.status_line, self.usage_line, NSMenuItem.separatorItem(),
-                     self.focus_line, self.focus_item, self.end_focus_item, self.pause_item, self.resume_item,
+        for item in (self.access_line, self.model_line, self.rules_line, self.problem_sep, self.status_line,
+                     self.usage_line,
                      NSMenuItem.separatorItem(),
+                     self.focus_line, self.focus_item, self.end_focus_item, self.pause_item, self.resume_item,
+                     self.planned_item, NSMenuItem.separatorItem(),
                      self.model_item, self.rules_item, self.block_item, *([self.login_item] if self.login_item else []),
                      NSMenuItem.separatorItem(),
                      self._item("This should have been blocked", "flagMiss:"),
@@ -180,34 +277,61 @@ class Controller(NSObject):
     def _refresh(self):
         """Icon and menu from the policy's state: focus, pause, check-in sessions."""
         focus, paused = self.policy.focusing(), self.policy.paused()
+        server = self.server if self.server is not None and not self.server.ready.is_set() else None
+        problem = self.problems.get("access") or self.problems.get("model") or self.problems.get("rules")
+        for item, kind in ((self.access_line, "access"), (self.model_line, "model"), (self.rules_line, "rules")):
+            item.setHidden_(kind not in self.problems)
+        self.problem_sep.setHidden_(not self.problems)
         # SF Symbols, so menu bar managers (Thaw, Bartender) can show the item;
         # they list it as "python3" because it isn't an app bundle.
-        name = "pause.circle" if paused else "scope" if focus else "eye"
+        # The local model not up yet: an arrow while it downloads (the first time), an hourglass while it loads.
+        fetching = server and server.status.startswith(("downloading", "installing", "building"))
+        name = ("pause.circle" if paused else "eye.trianglebadge.exclamationmark" if problem
+                else "scope" if focus else "eye.slash" if server and server.failing
+                else "arrow.down.circle" if fetching else "hourglass" if server else "eye")
         image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, "Qualm")
         image.setTemplate_(True)
         button = self.status_item.button()
         button.setImage_(image)
         left = max(1, round((focus["until"] - time.time()) / 60)) if focus else 0
         button.setTitle_(f" {left}m" if focus else "")
+        later = self.policy.pause_later
+        planned = f"a pause is planned from {clock(later['from'])} until {clock(later['until'])}" if later else ""
         if paused:
-            until = datetime.fromtimestamp(self.policy.paused_until)
-            tip = f"Qualm is paused until {until:%H:%M}" + (" tomorrow" if until.date() > datetime.now().date() else "")
+            tip = f"Qualm is paused until {clock(self.policy.paused_until)}" + (f"; {planned}" if planned else "")
+        elif problem:
+            tip = problem
         elif focus:
             tip = f"Focus: {focus['intent']} ({left} min left)"
+        elif server:  # the local model isn't up yet (or keeps failing): nothing is judged
+            tip = f"Qualm isn't watching yet: {server.status or 'starting the local model'}" + (
+                f"\n{server.hint}" if server.hint else "")
         else:
-            tip = "Qualm is watching"
+            tip = "Qualm is watching" + (f"; {planned}" if planned else "")
         button.setToolTip_(tip)
-        self.focus_line.setTitle_(f"Focus: {focus['intent'][:40]} · {left} min left" if focus else "")
+        self.focus_line.setTitle_(f"Focus: {cut(focus['intent'], 40)} · {left} min left" if focus else "")
         self.focus_line.setHidden_(not focus)
         self.focus_item.setHidden_(bool(focus))
         self.end_focus_item.setHidden_(not focus)
         self.pause_item.setHidden_(paused)
         self.resume_item.setHidden_(not paused)
-        self.resume_item.setTitle_(f"Resume (paused until {datetime.fromtimestamp(self.policy.paused_until):%H:%M})" if paused else "Resume")
+        self.resume_item.setTitle_(f"Resume (paused until {clock(self.policy.paused_until)})" if paused else "Resume")
+        self.planned_item.setTitle_(f"Cancel the pause from {clock(later['from'])} to {clock(later['until'])}" if later else "")
+        self.planned_item.setHidden_(not later)
         self.block_item.setState_(1 if self.policy.settings.block_clicks else 0)
-        usage = self.policy.usage_summary()
+        usage = self.policy.usage_summary(self._name)
         self.usage_line.setTitle_(usage)
         self.usage_line.setHidden_(not usage)
+
+    @objc.python_method
+    def _name(self, rule_id: str) -> str:
+        """A rule as the menu names it (setup.rule_name), from its id."""
+        from .setup import rule_name
+
+        try:
+            return rule_name(rule_id, self.policy.rule(rule_id).description)
+        except StopIteration:  # gone from rules.toml since
+            return rule_name(rule_id)
 
     def menuWillOpen_(self, menu):
         self._refresh_menus()
@@ -223,15 +347,18 @@ class Controller(NSObject):
 
         name = backend(self.policy.settings)
         forced = bool(os.environ.get("QUALM_BACKEND"))
-        has_key = name == "jev" or bool(keychain.api_key())
+        has_key = bool(keychain.api_key())
         self.model_item.setTitle_(f"Model: {'on this Mac' if name == 'kev' else 'hosted by TypeSafe'}")
         self.model_local.setState_(1 if name == "kev" else 0)
         self.model_hosted.setState_(1 if name == "jev" else 0)
-        self.model_local.setEnabled_(localmodel.apple_silicon() and not forced)
-        self.model_hosted.setEnabled_(has_key and not forced)
-        self.model_hosted.setTitle_("Hosted by TypeSafe (Jev)" + ("" if has_key else ": needs a key, `qualm setup`"))
-        self.model_hosted.setToolTip_("About 0.2 s per reading; the text of each new screen is sent to TypeSafe.")
+        self.model_local.setEnabled_(localmodel.unsupported() is None and not forced)
+        self.model_hosted.setEnabled_(not forced)
+        # Without a key, choosing hosted asks for one first.
+        self.model_hosted.setTitle_("Hosted by TypeSafe (Jev)" + ("" if has_key else "…"))
+        self.model_hosted.setToolTip_("About 0.2 s per reading; the text of each new screen is sent to TypeSafe."
+                                      + ("" if has_key else " Needs a TypeSafe key: this asks for one."))
         self.model_local.setToolTip_("About 1 s per reading, 6-7 GB of memory; nothing leaves this Mac.")
+        self.model_key.setTitle_("Replace the TypeSafe key…" if has_key else "Add a TypeSafe key…")
         if forced:
             note = f"Set by QUALM_BACKEND={os.environ['QUALM_BACKEND']}"
         elif self.last_reading:
@@ -240,18 +367,32 @@ class Controller(NSObject):
         else:
             note = "No reading yet"
         self.model_note.setTitle_(note)
+        self.model_log.setHidden_(name != "kev" or not localmodel.log_file().exists())
 
         self.rules_menu.removeAllItems()
         from .rules import load_config
 
         try:
-            every = load_config(self.rules_path)[1]  # the policy keeps only the rules that are on
-        except Exception:
-            every = self.policy.rules
+            every, broken = load_config(self.rules_path)[1], None  # the policy's `rules` are only those on now
+        except Exception as e:  # a hand edit that doesn't load: nothing here can be saved until it's fixed
+            every, broken = self.policy._base_rules, e  # what Qualm judges with meanwhile, those off too
+        if broken is not None:
+            from . import agent
+            from .config import undo_to
+
+            mistake = rules_mistake(str(broken))
+            lines = [(f"rules.toml {cut(mistake, 70)}", None), ("Fix it with your AI agent…", "openAgent:")]
+            if undo_to(self.rules_path):  # only when there's a version to go back to: no dead end
+                lines.append((f"Or undo the last change in Terminal: {agent.command()} config undo", None))
+            for title, action in lines:
+                self.rules_menu.addItem_(self._item(title, action))
+            self.rules_menu.itemAtIndex_(0).setToolTip_(mistake)
+            self.rules_menu.addItem_(NSMenuItem.separatorItem())
         for r in every:
-            item = self._item(rule_name(r.id), "toggleRule:")
+            item = self._item(rule_name(r.id, r.description), "toggleRule:")
             item.setRepresentedObject_(r.id)
             item.setState_(1 if r.enabled else 0)
+            item.setEnabled_(broken is None)
             item.setToolTip_(r.description_en or r.description)
             self.rules_menu.addItem_(item)
         if self.login_item:
@@ -266,41 +407,68 @@ class Controller(NSObject):
         try:
             change(Config(self.rules_path))
         except Exception as e:  # over the question limit, a file that doesn't load
-            self.set_status(f"couldn't save: {e}"[:80])
+            self._refused(e)
             return False
         self.policy.reload(*load_config(self.rules_path))
         if self.watcher is not None:
             self.watcher._rejudge = True  # the screen you're on, judged again under the change
         return True
 
+    @objc.python_method
+    def _refused(self, e: Exception) -> None:
+        """A change from the menu that wasn't saved, and why, in full: a menu line gets cut, and missed."""
+        from .rules import load_config
+
+        try:
+            load_config(self.rules_path)
+        except Exception as broken:  # the file itself doesn't load: a hand edit
+            self.set_status("rules.toml has a mistake: nothing was changed")
+            self.rules_broken(str(broken), tell=True)
+            return
+        self.set_status(f"couldn't save: {e}")
+        self._notice("Couldn't make that change", str(e))
+
     def pickModel_(self, sender):
-        from .decide import backend
+        from . import keychain
 
         want = "kev" if sender.tag() == 0 else "jev"
-        if want == backend(self.policy.settings):
+        if want == "jev" and not keychain.api_key():
+            self.openKey_(sender)  # a key first; saving it switches
             return
+        self._use(want)
+        self._refresh_menus()
+
+    @objc.python_method
+    def _use(self, want: str) -> bool:
+        """The model on this Mac ("kev") or hosted ("jev"), saved in rules.toml. False if refused."""
+        from .decide import backend
+
+        if want == backend(self.policy.settings):
+            return True
         if not self._saved(lambda c: c.edit_settings({"backend": "jev"} if want == "jev" else {},
                                                      [] if want == "jev" else ["backend"])):
-            return
-        if want == "jev" and self.server is not None:
-            self.server.stop()  # only a server this app started; one from `qualm serve` is left running
-            self.server = None
+            return False
         self.ensure_server()
+        self._model_errors = 0
+        self._set_trouble("")
         self.set_status("model: hosted by TypeSafe" if want == "jev" else "model: on this Mac")
-        self._refresh_menus()
+        return True
 
     def toggleRule_(self, sender):
         from .rules import load_config
 
         rid = sender.representedObject()
-        rule = next((r for r in load_config(self.rules_path)[1] if r.id == rid), None)
+        try:
+            rule = next((r for r in load_config(self.rules_path)[1] if r.id == rid), None)
+        except Exception as e:  # rules.toml doesn't load: say so, don't raise out of a menu action
+            self._refused(e)
+            self._refresh_menus()
+            return
         if rule is None:
             return
         on = not rule.enabled
         if self._saved(lambda c: c.edit("rules", rid, {} if on else {"enabled": False}, ["enabled"] if on else [])):
-            from .setup import rule_name
-
-            self.set_status(f"{rule_name(rid)}: {'on' if on else 'off'}")
+            self.set_status(f"{self._name(rid)}: {'on' if on else 'off'}")
         self._refresh_menus()
 
     def toggleLogin_(self, sender):
@@ -309,28 +477,36 @@ class Controller(NSObject):
         try:
             autostart.uninstall(quiet=True) if autostart.installed() else autostart.install(quiet=True)
         except Exception as e:
-            self.set_status(f"couldn't change it: {e}"[:80])
+            self.set_status(f"couldn't change it: {e}")
         self._refresh_menus()
 
     @objc.python_method
     def ensure_server(self):
-        """With the model on this Mac, start its server unless something answers already."""
+        """With the model on this Mac, its server: it starts one unless something
+        answers already, and starts it again if it stops (localmodel.ManagedServer).
+        Hosted, however it was chosen (the Model menu, `qualm settings`, an
+        agent), stops it: no retries, no 5 GB download nobody wants now."""
         from .decide import backend
         from .localmodel import ManagedServer
 
-        from .localmodel import listening
-
-        if self.demo or backend(self.policy.settings) != "kev":
+        if self.demo:
+            return
+        if backend(self.policy.settings) != "kev":
+            if self.server is not None:
+                self.server.stop()  # only a server this app started; one from `qualm serve` is left running
+                self.server = None
+                self.set_status("model: hosted by TypeSafe")  # not the local server's last words
             return
         if self.server is not None:
-            s = self.server
-            gone_theirs = s.proc is None and s.ready.is_set() and not listening(s.port)  # `qualm serve` stopped
-            gone_ours = s.proc is not None and s.proc.poll() is not None  # ours crashed or was killed
-            if not (gone_theirs or gone_ours):
-                return
-            self.server = None  # start one again
-        self.server = ManagedServer(lambda text: AppHelper.callAfter(self.set_status, text))
-        self.server.start()
+            return
+        server = ManagedServer(lambda text: AppHelper.callAfter(self._server_said, server, text))
+        self.server = server
+        server.start()
+
+    @objc.python_method
+    def _server_said(self, server, text):
+        if server is self.server:  # not one stopped since (Model > Hosted): its last words are stale
+            self.set_status(text)
 
     @objc.python_method
     def prune(self):
@@ -353,6 +529,7 @@ class Controller(NSObject):
         if not self.demo and getattr(self, "_pruned_on", None) not in (None, datetime.now().date()):
             self.prune()
         self.ensure_server()  # also after [settings] backend changes to kev
+        self._check_access()  # granted (or taken away) in System Settings: no restart needed
         self._refresh()
         if self.dimmer.windows and not self.panel.isVisible():
             self.dimmer.hide()  # never leave the screen dimmed (and, blocking, unclickable) without a pop-up
@@ -365,7 +542,7 @@ class Controller(NSObject):
             # Saved in rules.toml like any setting (true is the default: no key).
             Config(self.rules_path).edit_settings({} if on else {"block_clicks": False}, ["block_clicks"] if on else [])
         except Exception as e:
-            self.set_status(f"couldn't save: {e}"[:80])
+            self._refused(e)
             return
         from .rules import load_config
 
@@ -376,8 +553,132 @@ class Controller(NSObject):
     def set_status(self, text):
         if text.startswith("model unreachable") and self.server and not self.server.ready.is_set():
             return  # still loading: its own status says so
-        self.status_line.setTitle_(text[:80])
+        if kind := self._hosted_trouble(text):
+            text = TROUBLE[kind][0]  # in words, not an exception's class name
+        elif text.startswith("rules.toml not reloaded: "):  # the watcher's: a change that doesn't load
+            self.rules_broken(text.split(": ", 1)[1])
+            text = "rules.toml has a mistake: Qualm kept the rules it had"
+        elif text == "rules reloaded":
+            self.rules_broken(None)
+        self.status_line.setTitle_(cut(text, 80))
+        self.status_line.setToolTip_(text if len(text) > 80 else "")
         self._refresh()
+
+    # -- what stops Qualm from working ---------------------------------------
+
+    @objc.python_method
+    def _check_access(self):
+        """Accessibility, checked every tick: without it Qualm sees only app names."""
+        from . import setup
+
+        had = "access" in self.problems
+        if setup.accessibility():
+            self.problems.pop("access", None)
+        else:
+            self.problems["access"] = "Qualm can't read windows: allow Accessibility…"
+        if had != ("access" in self.problems):
+            self._refresh()
+
+    def grantAccess_(self, sender):
+        from . import setup
+
+        setup.ask_accessibility()  # macOS's prompt, and the right pane of System Settings
+
+    @objc.python_method
+    def _hosted_trouble(self, status: str) -> str:
+        """The hosted model's trouble in a watcher status, counted and shown; "" if none."""
+        from .decide import backend
+
+        kind = model_trouble(status)
+        if not kind or backend(self.policy.settings) != "jev":
+            return ""
+        if kind == "down":
+            self._model_errors += 1
+            if self._model_errors < MODEL_ERRORS:
+                return kind  # a blip, maybe: said in the status line, not yet a problem
+        self._set_trouble(kind)
+        return kind
+
+    @objc.python_method
+    def _set_trouble(self, kind: str) -> None:
+        """The hosted model's problem in the icon and the menu, with its fix, and
+        a notice the first time it happens. "" clears it."""
+        from . import localmodel
+
+        if not kind:
+            if self.problems.pop("model", None) is not None:
+                self._refresh()
+            return
+        # The model on this Mac only where it can run (Apple silicon, macOS 14), as in the Model menu.
+        local = localmodel.unsupported() is None and not os.environ.get("QUALM_BACKEND")
+        if kind in ("nokey", "key") or (kind == "quota" and not local):
+            fix, self._model_fix = "Add a TypeSafe key…", lambda: self.openKey_(None)
+        elif local:
+            fix, self._model_fix = "Use the model on this Mac", lambda: self._use("kev")
+        else:
+            fix, self._model_fix = "Check your internet connection", None
+        _, title, text = TROUBLE[kind]
+        line = f"{title}: {fix[0].lower() + fix[1:]}"
+        self.model_line.setTitle_(line)
+        self.model_line.setEnabled_(self._model_fix is not None)
+        self.problems["model"] = line
+        self._refresh()
+        if kind in self._noticed:
+            return  # told once; the icon and the menu keep saying it
+        self._noticed.add(kind)
+        todo = {"nokey": "Add your key", "key": "Add a key that works", "quota": "Add a key with room left",
+                "down": "Check your internet connection"}[kind]
+        if local:
+            need = localmodel.disk_needed_gb()
+            todo += ", or use the model on this Mac" + (f" (its first start downloads about {need:.0f} GB)"
+                                                        if need >= 0.5 else "")
+        self._notice(title, f"{text} {todo}.", fix if self._model_fix else None, self._model_fix)
+
+    def fixModel_(self, sender):
+        if self._model_fix is not None:
+            self._model_fix()
+
+    @objc.python_method
+    def rules_broken(self, error: str | None, using: str | None = None, tell: bool = False) -> None:
+        """rules.toml doesn't load (`error`), or loads again (None): the icon, the
+        menu's first line and a notice (once per mistake, or when `tell`). `using`:
+        what Qualm judges with meanwhile, if not the rules it had."""
+        from . import agent
+        from .config import undo_to
+        from .decide import backend
+        from .explain import sentence
+        from .review import write_status
+
+        if error is None:
+            self._using = "the rules it last loaded"
+            if self.problems.pop("rules", None) is not None:
+                self._broken = ""
+                if self._broken_notice == self._notices and self.notice.isVisible():
+                    self._hide_notice()  # it's fixed: the notice saying otherwise goes too
+                write_status(self.policy.data_dir, rules="", hosted_off=False)
+                self._refresh()
+            return
+        self._using = using or self._using
+        mistake = rules_mistake(error)
+        at = re.search(r"\((?:at )?line (\d+)", mistake)
+        line = f"rules.toml has a mistake{f' at line {at.group(1)}' if at else ''}: fix it with your AI agent…"
+        to = undo_to(self.rules_path)
+        undo = "" if "config undo" in mistake or not to else \
+            f", or run `{agent.command()} config undo` in Terminal to go back to {to}"
+        # Meanwhile the watcher sends nothing to a hosted model: the file may list apps not to read.
+        hosted = not self.demo and backend(self.policy.settings) == "jev"
+        text = (f"{sentence(f'{self.rules_path} {mistake}')} Until it's fixed, Qualm uses {self._using}"
+                + (", and sends nothing to TypeSafe: only a rule's own sites and apps step in" if hosted else "")
+                + f". Ask your AI agent to fix it{undo}.")
+        self.rules_line.setTitle_(line)
+        self.rules_line.setToolTip_(text)
+        self.problems["rules"] = line
+        write_status(self.policy.data_dir, rules=self._using, hosted_off=hosted)  # the dashboard's banner says so
+        self._refresh()
+        if tell or mistake != self._broken:
+            self._broken = mistake
+            self._notice("Your rules file has a mistake", text, "Ask your AI agent…", lambda: self.openAgent_(None))
+            self._broken_notice = self._notices
 
     def pauseFor_(self, sender):
         minutes = sender.tag()
@@ -392,8 +693,14 @@ class Controller(NSObject):
         self.policy.pause(0)
         self._refresh()
 
+    def cancelPlanned_(self, sender):
+        write_session(self.policy.data_dir, pause_later=None)
+        self.policy.reload_session()
+        self._refresh()
+
     def startFocus_(self, sender):
         self.focus_field.setStringValue_("")
+        self._focus_say(FOCUS_HINT)
         self.focus_prompt.center()
         NSApp.activateIgnoringOtherApps_(True)
         self.focus_prompt.makeKeyAndOrderFront_(None)
@@ -407,17 +714,23 @@ class Controller(NSObject):
     def flagMiss_(self, sender):
         from .review import save_review
 
-        ev = self.last
-        if ev is None or ev.reading is None:
-            self.set_status("nothing judged yet to flag")
+        # The screen in front now, even one still waiting out the 4 s before a
+        # pop-up, or let through without asking the model.
+        ev = self.watcher.current() if self.watcher is not None else self.last
+        if ev is None:
+            self.set_status("this screen hasn't been judged yet (just opened, or the model isn't answering)")
+            return
+        if any(d.reason in ("sensitive page", "app not monitored") for d in ev.decisions):
+            self.set_status("this screen is private: Qualm keeps nothing of it to flag")
             return
         save_review(self.policy.data_dir, ev.id, verdict="should_block")
-        self.set_status(f"flagged: {ev.screen.window_title[:40] or ev.screen.app}. Mark which rule on the dashboard.")
+        title = cut(ev.screen.window_title, 40) or ev.screen.app
+        self.set_status(f"flagged: {title}. Mark which rule on the dashboard.")
 
     def openReview_(self, sender):
-        from .review import PORT
+        from .review import dashboard_url
 
-        subprocess.run(["open", f"http://127.0.0.1:{PORT}/"], check=False)
+        subprocess.run(["open", dashboard_url(self.policy.data_dir, self.policy.settings)], check=False)
 
     def openAgent_(self, sender):
         from . import agent
@@ -497,6 +810,11 @@ class Controller(NSObject):
     def openRules_(self, sender):
         subprocess.run(["open", "-t", self.rules_path], check=False)
 
+    def openModelLog_(self, sender):
+        from .localmodel import log_file
+
+        subprocess.run(["open", "-t", str(log_file())], check=False)
+
     def quit_(self, sender):
         self.policy.usage.save()
         if self.server:
@@ -508,13 +826,16 @@ class Controller(NSObject):
     @objc.python_method
     def handle(self, ev: Event):
         shown = [d for d in ev.decisions if d.action != "skip" or d.reason != "paused"]
-        summary = ", ".join(f"{d.action} {d.rule}".strip() for d in shown) or "nothing"
+        summary = ", ".join(ACTION_WORDS.get(d.action, d.action) + (f" ({self._name(d.rule)})" if d.rule else "")
+                            for d in shown) or "nothing"
         if ev.reading is not None:
             self.last = ev
             if not ev.reading.cached:
                 from .decide import backend
 
                 self.last_reading = (backend(self.policy.settings), ev.reading.latency_ms / 1000)
+                self._model_errors = 0
+                self._set_trouble("")  # the model answered: whatever was wrong with it isn't any more
         self.set_status(f"{ev.screen.app.strip(chr(0x200e))}: {summary}")
         hit = next((d for d in ev.decisions if d.action == "intervene"), None)
         if hit and not self.panel.isVisible():
@@ -556,11 +877,11 @@ class Controller(NSObject):
         if now - self._nudged.get(key, 0) < 3 * NUDGE_S:
             return False  # nudged a moment ago and still here: the panel
         self._nudged[key] = now
-        from .explain import label
+        from .explain import looks_like
 
         rule = self.policy.rule(d.rule)
-        self.nudge_title.setStringValue_(f"You're here to: {focus['intent']}"[:60])
-        self.nudge_text.setStringValue_(f"This looks like {label(rule, self.policy.settings.lang)}.")
+        self.nudge_title.setStringValue_(f"You're here to: {cut(focus['intent'], 46 - 16)}")  # your words, cut
+        self.nudge_text.setStringValue_(cut(looks_like(rule, self.policy.settings.lang), 100))  # two lines at most
         self.nudge_ev = (d, ev)
         screen = NSScreen.mainScreen().visibleFrame()
         self.nudge.setFrameOrigin_((screen.origin.x + screen.size.width - NUDGE_W - 16,
@@ -587,14 +908,220 @@ class Controller(NSObject):
         self.policy.log_response(d.id, "back", d.rule)
         self._nudged.pop((d.rule, host_of(ev.screen.url) or ev.screen.bundle_id), None)
         if not self.demo:
-            threading.Thread(target=go_back, args=(ev.screen, self.policy.page_fine),
-                             daemon=True).start()
+            threading.Thread(target=go_back, args=(ev.screen, self.policy.page_fine,
+                                                   lambda how: self.policy.went_back(d.rule, how)), daemon=True).start()
 
     def nudgeLater_(self, sender):
         if self.nudge_ev is not None:
             d, _ = self.nudge_ev
             self.policy.log_response(d.id, "not now", d.rule)
             self._hide_nudge()
+
+    # -- the notice ----------------------------------------------------------
+
+    @objc.python_method
+    def _build_notice(self):
+        """A note in the corner, like the focus nudge, for what a menu line would
+        leave unseen: the hosted model stopping, a change that wasn't saved."""
+        self.notice, view = ui.hud(NOTICE_W, 120, PANEL_TITLE)
+        self.notice_box, self.notice_icon = ui.badge("warn", 34)
+        tw = NOTICE_W - (16 + 34 + 12) - 18
+        self.notice_title = ui.label("", 13, 0.3, width=tw)
+        self.notice_text = ui.label("", 12, 0.0, NSColor.secondaryLabelColor(), width=tw, wrap=True)
+        self.notice_fix = NSButton.buttonWithTitle_target_action_("", self, "noticeFix:")
+        self.notice_close = ui.link("Not now", self, "noticeClose:")
+        for v in (self.notice_box, self.notice_icon, self.notice_title, self.notice_text, self.notice_fix,
+                  self.notice_close):
+            view.addSubview_(v)
+        self._notice_do, self._notices = None, 0
+
+    @objc.python_method
+    def _notice(self, title: str, text: str, fix: str | None = None, do=None):
+        """Show a notice; `fix` titles a button that calls `do`. It goes by itself after NOTICE_S."""
+        tx, tw = 16 + 34 + 12, NOTICE_W - (16 + 34 + 12) - 18
+        self.notice_title.setStringValue_(cut(title, 60))
+        th = ui.fit(self.notice_text, text, tw)
+        h = 14 + 17 + 4 + th + 12 + 32 + 12
+        for v in (self.notice_box, self.notice_icon):
+            v.setFrame_(NSMakeRect(16, h - 16 - 34, 34, 34))
+        self.notice_title.setFrameOrigin_((tx, h - 14 - 17))
+        self.notice_text.setFrameOrigin_((tx, h - 14 - 17 - 4 - th))
+        self.notice_fix.setHidden_(fix is None)
+        x = tx - 6  # the bezel's inset: its text lines up with the words above
+        if fix is not None:
+            self.notice_fix.setTitle_(fix)
+            self.notice_fix.sizeToFit()
+            self.notice_fix.setFrameOrigin_((x, 12))
+            x += self.notice_fix.frame().size.width + 10
+        self.notice_close.setTitle_("Not now" if fix is not None else "Close")
+        self.notice_close.sizeToFit()
+        cf, bh = self.notice_close.frame(), self.notice_fix.frame().size.height
+        self.notice_close.setFrameOrigin_((x if fix is not None else tx - 2, 12 + (bh - cf.size.height) / 2))
+        self._notice_do = do
+        screen = NSScreen.mainScreen().visibleFrame()
+        self.notice.setFrame_display_(NSMakeRect(screen.origin.x + screen.size.width - NOTICE_W - 16,
+                                                 screen.origin.y + screen.size.height - h - 12, NOTICE_W, h), True)
+        self.notice.contentView().setFrame_(NSMakeRect(0, 0, NOTICE_W, h))
+        self._notices += 1
+        n = self._notices
+        if not self.notice.isVisible():
+            self.notice.setAlphaValue_(0.0)
+            self.notice.orderFrontRegardless()  # shown, but whatever you're typing in keeps the keyboard
+            ui.fade(self.notice, 1.0)
+        AppHelper.callLater(NOTICE_S, lambda: self._hide_notice() if self._notices == n else None)
+
+    @objc.python_method
+    def _hide_notice(self):
+        notice = self.notice
+        ui.fade(notice, 0.0, 0.15, lambda: notice.orderOut_(None))
+
+    def noticeFix_(self, sender):
+        do, self._notice_do = self._notice_do, None
+        self._hide_notice()
+        if do is not None:
+            do()
+
+    def noticeClose_(self, sender):
+        self._hide_notice()
+
+    # -- the TypeSafe key ----------------------------------------------------
+
+    @objc.python_method
+    def _build_key_panel(self):
+        """The hosted model's key, after setup: pasted, checked with TypeSafe, saved in the keychain."""
+        from .onboard import HOSTED_COST
+
+        w = 480.0
+        self._key_busy, self._key_check = False, 0  # a check on its way; which one the window waits for
+        body = ui.label("The hosted model is TypeSafe's Jev: about 0.2 s per check and almost no memory. The text of "
+                        f"each new screen is sent to TypeSafe. It needs a TypeSafe account and API key; {HOSTED_COST}.",
+                        13, 0.0, NSColor.secondaryLabelColor(), width=w - 2 * PAD, wrap=True)
+        body_h = ui.fit(body, str(body.stringValue()), w - 2 * PAD)
+        status_h, buttons_h = 34.0, 60.0
+        h = 30 + BADGE + 18 + body_h + 16 + 30 + 8 + status_h + buttons_h
+        self.key_panel, view = ui.hud(w, h, PANEL_TITLE)
+        box, icon = ui.badge("key", BADGE)
+        text_x = PAD + BADGE + 16
+        for v in (box, icon):
+            v.setFrame_(NSMakeRect(PAD, h - 30 - BADGE, BADGE, BADGE))
+        eyebrow = ui.label("HOSTED MODEL", 11, 0.4, NSColor.secondaryLabelColor(), width=w - text_x - PAD)
+        eyebrow.setFrameOrigin_((text_x, h - 30 - 14))
+        self.key_title = ui.label("Add your TypeSafe key", 21, 0.3, width=w - text_x - PAD)
+        self.key_title.setFrameOrigin_((text_x, h - 30 - 14 - 3 - self.key_title.frame().size.height))
+        y = h - 30 - BADGE - 18 - body_h
+        body.setFrame_(NSMakeRect(PAD, y, w - 2 * PAD, body_h))
+        y -= 16 + 30
+        self.key_field = NSSecureTextField.alloc().initWithFrame_(NSMakeRect(PAD, y, w - 2 * PAD, 30))
+        self.key_field.setBezelStyle_(1)  # rounded
+        self.key_field.setFont_(NSFont.systemFontOfSize_(14))
+        self.key_field.setPlaceholderString_("TypeSafe API key")
+        self.key_field.setTarget_(self)
+        self.key_field.setAction_("keySave:")
+        y -= 8 + status_h
+        self.key_status = ui.label("", 12, 0.0, NSColor.secondaryLabelColor(), width=w - 2 * PAD, wrap=True)
+        self.key_status.setFrame_(NSMakeRect(PAD, y, w - 2 * PAD, status_h))
+        get = ui.link("Get a key", self, "keyGet:")
+        get.setContentTintColor_(NSColor.linkColor())
+        get.setFrameOrigin_((PAD - 2, 12 + (36 - get.frame().size.height) / 2))
+        self.key_save = NSButton.buttonWithTitle_target_action_("Save and switch", self, "keySave:")
+        self.key_save.setKeyEquivalent_("\r")
+        self.key_save.setControlSize_(3)
+        cancel = NSButton.buttonWithTitle_target_action_("Cancel", self, "keyCancel:")
+        cancel.setKeyEquivalent_("\x1b")
+        cancel.setControlSize_(3)
+        self.key_save.setFrame_(NSMakeRect(w - PAD - 150, 12, 150, 36))
+        cancel.setFrame_(NSMakeRect(w - PAD - 150 - 10 - 100, 12, 100, 36))
+        for v in (box, icon, eyebrow, self.key_title, body, self.key_field, self.key_status, get, cancel,
+                  self.key_save):
+            view.addSubview_(v)
+
+    def openKey_(self, sender):
+        from . import keychain
+        from .decide import backend
+
+        if getattr(self, "key_panel", None) is None:
+            self._build_key_panel()
+        self.key_title.setStringValue_("Replace your TypeSafe key" if keychain.api_key() else "Add your TypeSafe key")
+        self.key_save.setTitle_("Save" if backend(self.policy.settings) == "jev" else "Save and switch")
+        self.key_field.setStringValue_("")
+        self._key_drop()
+        self._key_say("")
+        self.key_panel.center()
+        NSApp.activateIgnoringOtherApps_(True)
+        self.key_panel.makeKeyAndOrderFront_(None)
+        self.key_panel.makeFirstResponder_(self.key_field)
+
+    @objc.python_method
+    def _key_say(self, text: str, error: bool = False):
+        self.key_status.setStringValue_(text)
+        self.key_status.setToolTip_("")
+        self.key_status.setTextColor_(NSColor.systemRedColor() if error else NSColor.secondaryLabelColor())
+
+    def keyGet_(self, sender):
+        from .onboard import KEY_URL
+
+        subprocess.run(["open", KEY_URL], check=False)
+
+    def keyCancel_(self, sender):
+        self._key_drop()
+        self.key_panel.orderOut_(None)
+
+    @objc.python_method
+    def _key_drop(self):
+        """Forget a check still on its way (Cancel, or the window opened again): its answer saves nothing."""
+        self._key_check += 1
+        self._key_busy = False
+        self.key_save.setEnabled_(True)
+
+    def keySave_(self, sender):
+        if self._key_busy or not self.key_panel.isVisible():
+            return  # Return fires both the field and the button
+        key = str(self.key_field.stringValue()).strip()
+        if not key:
+            self._key_say("Paste your TypeSafe API key first.", error=True)
+            return
+        self._key_busy = True
+        self.key_save.setEnabled_(False)
+        self._key_say("Checking the key with TypeSafe…")
+        threading.Thread(target=self._check_key, args=(key, self._key_check), daemon=True).start()
+
+    @objc.python_method
+    def _check_key(self, key: str, check: int):
+        from . import setup
+
+        err = setup.check_key(key)
+        AppHelper.callAfter(self._key_checked, key, err, check)
+
+    @objc.python_method
+    def _key_checked(self, key: str, err: str | None, check: int):
+        """Checked: saved in the keychain, then the hosted model is the one in use.
+        Nothing happens if the window was cancelled (or opened again) meanwhile."""
+        from . import keychain
+        from .onboard import key_trouble
+
+        if check != self._key_check:
+            return
+        self._key_busy = False
+        self.key_save.setEnabled_(True)
+        if err:
+            self._key_say(key_trouble(err), error=True)
+            return
+        try:
+            keychain.store(key)
+        except Exception as e:  # a locked keychain, most likely; the details go in the tooltip
+            self._key_say("TypeSafe accepted the key, but macOS wouldn't save it in your keychain. Unlock your "
+                          "login keychain (in Keychain Access), then try again.", error=True)
+            self.key_status.setToolTip_(str(e))
+            return
+        self.key_field.setStringValue_("")
+        self.key_panel.orderOut_(None)
+        if self.watcher is not None:
+            self.watcher.renew = self.watcher._rejudge = True  # the screen you're on, asked again with the new key
+        self._model_errors = 0
+        self._set_trouble("")
+        if self._use("jev"):
+            self.set_status("key saved: the model is hosted by TypeSafe")
+        self._refresh_menus()
 
     # -- the panel -----------------------------------------------------------
 
@@ -641,8 +1168,19 @@ class Controller(NSObject):
         hh = ui.fit(self.headline, str(self.headline.stringValue()), head_w)
         header = max(BADGE, eh + 3 + hh)
         body_h = 0 if done else ui.fit(self.body, str(self.body.stringValue()), iw)
-        ctx_text = "\n".join(t for t in (self.context_text, self.evidence_text) if t)
+        ctx_text = "\n".join(t for t in (self.context_text, self.evidence_text, self.hint_text) if t)
         ctx_h = 0 if done else ui.fit(self.context, ctx_text, iw)
+        self.context.setTextColor_(NSColor.secondaryLabelColor() if self.hint_text else NSColor.tertiaryLabelColor())
+        own_row = False
+        if not done:
+            for b in (self.back, self.need):
+                b.sizeToFit()
+            bw, nw = max(self.back.frame().size.width, 130), max(self.need.frame().size.width, 120)
+            nx = PAD - 2 + self.fine.frame().size.width + 12
+            never_w = 0 if self._no_never else self.never.fittingSize().width
+            # The links sit left of the buttons; a "Never on …" too long for the room
+            # takes a row of its own rather than lose part of its domain.
+            own_row = never_w > W - PAD - bw - 10 - nw - 12 - nx
         rows = [(30, None), (header, "header")]
         if not done:
             rows += [(18, None), (18, "place"), (10, None), (body_h, "body")]
@@ -650,7 +1188,10 @@ class Controller(NSObject):
                 rows += [(8, None), (ctx_h, "context")]
             if self.mode in ("why", "checkin"):
                 rows += [(16, None), (30, "why")]
-            rows += [(20, None), (36, "buttons")]
+            if own_row:
+                rows += [(14, None), (18, "links"), (10, None), (36, "buttons")]
+            else:
+                rows += [(20, None), (36, "buttons")]
         rows += [(22, None)]
         H = sum(h for h, _ in rows)
         y = {}
@@ -667,6 +1208,7 @@ class Controller(NSObject):
         for v in (self.place_icon, self.place, self.body, self.context, self.why, self.length, self.back, self.need,
                   self.fine, self.never):
             v.setHidden_(done)
+        self.never.setHidden_(done or self._no_never)
         if not done:
             self.place_icon.setFrame_(NSMakeRect(PAD, y["place"] + 1, 16, 16))
             has_icon = self.place_icon.image() is not None
@@ -684,15 +1226,11 @@ class Controller(NSObject):
                 self.why.setFrame_(NSMakeRect(PAD, y["why"], iw - lw - 10, 30))
                 self.length.setFrameOrigin_((W - PAD - lw, y["why"] + 2))
             by = y["buttons"]
-            for b in (self.back, self.need):
-                b.sizeToFit()
-            bw, nw = max(self.back.frame().size.width, 130), max(self.need.frame().size.width, 120)
             self.back.setFrame_(NSMakeRect(W - PAD - bw, by, bw, 36))
             self.need.setFrame_(NSMakeRect(W - PAD - bw - 10 - nw, by, nw, 36))
-            self.fine.setFrameOrigin_((PAD - 2, by + 9))
-            nx = PAD - 2 + self.fine.frame().size.width + 12
-            room = W - PAD - bw - 10 - nw - 12 - nx  # the links give way to the buttons
-            self.never.setFrame_(NSMakeRect(nx, by + 9, min(self.never.frame().size.width, max(room, 60)), 18))
+            ly = y["links"] if own_row else by + 9
+            self.fine.setFrame_(NSMakeRect(PAD - 2, ly, self.fine.frame().size.width, 18))  # one baseline for both
+            self.never.setFrame_(NSMakeRect(nx, ly, min(never_w, W - PAD - nx), 18))
         f = self.panel.frame()
         top_edge = f.origin.y + f.size.height
         self.panel.setFrame_display_animate_(NSMakeRect(f.origin.x, top_edge - H, W, H), True, self.panel.isVisible())
@@ -717,19 +1255,33 @@ class Controller(NSObject):
         self.place_icon.setImage_(ui.app_icon(ev.screen.bundle_id))
         where = ev.screen.window_title or ev.screen.app.strip("‎")
         host = host_of(ev.screen.url)
-        self.place.setStringValue_(f"{where} — {host}" if host and host not in where.lower() else where)
+        self._set_place(where, host if host and host not in where.lower() else "")
         self.body.setStringValue_(reason(d, ev.reading, rule, lang))
         self.headline.setToolTip_("The wording changes now and then, so it doesn't turn into wallpaper.")
         self.context_text = context(shown, self.policy.last_snooze(d.rule))
-        checking = ev.reading is not None and not self.demo and self.mode == "ask"
-        self.evidence_text = "Checking which part of the screen triggered it…" if checking else ""
+        self.hint_text = ""
         self.why.setStringValue_("")
         self.snooze_minutes = FOCUS_SNOOZE_MINUTES if focus else SNOOZE_MINUTES
         self.back.setTitle_("Back to it" if focus else "Take me back")
+        # On one of the rule's own sites or apps, the quiet links wait with "I need it":
+        # otherwise "Not this one" is a way past the wait there.
+        self._own = ("site" if rule.matches_url(ev.screen.url)
+                     else "app" if rule.matches_app(ev.screen.bundle_id, ev.screen.app.strip("‎")) else "")
+        # Which part of the screen made the model say so: two more model calls. Not
+        # where the rule's own site or app did it (the model's say didn't count).
+        checking = ev.reading is not None and not self.demo and self.mode == "ask" and not self._own
+        self.evidence_text = "Checking which part of the screen triggered it…" if checking else ""
+        self._focus = focus  # what the quiet link offers stays what it does, if the session ends before the click
         self.fine.setTitle_("It's part of the task" if focus else "Not this one")
+        self.fine.setToolTip_(f"This {self._own} is on the rule's list: this opens when the wait is over."
+                              if self._own else "")
         self.fine.sizeToFit()
         place = host or ev.screen.app.strip("‎")
-        self.never.setTitle_((f"Never on {place}" if host else f"Never in {place}")[:32])
+        # A browser whose address couldn't be read would be "Never in Google Chrome": every site, silenced.
+        self._no_never = not host and ev.screen.bundle_id in BROWSERS
+        self.never.setTitle_(cut(f"Never on {place}" if host else f"Never in {place}", 60))  # the whole domain
+        self.never.setToolTip_(f"Qualm won't step in {'on' if host else 'in'} {place} again, for any rule, "
+                               "sites a rule names included. Undo it on the dashboard, under Rules.")
         self.never.sizeToFit()
         if self.mode == "checkin":
             self._enter_checkin()
@@ -748,10 +1300,29 @@ class Controller(NSObject):
         self.panel.center()
         self.panel.setAlphaValue_(0.0)
         self.dimmer.show(block=self.policy.settings.block_clicks)
+        self.panel.hush(KEY_GUARD_S)  # a key already on its way to the page can't answer it
         NSApp.activateIgnoringOtherApps_(True)
         self.panel.makeKeyAndOrderFront_(None)
         self.panel.makeFirstResponder_(self.why if self.mode == "checkin" else None)
         ui.fade(self.panel, 1.0, 0.2)
+
+    @objc.python_method
+    def _set_place(self, where: str, host: str) -> None:
+        """The page (or app) and its site on the line under the headline. A
+        title too long for it is cut, never the site: "【独家首发】2026年度最火爆
+        搞笑短视频合集…看完这些你一定会… — bilibili.com". The whole title in the tooltip."""
+        room = W - 2 * PAD - (22 if self.place_icon.image() is not None else 0)  # as _layout sizes it
+        tail = f" — {host}" if host else ""
+        self.place.setStringValue_(where + tail)
+        fits = self.place.fittingSize().width <= room
+        if tail and not fits:
+            lo, hi = 1, 2 * len(where)  # the widest cut of the title (cut counts CJK as 2) that fits with the site
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                self.place.setStringValue_(cut(where, mid) + tail)
+                lo, hi = (mid, hi) if self.place.fittingSize().width <= room else (lo, mid - 1)
+            self.place.setStringValue_(cut(where, lo) + tail)
+        self.place.setToolTip_("" if fits else where)
 
     @objc.python_method
     def _default(self, button):
@@ -763,15 +1334,18 @@ class Controller(NSObject):
     @objc.python_method
     def _enter_checkin(self):
         """What for, and how long. Return starts 5 minutes once the wait is over."""
-        from .explain import session_context
+        from .explain import name, reason, session_context
 
         d, _ = self.current
         self.mode = "checkin"
         rule = self.policy.rule(d.rule)
         ui.recolor(self.badge_box, "checkin")
         ui.set_symbol(self.badge_icon, "checkin", BADGE)
-        self.eyebrow.setStringValue_(f"{rule.id.replace('_', ' ')} · check in".upper())
+        self.eyebrow.setStringValue_(f"{name(rule)} · check in".upper())
         self.headline.setStringValue_("What are you here for?")
+        # From "time's up" too, where the body said "Done takes you back."
+        self.body.setStringValue_(reason(replace(d, panel="check_in"), None, rule, self.policy.settings.lang))
+        self.hint_text = ""
         seconds, n = self.policy.usage.get(d.rule)
         self.context_text = session_context(n, seconds / 60, self.policy.last_end)
         self.why.setPlaceholderString_("A few words: what's it for?")
@@ -856,6 +1430,10 @@ class Controller(NSObject):
         left = self._left()
         title = f"Wait {left} s" if left > 0 else self._need_title()
         self.need.setEnabled_(left <= 0)
+        for link in (self.fine, self.never):  # greyed out clearly while they wait, not just a shade dimmer
+            link.setEnabled_(left <= 0 or not self._own)
+            link.setContentTintColor_(NSColor.secondaryLabelColor() if link.isEnabled()
+                                      else NSColor.quaternaryLabelColor())
         if str(self.need.title()) != title:
             self.need.setTitle_(title)
             self._layout()
@@ -899,8 +1477,8 @@ class Controller(NSObject):
             self.policy.log_response(d.id, "back", d.rule)
         self.policy.rejudge_in(RECHECK_S)  # still here then (no Back in that app): step in again
         if not self.demo:
-            threading.Thread(target=go_back, args=(ev.screen, self.policy.page_fine),
-                             daemon=True).start()
+            threading.Thread(target=go_back, args=(ev.screen, self.policy.page_fine,
+                                                   lambda how: self.policy.went_back(d.rule, how)), daemon=True).start()
 
     def need_(self, sender):
         if self.current is None or self.mode == "done":
@@ -910,12 +1488,11 @@ class Controller(NSObject):
             if self._left() > 0:
                 return
             reason = str(self.why.stringValue()).strip()
-            if len(reason) < 3:
-                self.why.setPlaceholderString_("A few words first: what's it for?")
-                self.panel.makeFirstResponder_(self.why)
+            if not enough(reason):
+                self._ask_more()
                 return
             c = self.policy.start_session(d.rule, self._picked(), reason, d.id)
-            self._confirm(f"Until {datetime.fromtimestamp(c.until):%H:%M}, for “{reason[:60]}”.")
+            self._confirm(f"Until {datetime.fromtimestamp(c.until):%H:%M}, for “{cut(reason, 60)}”.")
             return
         if self.mode == "timesup":
             if self._left() > 0:
@@ -940,34 +1517,56 @@ class Controller(NSObject):
             self.panel.makeFirstResponder_(self.why)
             return
         reason = str(self.why.stringValue()).strip()
-        if len(reason) < 3:
-            self.why.setPlaceholderString_("A few words first: what's it for?")
-            self.panel.makeFirstResponder_(self.why)
+        if not enough(reason):
+            self._ask_more()
             return
         self.policy.snooze(d.rule, self.snooze_minutes, reason, d.id)
         until = datetime.now() + timedelta(minutes=self.snooze_minutes)
-        self._confirm(f"Until {until:%H:%M}, for “{reason[:60]}”.")
+        self._confirm(f"Until {until:%H:%M}, for “{cut(reason, 60)}”.")
+
+    @objc.python_method
+    def _ask_more(self):
+        """An answer too short to count: said next to the field (a placeholder behind typed text is never seen)."""
+        self.hint_text = "A few words first: what's it for?"
+        self.why.setPlaceholderString_(self.hint_text)
+        self._layout()
+        self.panel.makeFirstResponder_(self.why)
+
+    @objc.python_method
+    def _quiet_locked(self) -> bool:
+        """The quiet links on a rule's own site, while the wait runs (they're greyed out then)."""
+        return bool(self._own) and self.mode != "why" and self._left() > 0
 
     def never_(self, sender):
-        if self.current is None or self.mode == "done":
+        if self.current is None or self.mode == "done" or self._quiet_locked():
             return
         d, ev = self.current
         place = self.policy.never_here(ev.screen.bundle_id, ev.screen.app.strip("‎"), ev.screen.url, d.id)
-        self.set_status(f"never again: {place} (undo on the dashboard, Tune)")
-        self._confirm(f"I won't look at {place} again. Undo it on the dashboard.")
+        self.set_status(f"never again: {place} (undo it on the dashboard, under Rules)")
+        self._confirm(f"I won't look at {place} again, for any rule. Undo it on the dashboard, under Rules.", 2.4)
 
     def fine_(self, sender):
-        if self.current is None or self.mode == "done":
+        if self.current is None or self.mode == "done" or self._quiet_locked():
             return
         d, ev = self.current
         v = ev.reading.verdict(d.rule) if ev.reading is not None else None
-        times = self.policy.mark_fine(d.rule, ev.screen.url, ev.screen.window_title, d.id,
-                                      ev.screen.bundle_id, v.p_hit if v else None)
-        if times >= 2:
+        focus = self._focus
+        times = self.policy.mark_fine(d.rule, ev.screen.url, ev.screen.window_title, d.id, ev.screen.bundle_id,
+                                      v.p_hit if v else None, until_focus_ends=focus is not None, focus=focus)
+        if focus and not times:  # clicked after that session ended: it held nothing
+            self._confirm("Your focus session had already ended, so nothing was changed.", 2.4)
+        elif focus:  # "It's part of the task": for this session only
+            self._confirm("Got it. I'll let this through until your focus session ends.")
+        elif times >= 2:
             # Clicks teach one place; a rule that keeps missing needs its wording tested.
             self._confirm("Got it. Still wrong here? In the menu bar: Change rules with your AI agent.", 3.0)
+        elif self._own == "site":
+            # The rule names this site: only this address is let through, not pages like it.
+            self._confirm("Got it: this page won't pop up again. Other pages on the rule's list still will.", 2.4)
+        elif ev.screen.url:
+            self._confirm("Got it: this page won't pop up again.")
         else:
-            self._confirm("Got it. I'll let pages like this through.")
+            self._confirm("Got it. I'll let this window through.")
 
     # -- the focus prompt ----------------------------------------------------
 
@@ -994,8 +1593,7 @@ class Controller(NSObject):
         self.focus_length.setSelectedSegment_(1)
         self.focus_length.sizeToFit()
         self.focus_length.setFrameOrigin_((PAD, 76))
-        hint = ui.label("Every rule steps in at once, and the pop-up reminds you of this.", 12, 0.0,
-                        NSColor.tertiaryLabelColor(), width=w - 2 * PAD)
+        self.focus_hint = hint = ui.label(FOCUS_HINT, 12, 0.0, NSColor.tertiaryLabelColor(), width=w - 2 * PAD)
         hint.setFrameOrigin_((PAD, 52))
         start = NSButton.buttonWithTitle_target_action_("Start", self, "focusStart:")
         start.setKeyEquivalent_("\r")
@@ -1012,8 +1610,9 @@ class Controller(NSObject):
         if not self.focus_prompt.isVisible():
             return  # Return fires both the field and the Start button
         intent = str(self.focus_field.stringValue()).strip()
-        if len(intent) < 2:
-            self.focus_field.setPlaceholderString_("A few words: what are you here to do?")
+        if not enough(intent):  # said under the field: a placeholder behind typed text is never seen
+            self._focus_say("A few words first: the pop-up reminds you of them.", True)
+            self.focus_prompt.makeFirstResponder_(self.focus_field)
             return
         start_focus(self.policy.data_dir, intent, FOCUS_LENGTHS[max(0, self.focus_length.selectedSegment())])
         self.policy.reload_session()
@@ -1022,6 +1621,11 @@ class Controller(NSObject):
 
     def focusCancel_(self, sender):
         self.focus_prompt.orderOut_(None)
+
+    @objc.python_method
+    def _focus_say(self, text: str, asking: bool = False):
+        self.focus_hint.setStringValue_(text)
+        self.focus_hint.setTextColor_(NSColor.secondaryLabelColor() if asking else NSColor.tertiaryLabelColor())
 
 
 DEMOS = ("deny", "feed", "checkin", "timesup", "focus", "prompt")
@@ -1086,12 +1690,175 @@ def _demo(ctrl: Controller, policy: Policy, kind: str) -> None:
     AppHelper.callLater(0.5, ctrl.handle, Event(screen, {}, reading if kind != "feed" else None, [d]))
 
 
+_held = None  # the lock's file descriptor, open as long as this copy runs
+
+
+def already_running(home: Path | None = None) -> int | None:
+    """Take the one-copy lock in the Qualm folder. None once this process holds
+    it; else the pid of the copy that does (0 if it can't be read). The system
+    drops the lock when a copy ends, crashed or not, so a stale file never blocks."""
+    import fcntl
+
+    from . import paths
+
+    global _held
+    home = home or paths.home()
+    home.mkdir(parents=True, exist_ok=True)
+    fd = os.open(home / LOCK, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        pid = os.read(fd, 32).decode(errors="ignore").strip()
+        os.close(fd)
+        return int(pid) if pid.isdigit() else 0
+    os.ftruncate(fd, 0)
+    os.write(fd, str(os.getpid()).encode())
+    _held = fd
+    return None
+
+
+# An app's command line: `qualm app` (a checkout, the `qualm` command), `python -m qualm app`, or Qualm.app with none.
+APP_COMMAND = re.compile(r"(/qualm|-m qualm) app(?!\S)|\.app/Contents/MacOS/Qualm$")
+
+
+def _processes() -> list[tuple[int, int, int, str]]:
+    """(pid, parent pid, seconds running, command line) of each of your processes, from `ps`; [] if it can't be read."""
+    try:
+        out = subprocess.run(["ps", "-xww", "-o", "pid=,ppid=,etime=,command="], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    procs = []
+    for row in (line.split(None, 3) for line in out.splitlines()):
+        if len(row) == 4 and row[0].isdigit() and row[1].isdigit():
+            days, _, hms = row[2].rpartition("-")  # [[dd-]hh:]mm:ss
+            secs = sum(int(x) * 60 ** i for i, x in enumerate(reversed(hms.split(":")))) + int(days or 0) * 86400
+            procs.append((int(row[0]), int(row[1]), secs, row[3].strip()))
+    return procs
+
+
+def _home_of(pid: int) -> Path | None:
+    """The Qualm folder a process of yours runs on (QUALM_HOME in its environment,
+    else the default); None if its environment can't be read."""
+    from . import paths
+
+    try:
+        out = subprocess.run(["ps", "-wwE", "-o", "command=", "-p", str(pid)], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not out.strip():
+        return None
+    m = re.search(r"(?:^| )QUALM_HOME=(.*?)(?= [A-Za-z_][A-Za-z0-9_]*=|$)", out.strip())
+    return Path(m.group(1)).expanduser() if m and m.group(1) else paths.default_home()
+
+
+def older_copy(home: Path, data_dir: Path, settings=None) -> int | None:
+    """Another Qualm app on this Qualm folder that takes no lock: one from before
+    app.lock, still running after an update. Its pid (0 if unknown), None if
+    there's none. Found in the process list (`qualm app` or Qualm.app, not this
+    one or what started it), or by its dashboard answering on this folder's port."""
+    from .review import dashboard_url, hello
+
+    procs = _processes()
+    parents, mine, pid = {p: pp for p, pp, _, _ in procs}, set(), os.getpid()
+    while pid and pid not in mine:  # this process and what started it (`uv run qualm app`)
+        mine.add(pid)
+        pid = parents.get(pid, 0)
+    age = next((t for p, _, t, _ in procs if p == os.getpid()), 0)
+    # Only copies started before this one: a newer one finds this one's lock and goes by itself.
+    homes = {p: _home_of(p) for p, _, t, cmd in procs
+             if p not in mine and t > age and APP_COMMAND.search(cmd) and "--demo" not in cmd}
+    for p, h in homes.items():
+        if h is not None and h.resolve() == home.resolve():
+            return p
+    said = hello(dashboard_url(data_dir, settings))
+    if not said or not said.get("watching") or said.get("pid") == os.getpid():
+        return None
+    if said.get("older"):  # a page from before /api/hello doesn't say its folder
+        if homes and None not in homes.values():
+            return None  # every older copy runs on another folder: the page is one of theirs
+        return next((p for p, h in homes.items() if h is None), 0)
+    return said.get("pid", 0) if said.get("data") == str(Path(data_dir).resolve()) else None
+
+
+def _say_running(pid: int, older: bool = False) -> None:
+    """A second copy's goodbye: in the terminal, and in a small alert when it was opened from Finder or the Dock."""
+    which = f" (pid {pid})" if pid else ""
+    if older:  # it has no "already running" check of its own: this one steps aside
+        title, text = "An older Qualm is running", "Quit it from its menu bar icon (Quit Qualm), then open Qualm again."
+        print(f"An older Qualm is running{which}: quit it from its menu bar icon first.", flush=True)
+    else:
+        title = "Qualm is already running"
+        text = "Its eye is in the menu bar. To start again, choose Quit Qualm there first."
+        print(f"Qualm is already running{which}: its eye is in the menu bar.", flush=True)
+    # Opened by LaunchServices (Finder, the Dock, `open`), not a terminal or the login item.
+    if os.environ.get("XPC_SERVICE_NAME", "").startswith("application."):
+        from AppKit import NSAlert
+
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_(title)
+        alert.setInformativeText_(text)
+        app.activateIgnoringOtherApps_(True)
+        alert.runModal()
+
+
+def fallback_config(rules_path: str | Path):
+    """What the app starts on when rules.toml doesn't load: (settings, rules,
+    that in words). The version Qualm last saved, else the newest one kept in
+    backups/ or as rules.toml.bak that loads (read, never put back; said as
+    an earlier version, which it is), else the starter rules. The
+    model stays the one rules.toml names, where that line can be read: a
+    hosted user isn't moved onto a 5 GB download. The apps the broken file
+    lists in no_monitor, as far as they can be read, are never read either
+    (and the watcher sends nothing to a hosted model until it loads)."""
+    from .config import EXAMPLE, Config
+    from .rules import listed_anyway, load_config, parse_config
+
+    path, cfg = Path(rules_path), Config(Path(rules_path))
+    for p in (cfg._saved(), *reversed(cfg._versions()), cfg._bak()):
+        try:
+            settings, rules = parse_config(p.read_bytes().decode("utf-8-sig"), p, advice=False)
+            # Only .saved is the last save: the others are from before a change (the last one, or more).
+            using = "the version it last saved" if p == cfg._saved() else "an earlier version it saved"
+            break
+        except (OSError, ValueError):
+            continue
+    else:
+        (settings, rules), using = load_config(EXAMPLE), "the starter rules"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    if m := re.search(r"""(?m)^\s*backend\s*=\s*["'](kev|jev)["']""", text):
+        settings.backend = m.group(1)
+    elif text.strip():  # no backend line: the model on this Mac
+        settings.backend = "kev"
+    settings.no_monitor = tuple(dict.fromkeys((*settings.no_monitor, *listed_anyway(text))))
+    return settings, rules, using
+
+
 def run_app(policy: Policy | None, rules_path: str, budget: int, demo: str | None = None, review: bool = True,
-            data_dir: str | None = None) -> None:
+            data_dir: str | None = None, broken: tuple[str, str] | None = None) -> None:
     """The app. With no policy yet (a first run), the setup window comes
-    first, and the rules it writes are loaded when it's done."""
+    first, and the rules it writes are loaded when it's done. `broken`:
+    rules.toml doesn't load (why, and what `policy` holds instead), shown
+    until it does. One copy at a time: a second one, or one started while
+    an older copy runs, says so and exits (0, so the login item's launchd
+    doesn't start it again); a demo watches nothing and never counts."""
     import atexit
 
+    from . import paths
+
+    if not demo and (other := already_running()) is not None:
+        _say_running(other)
+        sys.exit(0)
+    data = Path(policy.data_dir if policy else data_dir or paths.data_dir())
+    if not demo and (old := older_copy(paths.home(), data, policy.settings if policy else None)) is not None:
+        _say_running(old, older=True)
+        sys.exit(0)
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     keep = []  # the controller and the setup window live as long as the app
@@ -1099,6 +1866,8 @@ def run_app(policy: Policy | None, rules_path: str, budget: int, demo: str | Non
     def start(policy: Policy):
         ctrl = Controller.alloc().init().setup(policy, str(Path(rules_path).resolve()), demo)
         keep.append(ctrl)
+        if broken:  # the menu bar says so until a fixed rules.toml loads
+            ctrl.rules_broken(*broken)
         atexit.register(lambda: ctrl.server and ctrl.server.stop())
 
         def on_event(ev: Event):
@@ -1109,12 +1878,9 @@ def run_app(policy: Policy | None, rules_path: str, budget: int, demo: str | Non
             print(f"  [{text}]", flush=True)
             AppHelper.callAfter(ctrl.set_status, text)
 
-        from ApplicationServices import AXIsProcessTrusted
-
-        if not AXIsProcessTrusted():
+        if "access" in ctrl.problems:  # the menu bar shows it too, until it's granted
             print("! No Accessibility permission: Qualm can only see app names. Grant it in System Settings >"
-                  " Privacy & Security > Accessibility, then restart.", flush=True)
-            AppHelper.callAfter(ctrl.set_status, "needs Accessibility permission (see System Settings)")
+                  " Privacy & Security > Accessibility; Qualm picks it up without a restart.", flush=True)
         print("Qualm watching. Ctrl-C to stop.", flush=True)
 
         if demo:
@@ -1127,17 +1893,18 @@ def run_app(policy: Policy | None, rules_path: str, budget: int, demo: str | Non
             wake = threading.Event()
             keep.append(FrontWindowEvents(wake).start())  # the front app and window's changes wake the watcher
             watcher = Watcher(policy, on_event, on_status, budget=budget, rules_path=rules_path, wake=wake)
+            watcher.rules_broken = bool(broken)  # nothing goes to a hosted model until rules.toml loads
             ctrl.watcher = watcher
             threading.Thread(target=watcher.run, daemon=True).start()
         if review:
-            from .review import PORT, start_server
+            from .review import dashboard_port, start_dashboard
 
-            try:
-                server = start_server(policy.data_dir, Path(rules_path), PORT)
+            try:  # on a free port if another program holds this one; data/dashboard.json says which
+                server = start_dashboard(policy.data_dir, Path(rules_path), dashboard_port(policy.settings))
                 threading.Thread(target=server.serve_forever, daemon=True).start()
-                print(f"dashboard: http://127.0.0.1:{PORT}/", flush=True)
-            except OSError:
-                print(f"dashboard: port {PORT} is taken; `qualm review --web` is probably running", flush=True)
+                print(f"dashboard: http://127.0.0.1:{server.server_address[1]}/", flush=True)
+            except OSError as e:
+                print(f"dashboard: couldn't start ({e})", flush=True)
 
     if policy is not None:
         start(policy)

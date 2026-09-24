@@ -4,9 +4,11 @@ dashboard without your own data (which is personal: never put it in a README).
     uv run python experiments/demo_data.py --out /tmp/qualm-demo/data
     uv run qualm review --web --data /tmp/qualm-demo/data --rules rules.example.toml
 
-Same file formats as the app writes. Pop-ups thin out over the weeks and
-cluster in the evening, you go back more often as time goes on, check-ins
-mostly end when you said, and a focus session is running now.
+Same file formats as the app writes: a "Not this one" or "Never here"
+answer also saves the exception the app would, and nothing pops up on a
+site after "Never here". Pop-ups thin out over the weeks and cluster in the
+evening, you go back more often as time goes on, check-ins mostly end when
+you said, and a focus session is running now.
 """
 import argparse
 import json
@@ -14,6 +16,8 @@ import random
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+from qualm.policy import fine_entry, host_of
 
 PAGES = {
     "shortvideo": [("Google Chrome", "com.google.Chrome", "Try Not To Laugh Challenge #shorts - YouTube", "https://www.youtube.com/shorts/{id}"),
@@ -49,7 +53,8 @@ def main():
     rnd = random.Random(a.seed)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    judgements, decisions, reviews, history = [], [], [], {}
+    judgements, decisions, reviews, exceptions, history = [], [], [], [], {}
+    never = set()  # sites you said "Never here" on: no rule pops up there again
     today = date.today()
     now = datetime.now()
 
@@ -72,13 +77,16 @@ def main():
                 end = start + timedelta(minutes=rnd.randint(10, minutes - 5))
                 decisions.append({"at": end.isoformat(timespec="seconds"), "type": "focus_end", "intent": intent,
                                   "minutes": round((end - start).total_seconds() / 60, 1)})
-        for _ in range(n):
-            hour = rnd.choices(range(24), weights=[3, 2, 1, 0, 0, 0, 0, 1, 2, 3, 3, 3, 4, 4, 3, 3, 3, 4, 5, 6, 8, 9, 9, 6])[0]
-            at = datetime.combine(day, datetime.min.time()) + timedelta(hours=hour, minutes=rnd.randint(0, 59), seconds=rnd.randint(0, 59))
+        hours = rnd.choices(range(24), weights=[3, 2, 1, 0, 0, 0, 0, 1, 2, 3, 3, 3, 4, 4, 3, 3, 3, 4, 5, 6, 8, 9, 9, 6], k=n)
+        # In order, so that nothing pops up on a site after you said "Never here" there.
+        for at in sorted(datetime.combine(day, datetime.min.time()) + timedelta(hours=h, minutes=rnd.randint(0, 59), seconds=rnd.randint(0, 59))
+                         for h in hours):
             if at > now:
                 continue
             rule = rnd.choices(list(PAGES), weights=[5, 6, 1, 3, 4])[0]
-            app, bid, title, url = rnd.choice(PAGES[rule])
+            if not (pages := [pg for pg in PAGES[rule] if host_of(pg[3]) not in never]):
+                continue
+            app, bid, title, url = rnd.choice(pages)
             url = url.format(id=jid())
             p = {r: round(rnd.uniform(0.02, 0.12), 3) for r in PAGES}
             p[rule] = round(rnd.uniform(THRESHOLDS[rule] * 1.2, 0.95), 3)
@@ -129,6 +137,12 @@ def main():
                      "rule": rule, "response": answer}
                 if answer == "snooze":
                     e |= {"reason": rnd.choice(REASONS), "minutes": 10}
+                elif answer == "fine":  # Policy.mark_fine: that address is let through for this rule
+                    exceptions.append(fine_entry(rule, url, title) | {"at": e["at"]})
+                elif answer == "never":  # Policy.never_here: no rule fires on this site again
+                    never.add(host_of(url))
+                    e |= {"rule": "", "place": {"host": host_of(url)}}
+                    exceptions.append({"never": e["place"], "at": e["at"]})
                 decisions.append(e)
             if back > 2 and rnd.random() < 0.5:
                 reviews.append({"id": j["id"], "rules": {}, "verdict": "right" if answer != "fine" else "should_not_block",
@@ -170,7 +184,8 @@ def main():
     monday = today - timedelta(days=today.weekday())
     refl = [{"week": (monday - timedelta(weeks=w)).isoformat(), "answer": ans, "note": "", "at": now.isoformat(timespec="seconds")}
             for w, ans in ((2, "not_really"), (1, "mixed"))]
-    for name, rows in (("judgements", judgements), ("decisions", decisions), ("reviews", reviews), ("reflections", refl)):
+    for name, rows in (("judgements", judgements), ("decisions", decisions), ("reviews", reviews), ("reflections", refl),
+                       ("exceptions", exceptions)):
         (out / f"{name}.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     (out / "usage_history.json").write_text(json.dumps(history))
     (out / "usage.json").write_text(json.dumps({"day": today.isoformat(), "counts": history[today.isoformat()]}))

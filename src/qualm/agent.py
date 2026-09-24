@@ -9,11 +9,12 @@ text editor can't. `qualm guide` tells it how.
 
 from __future__ import annotations
 
-import json
+import shlex
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import autostart, paths
+from . import autostart, jsonl, paths
 
 RECENT_H = 24  # pop-ups you said were wrong in this many hours go into the prompt
 RECENT_N = 3
@@ -21,24 +22,36 @@ SAID = {"fine": "not this one", "never": "never here"}
 
 
 def command() -> str:
-    """How a terminal on this Mac runs qualm."""
+    """How a terminal on this Mac runs qualm, in a form a stock macOS shell
+    can run: plain `qualm` only when it's on PATH (a stock shell has no
+    ~/.local/bin), else the full path of the `qualm` command Qualm.app added,
+    Qualm.app itself, or this checkout through uv. On another Qualm folder
+    (QUALM_HOME), with it in front: without it, a command changes the main one."""
+    home = f"QUALM_HOME={shlex.quote(str(paths.home()))} " if paths.custom_home() else ""
+    return home + _program()
+
+
+def _program() -> str:
     if b := paths.bundle():
-        return "qualm" if autostart._ours(autostart.SHIM) else f'"{b}/Contents/MacOS/Qualm" -m qualm'
+        shim = autostart.SHIM
+        if autostart._ours(shim):
+            found = shutil.which("qualm")
+            return "qualm" if found and Path(found).resolve() == shim.resolve() else shlex.quote(str(shim))
+        return f"{shlex.quote(str(b / 'Contents' / 'MacOS' / 'Qualm'))} -m qualm"
     repo = Path(__file__).resolve().parents[2]
-    return f"uv run --project {repo} qualm" if (repo / "pyproject.toml").exists() else "qualm"
+    return f"uv run --project {shlex.quote(str(repo))} qualm" if (repo / "pyproject.toml").exists() else "qualm"
+
+
+def start_hint() -> str:
+    """How to start the app: Qualm.app, or the command from a checkout."""
+    return f"open Qualm.app, or run `{command()} app`" if paths.bundle() else f"run `{command()} app`"
 
 
 def wrong_popups(data_dir: Path, now: datetime | None = None) -> list[str]:
     """The latest pop-ups you answered "Not this one" or "Never here", newest first, one line each."""
-    path = Path(data_dir) / "decisions.jsonl"
-    if not path.exists():
-        return []
     since = ((now or datetime.now()) - timedelta(hours=RECENT_H)).isoformat(timespec="seconds")
     shown, out = {}, []
-    for line in path.open(encoding="utf-8"):
-        if not line.strip():
-            continue
-        e = json.loads(line)
+    for e in jsonl.lines(Path(data_dir) / "decisions.jsonl"):
         if e.get("at", "") < since:
             continue
         if e.get("type") == "intervention":
@@ -57,9 +70,15 @@ def prompt(data_dir: Path) -> str:
     cmd = command()
     lines = [
         "Help me adjust Qualm, the app on my Mac that steps in when I drift into feeds, short videos and the like.",
-        f"Run `{cmd} guide` first and follow it. Change things only through that command, and score each change on my "
+        f"Run `{cmd} guide` first and follow it" + ("" if cmd == "qualm" else f", writing `{cmd}` wherever it says `qualm`")
+        + ". Change things only through that command, and score each change on my "
         "recent screens before saving it (`rules test`, `allow test`); don't edit rules.toml by hand. "
-        "Tell me the numbers before and after.",
+        "Tell me the numbers before and after. If there's nothing to score it on yet, do what the guide "
+        "says for a first day, and tell me what is untested.",
+        "Scoring prints the titles and addresses of my recent screens, and `except list` those of pages I let "
+        "through, and they reach you and your provider: look at no more of them than the job needs, and quote "
+        "back only the rows you need.",
+        "Answer me in the language I write in.",
     ]
     if wrong := wrong_popups(data_dir):
         lines += ["", "Pop-ups I said were wrong lately:", *wrong]

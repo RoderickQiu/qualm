@@ -29,25 +29,29 @@ def screen_locked() -> bool:
     return bool(d.get("CGSSessionScreenIsLocked", False))
 
 
-def display_kept_awake_by(app_name: str) -> bool:
-    """True if `app_name` (or one of its helpers, e.g. "Google Chrome Helper")
-    holds a PreventUserIdleDisplaySleep assertion: typically, video playing."""
+def display_kept_awake_by(*names: str) -> bool:
+    """True if the app called any of `names` (or one of its helpers, e.g.
+    "Google Chrome Helper") holds a PreventUserIdleDisplaySleep assertion:
+    typically, video playing. pmset names processes by their executable
+    ("Safari"), not by the name the app shows, which can be translated
+    ("Safari浏览器" in Chinese): give both."""
     try:
         out = subprocess.run(["pmset", "-g", "assertions"], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.TimeoutExpired):
         return False
     # "pid 99(Google Chrome Helper (Renderer)): [0x..] ... PreventUserIdleDisplaySleep ..."
     owners = re.findall(r"pid \d+\((.*?)\): \[.*PreventUserIdleDisplaySleep", out)
-    name = app_name.strip("‎").lower()
-    return bool(name) and any(o.lower().startswith(name) for o in owners)
+    wanted = {n.strip("‎").lower() for n in names} - {""}
+    return any(o.lower().startswith(n) for o in owners for n in wanted)
 
 
 class Presence:
     def __init__(self, idle_s: float = IDLE_S):
         self.idle_s = idle_s
-        self._media: tuple[float, str, bool] = (0.0, "", False)  # checked at, app, result
+        self._media: tuple[float, tuple[str, ...], bool] = (0.0, (), False)  # checked at, app, result
 
-    def away(self, front_app: str) -> bool:
+    def away(self, *front_app: str) -> bool:
+        """`front_app`: the front app's names (as shown, and its executable)."""
         if screen_locked():
             return True
         if idle_seconds() < self.idle_s:
@@ -55,6 +59,6 @@ class Presence:
         at, app, playing = self._media
         now = time.monotonic()
         if app != front_app or now - at > MEDIA_CHECK_S:
-            playing = display_kept_awake_by(front_app)
+            playing = display_kept_awake_by(*front_app)
             self._media = (now, front_app, playing)
         return not playing

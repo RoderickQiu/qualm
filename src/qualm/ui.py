@@ -6,6 +6,10 @@ Kept apart from app.py so the controller reads as behaviour, not pixels.
 
 from __future__ import annotations
 
+import math
+import time
+
+import objc
 from AppKit import (
     NSAnimationContext,
     NSAppearance,
@@ -14,6 +18,7 @@ from AppKit import (
     NSBox,
     NSButton,
     NSColor,
+    NSEventTypeKeyDown,
     NSFont,
     NSImage,
     NSImageSymbolConfiguration,
@@ -53,17 +58,44 @@ ACCENTS = {
     "done": (0.45, 0.85, 0.55),  # green, for "got it"
     "watch": (0.38, 0.78, 0.98),  # the setup window: the menu bar's eye
     "agent": (0.62, 0.72, 1.0),  # periwinkle: hand it to your AI agent
+    "warn": (1.0, 0.72, 0.30),  # amber: something stops Qualm from working
+    "key": (0.38, 0.78, 0.98),  # the hosted model's key: the menu bar's blue
 }
-SYMBOLS = {"deny": "hand.raised.fill", "checkin": "timer", "timesup": "hourglass", "focus": "scope", "done": "checkmark", "watch": "eye", "agent": "sparkles"}
+SYMBOLS = {"deny": "hand.raised.fill", "checkin": "timer", "timesup": "hourglass", "focus": "scope", "done": "checkmark",
+           "watch": "eye", "agent": "sparkles", "warn": "exclamationmark.triangle.fill", "key": "key.fill"}
 
 
 def rgb(r: float, g: float, b: float, a: float = 1.0) -> NSColor:
     return NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, a)
 
 
+class QualmPanel(NSPanel):
+    """The HUD's window. For a moment after `hush`, it ignores keys: a pop-up
+    takes the keyboard while you may be typing on the page, and the keystroke
+    already on its way (Return in a chat) mustn't answer it."""
+
+    @objc.python_method
+    def hush(self, seconds: float) -> None:
+        self._quiet_until = time.monotonic() + seconds
+
+    @objc.python_method
+    def hushed(self) -> bool:
+        return time.monotonic() < getattr(self, "_quiet_until", 0.0)
+
+    def sendEvent_(self, event):
+        if event.type() == NSEventTypeKeyDown and self.hushed():
+            return
+        objc.super(QualmPanel, self).sendEvent_(event)
+
+    def performKeyEquivalent_(self, event):
+        if self.hushed():
+            return True  # swallowed: Return mustn't press the default button yet
+        return objc.super(QualmPanel, self).performKeyEquivalent_(event)
+
+
 def hud(width: float, height: float, title: str) -> tuple[NSPanel, NSVisualEffectView]:
     """A floating, blurred panel that takes keyboard input, on every Space and over full-screen apps."""
-    panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+    panel = QualmPanel.alloc().initWithContentRect_styleMask_backing_defer_(
         NSMakeRect(0, 0, width, height), NSWindowStyleMaskTitled | NSWindowStyleMaskFullSizeContentView,
         NSBackingStoreBuffered, False)
     panel.setTitle_(title)  # never shown, but the watcher skips windows with this title
@@ -101,10 +133,15 @@ def label(text: str = "", size: float = 13, weight: float = 0.0, color: NSColor 
 
 
 def fit(field: NSTextField, text: str, width: float) -> float:
-    """Set a wrapping label's text; returns the height it needs at `width`."""
+    """Set a wrapping label's text; returns the height it needs at `width`.
+    Measured as the cell wraps it in a frame that wide: fittingSize alone
+    can lay it out a hair wider and come up a line short."""
     field.setStringValue_(text)
     field.setPreferredMaxLayoutWidth_(width)
-    h = field.fittingSize().height if text else 0.0
+    h = 0.0
+    if text:
+        wrapped = field.cell().cellSizeForBounds_(NSMakeRect(0, 0, width, 10000)).height
+        h = math.ceil(max(field.fittingSize().height, wrapped))
     field.setFrameSize_((width, h))
     field.setHidden_(not text)
     return h

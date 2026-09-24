@@ -15,16 +15,24 @@
 #                     how long on arrival; step in when that time is up)
 #   description       what the rule is about, in your words; the model reads this
 #   threshold         the model's score that counts as a hit; `rules tune` sets it
-#   sites             always a hit here: "douyin.com", "youtube.com/shorts",
+#   sites             always a hit here, even while the model can't answer:
+#                     "douyin.com" (and every subdomain), "youtube.com/shorts",
 #                     "youtube.com/" (a trailing slash alone: the home page only)
 #   patterns          the same as URL regexes, for what sites can't say
+#   apps              always a hit for this rule while this app is in front (the
+#                     other rules are still judged there): bundle ids or app
+#                     names ("com.valvesoftware.steam", "TV"), for games and players
 #   when              only at these times: "mon-fri 09:00-18:00", "weekends"; empty: always
 #   enabled           false: kept, but never asked and never fires
 #   target            "content" (the opened item; feeds never hit) or "page" (feeds can hit)
 #   feed_hit          any page the model reads as an entertainment feed hits
 #   allow_learning    lectures, tutorials and docs never hit this rule
-#   allow_intentional one item opened from search, a work app or a chat link is fine
-#   exceptions        things that look like a hit but are fine; "Not this one" adds more
+#   allow_intentional one item opened from search, a work app or a chat link is fine,
+#                     except on the rule's own sites
+#   exceptions        things that look like a hit but are fine, in your words
+#   overrides_allow   allow classes this rule steps in on anyway ("shopping" for
+#                     a shopping rule); `rules add` sets it when the words say so.
+#                     A name that isn't an allow class does nothing
 #   note              why it's set this way, for whoever reads this next
 
 [settings]
@@ -33,8 +41,9 @@
 # ending, up to max_wait_s. "5 more" when the time is up: `extensions` per session.
 max_wait_s = 60
 extensions = 1
-# Never read at all: password managers. Add chat apps or banking apps if
-# you'd rather they're never read either.
+# Never read at all (bundle ids or app names). Password managers never are,
+# listed here or not. Add chat apps or banking apps if you'd rather they're
+# never read either.
 no_monitor = [
     "com.apple.keychainaccess",
     "com.1password.1password",
@@ -42,12 +51,14 @@ no_monitor = [
     "com.bitwarden.desktop",
 ]
 # Never judged. Clicking a link from these counts as opening it on purpose.
-allow_sites = ["github.com", "wikipedia.org", "arxiv.org", "stackoverflow.com", "sec.gov"]
+allow_sites = ["github.com", "wikipedia.org", "arxiv.org", "stackoverflow.com"]
 allow_urls = ["^https?://(docs|developer|devdocs)\\."]
 
 # Kinds of page no rule ever fires on, in your words. Each is one yes/no
 # question per reading; if the model says yes, the page is left alone even
-# when a rule scores high (a rule's own sites and patterns still apply).
+# when a rule scores high (a rule's own sites, patterns and apps still apply,
+# and so does a rule that names the class in overrides_allow, even on the
+# sites and apps the class lists).
 
 [[allow]]
 id = "shopping"
@@ -74,9 +85,17 @@ id = "shortvideo"
 kind = "deny"
 description = "short videos made for endless swiping, such as Douyin, Kuaishou, TikTok, YouTube Shorts, Instagram Reels"
 threshold = 0.15
-sites = ["youtube.com/shorts", "douyin.com", "tiktok.com", "kuaishou.com", "instagram.com/reel", "instagram.com/reels"]
+sites = [
+    "youtube.com/shorts",
+    "tiktok.com",
+    "instagram.com/reel",
+    "instagram.com/reels",
+    "facebook.com/reel",
+    "douyin.com",
+    "kuaishou.com",
+]
 allow_intentional = true
-note = "A video someone sent you is fine; the next one in the scroll is not. Trials: precision 0.93, recall 1.00; held-out sites 1.00 / 1.00."
+note = "A video someone sent you is fine, unless it's on one of these sites; the next one in the scroll is not. Trials: precision 0.93, recall 1.00; held-out sites 1.00 / 1.00."
 
 [[rules]]
 id = "feeds"
@@ -86,45 +105,56 @@ description = "algorithmic recommendation feeds, timelines and trending lists, s
 threshold = 0.5
 sites = [
     "youtube.com/",
-    "bilibili.com/",
-    "s.weibo.com/top",
+    "m.youtube.com/",
     "x.com/home",
     "twitter.com/home",
+    "reddit.com/",
     "reddit.com/r/popular",
+    "threads.com/",
+    "threads.net/",
+    "bilibili.com/",
+    "s.weibo.com/top",
     "weibo.com/",
     "m.weibo.cn/",
 ]
-# The explore feed itself; a note opened from it (/explore/<id>) is a single post.
-patterns = ["^https?://(www\\.)?xiaohongshu\\.com/explore/?([?#]|$)"]
+# Facebook Watch and Xiaohongshu's explore feed; a video (?v=<id>) or a note
+# (/explore/<id>) opened from them is a single item.
+patterns = [
+    "^https?://(www\\.)?facebook\\.com/watch/?(\\?(?!v=)|#|$)",
+    "^https?://(www\\.)?xiaohongshu\\.com/explore/?([?#]|$)",
+]
 feed_hit = true
-note = "Any page the model reads as an entertainment feed counts, on any site. Threshold 0.5, not 0.3: in real use every hit between 0.3 and 0.5 was wrong (Slack, a claude.ai artifact, an ads console); trials still 1.00 precision, recall 0.67 with feed_hit and sites."
+note = "Any page the model reads as an entertainment feed counts, on any site. The sites are home pages that are feeds whatever the model says, so they also step in while it's down. Facebook's and Instagram's home pages are left to the model: logged out, they're the login form. Threshold 0.5, not 0.3: in real use every hit between 0.3 and 0.5 was wrong (Slack, a claude.ai artifact, an ads console); trials still 1.00 precision, recall 0.67 with feed_hit and sites."
 
 [[rules]]
 id = "livestream"
 kind = "deny"
-description = "entertainment livestreams: game streams, streamer channels, live shopping, such as Bilibili Live, Douyu, Huya, Twitch"
+description = "entertainment livestreams: game streams, streamer channels, live shopping, such as Twitch, Kick, YouTube Live, Bilibili Live, Douyu, Huya"
 threshold = 0.5
+# Twitch and Kick: a channel, with or without ?query, and not the sites' own
+# pages (/directory, /downloads, /videos/<id>, /browse, /login, ...).
 patterns = [
     "live\\.bilibili\\.com/\\d+",
     "douyu\\.com/\\d+",
     "huya\\.com/\\w+",
-    "twitch\\.tv/(?!directory|search|settings)[A-Za-z0-9_]+/?$",
+    "twitch\\.tv/(?!(directory|downloads|drops|inventory|jobs|login|p|prime|search|settings|signup|subscriptions|turbo|videos|wallet)([/?#]|$))[A-Za-z0-9_]+/?([?#]|$)",
+    "^https?://(www\\.)?kick\\.com/(?!(advertising-policy|browse|categories|category|clips|community-guidelines|dashboard|dmca-policy|drops|events|following|login|messages|privacy-policy|search|settings|subscriptions|terms-of-service|transactions|video|videos)([/?#]|$))[A-Za-z0-9_-]+/?([?#]|$)",
 ]
 allow_learning = true
-note = "A lecture or launch event streamed live is fine. Twitch pages carry no 'live' text in the Accessibility tree, so the model misses them; the patterns catch live rooms. Trials: 1.00 / 1.00, but only 8 live rooms on 2 sites."
+note = "A lecture or launch event streamed live is fine. Twitch pages carry no 'live' text in the Accessibility tree, so the model can miss them; the patterns catch every channel. That includes coding streams, which the model reads as entertainment (0.96). If you watch those: Not this one lets that one address through (the same channel opened with another ?query is another address), Never on twitch.tv lets all of Twitch through, or remove the Twitch pattern. Trials: 1.00 / 1.00, but only 8 live rooms on 2 sites; a Kick channel scored 0.95 without its pattern."
 
 [[rules]]
 id = "videos"
 kind = "check_in"
-description = "watching entertainment videos on Bilibili or YouTube: comedy, gaming, variety shows, film clips"
+description = "watching entertainment videos: comedy, gaming, variety shows, film clips, TV series and films"
 threshold = 0.25
 allow_learning = true
-note = "Courses, lectures, tutorials and talks never count. Trials: 1.00 / 1.00, but only 6 clips, all Bilibili: weak evidence."
+note = "Courses, lectures, tutorials and talks never count. It names no sites on purpose: worded 'on Bilibili or YouTube', Netflix, Prime Video and Vimeo scored 0.01-0.15. Now 8 of 9 made-up video pages check in (was 3), lectures and talks score 0.12 or less, and the trials are unchanged, but those are only 6 clips, all Bilibili."
 
 [[rules]]
 id = "social"
 kind = "check_in"
-description = "browsing social media, such as Xiaohongshu, Weibo, X/Twitter, Jike, Reddit"
+description = "browsing social media, such as Instagram, Facebook, X/Twitter, Reddit, Xiaohongshu, Weibo"
 threshold = 0.3
 allow_intentional = true
-note = "The Reddit thread Google found for your error message doesn't count. Trials: precision 0.90, recall 0.95; held-out sites 0.90 / 0.90."
+note = "The Reddit thread Google found for your error message doesn't count. Trials, earlier wording: precision 0.90, recall 0.95; held-out sites 0.90 / 0.90. With Instagram and Facebook named first, their pages went from 0.47-0.58 to 0.83-0.89, and the trial pages pop up as before."

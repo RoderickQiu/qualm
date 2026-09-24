@@ -2,8 +2,11 @@
 
 Written 2026-09-22; updated the same day after the trials, again after
 the MVP was built, on the night of 2026-09-23 (pop-up, focus sessions,
-dashboard, 8-bit model, `serve` / `doctor`), and on the day of 2026-09-23
-(check-ins replace daily budgets; then setup, Qualm.app and hosted Jev). This is the working
+dashboard, 8-bit model, `serve` / `doctor`), on the day of 2026-09-23
+(check-ins replace daily budgets; then setup, Qualm.app and hosted Jev), and
+late on the night of 2026-09-23 after an audit for a fresh user, early on
+2026-09-24 after its verification round, and later that morning after the
+third and last round (see "A fresh user's audit"). This is the working
 document: update the Status and Measured sections as you go. README.md is
 the public face: what it is, screenshots, getting started.
 
@@ -84,7 +87,8 @@ research on digital self-control tools:
   docs/PERSONALIZE.md): `rules`, `allow`, `except`, `never`, `settings`,
   each with `--json`, so a person or an agent can do everything from a
   terminal. Edits are surgical (comments survive), checked before saving,
-  and the old file is kept as `rules.toml.bak`. New per-rule fields:
+  and the old file is kept as `rules.toml.bak` (since the audit: saved whole
+  under a lock, the last 20 versions in `backups/`). New per-rule fields:
   `sites` (plain domains in place of regexes), `when` (hours and days),
   `enabled`, `note`. `rules test` scores a rule on your own recent
   screens through the live gate; `rules label` + `rules tune --apply` set
@@ -288,7 +292,8 @@ keychain); the rest in the main thread.
 - **Capture** (fork): Safari's AutoFill popover no longer leaks into later
   pages (the walk drops what it read before the page, and skips menus and
   popovers outside it); Chromium's empty first read is retried once per
-  process (0.3 s); **OCR** (Vision, zh-Hans + en-US, accurate) when a
+  process (0.3 s); **OCR** (Vision, accurate; zh-Hans + en-US then, the
+  Mac's preferred languages since the audit) when a
   non-browser window has under 20 characters of AX text and no text area
   (so terminals, editors and notes are never pictured): ~70 ms warm.
   `ScreenState.ocr` marks it. Not verified live: a real AutoFill popover, a
@@ -339,12 +344,12 @@ terminals, everything relative to the checkout, "16 GB" as the bar.
   8-bit weights in `~/Library/Application Support/Qualm` (QUALM_HOME
   overrides). A checkout's `rules.toml` in the current directory still wins
   until `qualm setup` copies it and `data/` over (copies; nothing moved or
-  deleted). `rules.example.toml` and the server script (`kevserve.py`, was
+  deleted); since the audit only when that directory is a Qualm checkout. `rules.example.toml` and the server script (`kevserve.py`, was
   experiments/serve_capped.py) moved into the package; the root
   rules.example.toml is a symlink.
 - **Kev as a managed dependency** (`localmodel.py`): its runtime (Kev pinned
   to commit 08ab0b8, PyTorch, MLX; 1.0 GB) goes into `kev-env/` via uv, on
-  first use. The app starts the server when nothing answers on :8009 and
+  first use (since the audit from a GitHub archive of that commit: no git). The app starts the server when nothing answers on :8009 and
   stops it on Quit; `qualm serve` still runs it in a terminal
   (`--kev-dir` for a Kev checkout). No second clone, no second terminal;
   `install` is one LaunchAgent (the app), and removes the old com.qualm.kev.
@@ -406,6 +411,568 @@ terminals, everything relative to the checkout, "16 GB" as the bar.
 
 93 tests.
 
+### A fresh user's audit (night of 2026-09-23; rounds 2 and 3 on 2026-09-24)
+
+Asked to make Qualm work for someone who isn't its author: another Mac,
+maybe neither Chinese- nor English-speaking, through the app (setup window,
+menu bar, pop-ups, dashboard) or through Claude Code driving the CLI.
+
+**How it was run, strictly in the background** (the user was at the Mac
+with their own Qualm live): every run in a throwaway QUALM_HOME and folder;
+no window ever ordered in (the menu, panels and setup window built
+off-screen, activation policy 2, rendered to PNG); no keystrokes,
+AppleScript or screen captures; the live app and its model server never
+touched; model calls capped and spaced (2 s or more apart on the shared
+server); the keychain, LaunchAgents and the `qualm` shim only through
+monkeypatched functions. Ten lenses (install and first run, Claude Code on
+day 0 and in week 1, the setup window and app, the menu and pop-ups, the
+dashboard, generalization in the code and in the model, robustness, the
+docs' claims), then three passes on what they couldn't reach: a running day
+end to end against a stub model, real headless Claude Code sessions, and the
+local model's first start against a fake Hugging Face. 204 findings, each
+re-checked by a second, skeptical agent: 149 confirmed, 52 partly (often a
+corrected cause or severity), 3 refuted; 2 critical, 31 high. Then seven
+fix branches in parallel, one per area, one integration pass, and this pass
+(starter rules and docs). Each branch's commit says what it fixed; the
+short version:
+
+- **rules.toml** (`config.py`, `rules.py`, new `jsonl.py`). The first
+  critical: agents run commands in parallel, and parallel edits lost changes
+  and could leave rules.toml with one rule and no settings. Every change now
+  reads, edits and saves under a lock (`rules.toml.lock`) and replaces the
+  file whole; `config undo` steps back through the last 20 saved versions
+  (`backups/`). Values are type-checked on load and on save (`no_monitor`
+  saved as a string meant those apps were read after all, and a bad
+  `allow_urls` regex killed the watcher); a broken file names itself, the
+  line and the fix; a BOM or CRLF
+  is fine; `config apply` keeps what it leaves out (null resets a key,
+  `--prune` removes); sites match in any case or script; `when` takes several
+  hours; a torn line in a data log is skipped.
+- **Policy and capture** (`policy.py`, `watcher.py`, `state.py`). Take me back
+  closed the whole window in Opera, Vivaldi, Chrome's other channels, Firefox
+  and others; now Chromium browsers go back through AppleScript, Gecko and
+  WebKit ones by keys with the address read back, and a browser window is
+  never closed. "Not this one" no longer adds page titles to what the model
+  reads (two took YouTube's home page from 0.20 to 0.34 on social). "Opened
+  on purpose" means a search or a link followed, not Cmd-Tab, and never on a
+  rule's own sites. New rule field `apps`; app lists match names; password
+  managers are never read; no screenshot without a reading that found the
+  page not private; an error in one pass no longer stops the watcher; OCR
+  reads the Mac's languages; Chrome's memory label goes in 52 of its 55
+  languages; nothing is judged while the screen is locked.
+- **Testing and tuning rules** (`trial.py`). `rules test` said "0 would
+  count" for every check-in rule; hosted Jev's scores went unshifted into
+  test and tune, so a tuned threshold stopped the rule firing live; tune
+  could suggest a threshold worse than the current one; a user's deny rule
+  never fired on a news front page or a store (content target plus the feed
+  drop), and a shopping rule never on a store (the shopping allow class).
+  Now `rules test` shows what the app would do and why, CLI and dashboard
+  tune with one function that never does worse on your answers
+  (`keep_current`), `rules add` judges the whole page and lets one item
+  opened on purpose through, `overrides_allow` lets a rule step in on an
+  allow class it names, and `except add --from`, `review --json --since
+  --misses` and `no_screens` (not "is the model running?") exist.
+- **Setup, status, doctor, the CLI** (`cli.py`, `setup.py`, `doctor.py`,
+  `personalize.py`). The setup window vanished after the first `qualm
+  status` (it keyed on rules.toml existing); hosted users always got "model
+  unreachable" from status; setup's default login item plus the README's
+  `qualm app` ran two copies; a scripted setup removed the login item. Now:
+  the `.setup-done` mark; status and doctor know the backend (a free call
+  checks the key) and find the app by `/api/hello`; setup never turns login
+  on without a terminal or `--login`, keeps the saved model on a re-run,
+  takes the key on stdin and refuses the disk image; a custom QUALM_HOME
+  leaves the main install alone; the dashboard moves off a taken port;
+  `--json` everywhere; `pause 2d` / `--until`; a focus session ends a pause;
+  hints a stock shell can run.
+- **The local model's first start** (`localmodel.py`, `kevserve.py`). The
+  second critical: Kev's checkpoint wasn't pinned and upstream had moved, so
+  every fresh first start missed the published copy and built bf16 (8.7 GB
+  more, a 16 GB peak). Now Kev-4B, its base and the copy are pinned; a local
+  build runs only when the copy is gone and the Mac has room; a failed
+  server backs off (it restarted every ~5 s and each start downloaded from
+  byte 0); the download resumes; no git; one start at a time; failures in
+  words; the port moves if 8009 is taken; `hf_endpoint`; macOS 14 checked.
+- **Menu bar, pop-ups, setup window** (`app.py`, `onboard.py`, `ui.py`,
+  `explain.py`). Missing Accessibility and hosted trouble (key refused,
+  quota, TypeSafe down) showed as a menu line that got overwritten; now a
+  badge and a first line until fixed, the fix one click away, and one corner
+  notice. One copy per Qualm folder (`app.lock`). A key window from Model.
+  Answers of 2 characters (1 CJK) count; keys are ignored for 0.6 s; rules
+  go by name, and a user's own rule is quoted. The setup window asks for
+  Screen Recording (optional) and no longer claims no screenshots.
+- **Dashboard** (`review.py`, `dashboard.html`). It told hosted users their
+  screen text stays on the Mac; now it follows the backend. A status chip;
+  pages sent in pieces (36,000 judgements: 131 KB in 0.3 s, where it sent
+  the whole 89 MB log in 2.5 s); a broken rules.toml shows a banner, not
+  blank tabs; exceptions go to rules.toml; `qualm week`.
+- **Starter rules** (this pass). The video rule's "on Bilibili or YouTube"
+  scoped it to two sites: Netflix, Prime Video and Vimeo scored 0.01-0.15.
+  Measured through the real path (capture-shaped state → precheck →
+  `decide.ask` → `Policy.decide`) on the audit's 53 made-up pages, 20 more
+  (streaming services, Western feeds, Kick and Twitch, videos that aren't
+  entertainment) and the 119 trial pages, old and new wording in the same
+  call (each question is its own branch on Kev, so its answer doesn't
+  depend on the others): hosted Jev 291 calls, local Kev 40 on the pages
+  nearest a threshold. Kept: `videos` = "watching entertainment videos:
+  comedy, gaming, variety shows, film clips, TV series and films" (made-up
+  entertainment videos that check in: Kev 3 → 8 of 9, Jev 2 → 9 of 10;
+  lectures, talks, tutorials, a work video and a meeting stay at 0.12 or
+  less on Kev); `social` names Instagram and Facebook first (their pages
+  0.47-0.58 → 0.83-0.89 on Kev); `livestream` names Twitch, Kick and
+  YouTube Live first (no page changed side). Sites for Western home feeds
+  (Facebook, Instagram, Threads, Reddit, m.youtube.com, Facebook Watch) and
+  Facebook Reels; the Twitch pattern takes channels with a query string and
+  skips Twitch's own pages (/downloads, /jobs, /videos/…); a Kick pattern;
+  sec.gov out of `allow_sites`; a note on coding streams. The trial set:
+  the same pages pop up (all 119 on Jev, the 11 nearest a threshold on Kev).
+  Made-up pages: 25 of the 26 that should step in do on Jev (was 18), 16 of
+  17 on Kev (was 10); of the hard negatives only the Twitch coding stream
+  pops up (the false pop-up on twitch.tv/downloads is gone); a Netflix
+  nature documentary now gets a check-in on Kev (either answer counted as
+  right).
+- **Docs** (this pass): README (Apple silicon only, Open Anyway, what hosted
+  needs and costs, Screen Recording and Automation, mirrors, permissions and
+  PATH from source, English-only interface, numbers off the trial set), the
+  guide and skill (a first day with nothing to score, undo, `screens`, small
+  `--last`, why / missed / week / `pause --until`, setup flags, what reaches
+  the agent's provider; a test checks every command it names exists),
+  PERSONALIZE, POLICY (Take me back per browser, opened on purpose, Not this
+  one, private pages), MODELS (where Kev and Jev disagree, the first start),
+  packaging. The menu's agent prompt says what to do when there's nothing
+  to score yet.
+
+**Decisions taken** (all three rounds; the ones that change behaviour; each commit has the rest):
+
+- Changes to rules.toml are serialized by a lock and whole-file saves. Undo
+  is 20 versions, one per saved change, rules.toml only, no redo; after a
+  hand edit (broken or not) the first undo restores the version Qualm last
+  saved (`backups/rules.toml.saved`) and drops only the hand edit (round 2).
+  A `.bak` from before `backups/` becomes `backups/rules.toml.1`, the oldest
+  version, on the first new save. Deleting rules.toml and letting Qualm make
+  it again from the starters can be undone. A change that would leave an
+  empty file keeps a `[settings]` line. Unknown tables and keys are
+  refused; an `overrides_allow` naming no allow class loads (ignored), but a
+  change that makes one is refused (round 2). A rules.toml with no record
+  of the last save (an older Qualm's) is recorded as the last save the
+  first time a command or the app finds it loading (not in a dry run; a
+  busy lock leaves it to the next command). Every undo keeps the file it
+  replaces as `backups/rules.toml.replaced` (the next undo overwrites it: a
+  one-step redo by hand), and a kept version it passes over goes to
+  `backups/NAME.aside` (`.aside2`, … when taken), which nothing reads.
+  `undid` stays `hand_edit` or `saved_change`; a `note` says when there was
+  no record of the last save. `config.undo_to` is a dry run of undo, so the
+  load error, the menu, doctor and the dashboard offer undo only when it
+  would work, and say where it goes (round 3).
+- Take me back takes the browser path only in the browsers in Qualm's
+  table (`state.BROWSERS`), whatever the page: every other app, web apps
+  and Electron apps included, gets its window closed or is hidden (round 2
+  reversed round 1's "an app Qualm doesn't know counts as a browser when it
+  shows an http(s) address"). Keys are pressed only while the browser is
+  in front; a Chromium browser that refuses AppleScript gets keys. Chrome's
+  memory label is stripped only from Chromium browsers' titles.
+  Screenshots only with a real reading. Round 3: a browser missing from the
+  table whose window has an http(s) page and, outside it, a tab strip or an
+  address field showing its site (`state.browser_window`) gets one Cmd-[
+  while it's in front, never Cmd-T (in an unknown app it could be Show
+  Fonts) and no 12-step walk; nothing to go back to counts as "stayed".
+  Chrome and Edge web apps (`.app.` in the bundle id) and web apps whose
+  tabs are inside the page are still closed or hidden. The table gained
+  Dia, Comet, ChatGPT Atlas, Yandex, Whale, QQ Browser and ego lite
+  (Chromium) and SigmaOS (keys); Atlas's bundle id is unverified.
+- A rule's `apps` make it a hit there without asking the model about it;
+  the other rules are asked as in any app (round 2). A rule that lists an
+  allow class in `overrides_allow` steps in on it, and one that names the
+  class's very app, or a listed site as narrow as the class's or narrower
+  (music.youtube.com, not youtube.com), steps in on that place
+  (`policy.claims`), and the model is asked there. A rule on a whole
+  domain, a regex pattern or a browser app leaves the class's listed places
+  to the class, as before round 2 (round 3; round 2 had let youtube.com
+  step in on YouTube Music). The evidence check skips a pop-up from a
+  rule's own app or site.
+- The AX walk reads the page with its own budget, and looks inside the
+  browser's own web areas (side panels, Vivaldi) only for 500 nodes, only
+  when no page was found outside them. A tab strip, and anything over 30
+  items in the browser's own web area, is walked last and only until the
+  page turns up, and a tab is never walked into (round 3; Chrome with 300
+  tabs: 2,443 AX calls → 31); windows with no page keep their reading
+  order. An error in the watch loop of a new type and place prints its
+  traceback at once; after that, a repeat that differs from the last one
+  printed waits at least a minute (round 3). The login item's log
+  (`~/Library/Logs/Qualm/com.qualm.app.log`) is set aside as `.log.1` past
+  2 MB.
+- Search results (round 3): a page read as search results is let through
+  ("search results") for content and check-in rules, after the work-tool
+  check; a deny rule with `target = "page"` and a rule's own sites still
+  step in, and `review --misses` counts a flagged one as a miss.
+- Tune is precision first and never worse than the current threshold on
+  your answers; it leaves out answers from outside a rule's `when`, and
+  counts answers logged before wording keys existed as the current wording
+  unless the rule was reworded since (round 2). New rules:
+  `target = "page"` (deny rules), `allow_intentional` on, `overrides_allow`
+  from the rule's own English words, only when neither description has a
+  word anywhere that says what the rule isn't about (not, no, but, except,
+  other than, without, unless, instead, rather, fine, non-, any n't word,
+  不, 除了, 除外, 以外, 之外; not 非 or 无, which sit inside common words);
+  otherwise the named classes come back as `may_cancel` with their
+  commands, so a false alarm only reports a class (round 3). `review`
+  shows the newest 30, or with `--since` the newest 100 (`matching` stays
+  the total, `truncated` says it cut); `except remove` matches an address,
+  then words, then a title, and refuses a title that pages with different
+  addresses share; an older removal record with an address takes only that
+  address (round 3).
+- Setup is "needed" until `.setup-done`, `judgements.jsonl` (an app or
+  `watch` ran), a chosen backend, or a rules.toml an earlier version saved
+  (`rules.toml.bak` without `backups/`); `decisions.jsonl` no longer counts
+  (round 2). `.setup-done` is written when `backups/` is first made next to
+  an older Qualm's `.bak`, so such a home stays set up after its first
+  change (round 3). It never turns login on unless asked; from a checkout
+  the question, and the setup window's box (round 3), default to no. A
+  custom QUALM_HOME leaves the main install's login item, shim, key and
+  logs alone, and every hint there starts with `QUALM_HOME=…` (round 3).
+- A planned pause is `pause_later {from, until}` in session.json, beside
+  `paused_until`, so an older app ignores it rather than pausing at once;
+  Resume ends only the pause running now, `pause --stop` cancels both.
+  `--from` is always its next occurrence and `--until` the next one after
+  it, never the past: the weekend recipe run during a weekend plans the
+  next one, and a warning names `pause --until '<until>'` for the one
+  under way; a `--from` in the last 5 minutes counts as now (round 3). A
+  timestamp no clock can show (milliseconds) counts as not set.
+- Kev-4B, its base and the 8-bit copy are pinned (bump `MODEL`, `PREBUILT`,
+  `PREBUILT_SHA256` and `PREBUILT_BYTES` together); building here needs
+  16 GB of memory and 14 GB of disk to spare. Every model call finds the
+  server the same way (`KEV_URL`, `models/server.json`, :8009), nothing is
+  sent to another app on 8009, and no second model ever loads (round 2).
+  A local listener that doesn't answer in time and isn't Kev gets a second
+  look, three times as long (up to ~12 s on the app's main thread at its
+  start), rather than a second model beside a busy tunnel. A mirror that
+  serves the wrong file isn't tried again until hf_endpoint/HF_ENDPOINT
+  changes; without a mirror a wrong file keeps the usual backoff (round 3).
+- Hosted trouble: one notice per kind per run. One app per Qualm folder,
+  also against an older copy that takes no lock (round 2). A rules.toml
+  that doesn't load never stops the app: it starts on the version Qualm
+  last saved, else the newest kept version that loads, else the starters,
+  with the file's backend line (round 2). Nor does one it can't read;
+  meanwhile the apps the broken file lists in `no_monitor` (read leniently)
+  are never read, and nothing goes to the hosted model until the file
+  loads, since it may name private apps in ways a scan can't catch; the
+  rules' own sites and apps still step in, and the local model keeps
+  judging (round 3). On a rule's own sites and apps the quiet links wait
+  like "I need it".
+- The dashboard looks at the last 14 days, with older on request. It serves
+  the dashboard.html it started with; a tab from before an update reloads
+  itself, and changes from a page without its version are refused. A focus
+  nudge answered "Not now" with no panel after it counts as going back
+  (round 3; round 2 counted it as I need it).
+- Starter wording: "TV series and films" stayed in the video rule because
+  without it Jev's weakest trial clip fell from 0.45 to 0.16 (with it 0.29,
+  still over 0.25); "on any site" would have scored as well but made the
+  check-in read "This looks like watching entertainment videos on any site."
+  LinkedIn's feed and youtube.com/live stay with the model (a job search, a
+  live launch event); the Chinese sites stay in the lists.
+- The agent prompt (one sentence in `agent.py`), two dashboard sentences
+  about saved versions and `onboard.py`'s docstring were changed in this
+  pass, outside its files.
+- Round 2's starters: Facebook's and Instagram's home pages are left to the
+  model, since logged out they're login forms and a site steps in while the
+  model can't answer; the Kick pattern leaves out Kick's own pages, as its
+  sitemap and scripts list them on 2026-09-24.
+
+Round 1 verified: 288 tests, from the checkout and from a temp folder
+(they no longer need the checkout as cwd); the setup window's rules page
+rendered off-screen with the new wording; the guide's commands, flags and
+JSON keys run in a throwaway home.
+
+**Round 2: verification, then fixes** (early on 2026-09-24). Every finding's
+repro was run again on the end of round 1 (4dfd1a1 on the branch
+`fresh-user-audit-history`), in the same strictly-background way,
+plus four end-to-end passes: real headless Claude Code sessions, the GUI
+off-screen, a user upgrading from main with the old app still running, and
+a review of the whole diff. Of the original findings: **216 fixed, 46 partly,
+5 declined** by design (a new rule's first-guess threshold, no rule editor,
+the Twitch pattern on coding streams, and the like), **3 couldn't be tested**
+there (a real agent session, the Qualm.app shim, a login item to remove),
+and **2 not fixed** (a second copy next to an old app that takes no lock;
+the app exiting on a rules.toml that doesn't load). It also found **109 new
+or leftover problems**: 2 high, 27 medium, 80 low; 15 regressions from
+round 1, 17 incomplete fixes, 58 new, 9 old ones still there and 9 in the
+docs. Then eight fix branches (the same seven areas, plus starter rules and
+docs), one integration pass, and this docs pass. What round 2 fixed:
+
+- **rules.toml**: undo after a hand edit goes back to the version Qualm
+  last saved and no further, which is what every load error promised
+  (round 1's undo also threw away the last saved change); kept versions
+  that no longer load are passed over and named; a `.bak` from before
+  `backups/` is kept as the oldest version; removing the last entry keeps a
+  `[settings]` line; a record appended after a torn log line is no longer
+  lost with it (`jsonl.appending`); a site in another script matches its
+  IDNA 2008 form, which browsers send (straße.de → xn--strae-oqa.de), as
+  well as the 2003 one.
+- **Policy and capture**: a rule's `apps` no longer silence the other rules
+  in that app (a check-in naming Safari had turned off feeds there); a rule
+  naming Spotify fires there; Take me back presses keys only while the
+  browser is in front (it pressed up to 13 in whatever app was) and no
+  longer presses Back in web apps, where it stayed; "It's part of the task"
+  clicked after the session saves nothing (it saved a permanent
+  exception); the page is read past a big side panel (30 AX calls, where
+  it came back empty after 3,000); Firefox without a web tree is read from
+  a picture again; OCR keeps Chinese first, so a German or Korean Mac reads
+  mixed Chinese lines; the memory-label strip leaves Safari's "- 256 GB"
+  alone; an error prints once a minute at most (one printed 17,000
+  tracebacks a day); app lists set from the CLI resolve names everywhere.
+- **Testing and tuning**: tune leaves out, and counts, answers from outside
+  a rule's hours, and keeps pre-upgrade answers (one small `rules test`
+  dropped them all); "videos, but not music or chat" no longer overrides
+  chat; `can_be_cancelled_by` lists the allow classes an agent should
+  judge, in any language; an `overrides_allow` naming a deleted class no
+  longer breaks rules.toml (its fix couldn't run); a `rules test` cut short
+  by the model returns what it scored (exit 5, `complete: false`); `except
+  add --from` works on an app rule's pop-up; `review` says when it cuts
+  (`matching`, `shown`, `note`), takes `--id` and plain dates, and shows how
+  each pop-up ended; `--misses` leaves out what you chose to let through;
+  usage.json is read leniently; judgements log their pop-up's decision id.
+- **CLI**: `pause --from 'sat 00:00' --until 'mon 09:00'` (the guide's
+  weekend recipe paused the working days too); one clock for end times
+  ("Mon 09:00", not "09:00 tomorrow"); `config apply` refuses jev without a
+  key; status says TypeSafe refused the key; a home made by the pre-fix
+  setup isn't taken for a first run; a custom QUALM_HOME no longer takes an
+  old app for its own, nor takes over another home's login item; `rules
+  list --json` counts the pages let through with Not this one instead of
+  sending their titles and addresses.
+- **Local model**: terminal commands and the pop-up's explanation ask the
+  app's server wherever it moved and never send a screen to another app on
+  8009; a silent listener isn't taken for a model, a busy one counts as up;
+  hosted chosen from the CLI stops the local server; `qualm serve` and
+  kevserve never load a second model; one runtime install at a time;
+  `hf_endpoint` must be https, and the prebuilt's SHA-256 and size are
+  pinned; pruning removes only Qualm's copies; `QUALM_KEV_ARCHIVE` where
+  GitHub is blocked; setup refuses the local model on macOS 13.
+- **Menu bar, pop-ups, setup window**: a rules.toml that doesn't load no
+  longer stops the app (the login item restarted it forever); an old copy
+  that takes no lock is found; the key window's Cancel drops the check on
+  its way; "No TypeSafe key is saved"; text measured by width (a Chinese
+  focus intent showed as "You're here to…"); the quiet links wait on a
+  rule's own apps; "Never on …" keeps
+  its whole domain; rules in other scripts go by their words; an arrow icon
+  while the model downloads, an hourglass while it loads; "Not this one"
+  counted per site for the agent hint; the setup window opened from the
+  disk image says so, greys out the local card where it can't run, and says
+  6 GB.
+- **Dashboard**: fits at 800 px; patterns said in words; the menu's words
+  for Accessibility (picked up without a restart) and hosted trouble; a
+  second watcher quitting no longer makes it say "Not running"; a tab from
+  before an update reloads itself instead of saving clicks it never shows;
+  a focus nudge and its panel are one pop-up, "Not now" counts as I need
+  it (round 3: as going back, when no panel follows).
+- **Integration**: the app starts on `backups/rules.toml.saved` first; the
+  dashboard has the "no key" state, offers the local model only where it
+  runs, and names rules in other letters as the menu does; the managed
+  server's port search stops at 65535.
+- **Starter rules and docs** (this pass): Facebook's and Instagram's home
+  pages are out of the feeds sites. Logged out they're login forms, and a
+  site steps in while the model can't answer, so a first start (a 6 GB
+  download) put a feeds pop-up over a password field. With the model up
+  nothing changes on round 1's recorded readings: Facebook's home is still
+  feeds on both models, Instagram's is feeds on Jev and a short-video
+  pop-up first on Kev, as before. The Kick pattern leaves out Kick's own
+  pages (/login, /events, /drops, /advertising-policy, from its sitemap and
+  scripts); other single names there really are channels (kick.com/signup
+  is a channel called signup). Comments sit above the arrays, so edits keep
+  them. `experiments/demo_data.py` writes the exceptions its Not this one
+  and Never here answers make (agents told demo users their answer was
+  lost). `status --json` says `app_older` when the running app is an older
+  copy. The docs: this switch-over (step 0 sent you to a pre-audit
+  dist/Qualm.app), the guide's first day (only the sites the user named:
+  a German session had added 15 news sites, T-Online's webmail with them),
+  weekend pauses, review ids, allow-class overlaps in any language, the
+  model-server lookup, undo in two steps.
+
+Round 2 verified: 362 tests, from the checkout and from a temp folder;
+the starter changes on Rule objects and through `Policy.decide` with no
+reading and with round 1's recorded readings (no model call this pass);
+Kick's paths by the titles kick.com serves; the guide's commands in a
+throwaway home.
+
+**Round 3: verification, then the last fixes** (2026-09-24). Round 2's
+fixes were verified the same way, in nine lenses (config, policy, trial,
+CLI, local model, GUI, dashboard, docs, a fresh user end to end), each
+repro run again on the end of round 2 (35bd489) against round 1's. Of the 151 findings
+rechecked: **130 fixed, 19 partly, 1 declined** by design (`config undo`
+leaves `never add` alone) and **1 not fixed** (the setup window ticked
+"Open at login" from a checkout). It found **48 new problems**, none
+critical or high: 11 medium, 37 low. Then four fix branches (core: config
+and the CLI; policy and capture; testing and tuning; surface: the app,
+dashboard and local model), one integration pass and this docs pass. Round
+3 fixed 46 of the 48 (the two left are under Still open) and most of what
+was still partly fixed:
+
+- **rules.toml** (core). On a home laid out by main (rules.toml and .bak,
+  no backups/: the user's), the first `config undo` after a broken hand
+  edit also dropped the last saved change, which the error said it
+  wouldn't. The first command, or the app's start, now records such a
+  rules.toml as the last save; broken before that, the error and undo say
+  where undo goes, and `note` says how to keep the change. Undo keeps the
+  file it replaces (`backups/rules.toml.replaced`) and sets aside, rather
+  than deletes, a kept version it passes over (`.aside`); `--dry-run` shows
+  `undid`, `skipped` and both files. Load errors, doctor, the menu and the
+  dashboard offer undo only when it would work. `never add --site 'not a
+  site'`, `rules tune --precision 5` and a DEL character in rules.toml are
+  refused in plain words.
+- **CLI** (core). `pause --from X --until Y` paused from now whenever X
+  was past ("next week off" asked on a Thursday paused Thursday and
+  Friday): `--from` is its next occurrence, a warning names the command
+  for one under way, and the weekend recipe on a Monday before 9 plans
+  the weekend. A millisecond timestamp in session.json counts as not set,
+  so pause and focus mend it; the menu's status line says when a planned
+  pause begins; a home set up by main stays set up after its first change
+  (`.setup-done`); `rules list --pages` lists the pages in text; `status
+  --json` has an error whenever it exits non-zero; hints on a custom
+  QUALM_HOME start with it.
+- **Policy and capture** (policy). Take me back closed the whole window,
+  every tab, of a browser missing from the table (Dia, Comet, Atlas,
+  Yandex, Whale…): eight more are in it now, and one still missing is known
+  by its window and gets one Back. Vivaldi past ~120 tabs and Chrome past
+  ~400 sent tab titles to the model instead of the page: tab strips and
+  long lists are walked last. A rule on youtube.com, qq.com or 163.com
+  popped up on YouTube Music, QQ Music and NetEase Cloud Music: only a
+  rule naming that very place steps in on an allow class's own sites.
+  Search results wait for what's opened from them, for content and
+  check-in rules, as POLICY.md always said (no pop-up changes on four
+  recorded runs of the 119 trial pages). A pop-up from a rule's own app or
+  site skips the "which part of the screen" check (two model calls, and a
+  line that explained nothing); "It's part of the task" after the session
+  ended says nothing changed; a new error prints at once.
+- **Testing and tuning** (trial). "Videos other than music or chat" set
+  `overrides_allow` and checked in on a WeChat chat (real Kev): an exclusion
+  word anywhere now sets nothing, and the classes come back as `may_cancel`.
+  With the model down, `rules test` said it "stopped answering after N of M"
+  over old scores: now "didn't answer", and check `status`. `review --json
+  --since today` returned ~886 KB for a real day: now the newest 100, with
+  `truncated`. `except remove` of one page took every page with its title:
+  now only that address. The dashboard's tuning sees rewordings in
+  unanswered judgements; an evening rule's daytime `rules test` asks for no
+  answers tune would drop; tune with too few answers says so
+  (`enough_answers`); an allow class can't take a rule's id, and says why.
+- **App, dashboard, local model** (surface). Starting on a broken
+  rules.toml dropped the `no_monitor` apps the breaking edit added, and a
+  hosted user's screens went on to TypeSafe: those apps are read leniently
+  and never read, and nothing goes to the hosted model until the file
+  loads. The broken-file notice goes when it's fixed, an unreadable file no
+  longer stops the app, and Watch for keeps the rules that are off. The
+  dashboard's banner says what the running app judges with, its commands
+  run as this Mac's terminal does, "Not now" on a nudge with no panel
+  after it counts as going back, and a pattern naming no site plainly is
+  shown as written. The pop-up cuts a long title, never the site. A busy
+  model behind an ssh tunnel or Docker is used, not moved from; a mirror
+  serving the wrong file is named and not tried again until it changes;
+  status gives the same download size as setup (6 GB on a first start),
+  and doctor's reason when nothing answers, a KEV_URL elsewhere included.
+  Model > "Show the local model's log"; the setup window leaves login
+  unticked from a checkout.
+- **Integration**: `config.undo_to` is a dry run of undo, so every place
+  that offers undo says where it goes (the load error, the menu, doctor,
+  the dashboard); the dashboard's banner uses those words and what the app
+  starts on; the rules card counts answers from outside a rule's hours;
+  the new hints run qualm as this terminal does.
+- **Docs** (this pass): the guide and skill (the weekend recipe by day,
+  undo's new keys, status errors and `model.why`, allow classes and whole
+  domains, search results, `except remove` by address, QUALM_HOME in
+  hints); PERSONALIZE (backups, the broken file, exclusion words and
+  `may_cancel`, tune's `enough_answers`, test's two model-down messages,
+  an allow-class example that clashed with a rule's id, pause, status,
+  review); POLICY (unlisted browsers, search results, allow classes and
+  whole domains); MODELS (the second look at a silent listener, a mirror's
+  wrong file, `model.why`, the log item, nothing hosted while rules.toml
+  is broken); README; and this file, which named
+  `experiments/serve_capped.py` twice where it no longer exists. Three
+  small hunks outside the docs, so that they hold: the `rules test` and
+  `tune` hints and decide.py's no-key error run qualm as this terminal
+  does, and `status --json` joins its errors without a doubled stop.
+
+Round 3 verified: 411 tests, from the checkout and from a temp folder; each
+fix's repro run again before and after, on fakes and in throwaway homes, by
+its branch; the guide's commands in a throwaway home. No verification round
+was run after round 3. Not verified live, after all three rounds: the app
+with the merged code on this Mac; Take me back in real browsers (only
+against fake AppleScript, keys and Accessibility), in a real unlisted
+browser, and Atlas's bundle id; Arc's and Opera's dictionaries; Firefox
+exposing AXURL; Vivaldi's and Chrome's real trees with hundreds of tabs;
+Qualm.app from Finder; the login item; the managed server's real first
+download, a mirror serving another file, and a busy model behind a real
+tunnel; the Facebook, Twitch and Kick patterns on real pages.
+
+**Still open** after all three rounds, in one list (each branch's commit
+has the details):
+
+- rules.toml and data: `config undo` covers rules.toml only (`never
+  remove`, `except remove` and `pause --stop` undo the rest) and has no
+  redo but copying `backups/rules.toml.replaced` back; on a home an older
+  Qualm set up whose rules.toml was already broken before any newer
+  command ran, the first undo also drops the last saved change (`note`
+  says so and how to keep it); a rules.toml moved away is made again from
+  the starters (by design: `config undo` brings the last save back);
+  usage_history.json is still read strictly.
+- Capture: unread counts in the middle of a title ("Inbox (3) -
+  me@gmail.com") still change it (a general " (N)" strip would cut "Rocky
+  (1976)"); Chrome's memory label stays in Spanish, Brazilian Portuguese and
+  Russian (the title sits inside the sentence); Safari's AutoFill lines are
+  stripped in English and Chinese only; OCR loses a few short Korean words
+  in a mostly English line ("설정 Settings 열기 then 저장 Save", even on a
+  Korean Mac: Vision's language detection, and turning it off empties
+  Chinese, Japanese and Russian lines; lines with more Korean read right).
+- Models and starters: a new rule's 0.2 is a guess, and nothing scores a
+  rule when it's added; so a new deny rule (`target = "page"`) can still
+  pop up on search results that score just over it (a news rule, 0.205 on
+  a Google search);
+  Kev and Jev split on thin feed-or-item calls (a margin on P(feed) would
+  change every content rule, unmeasured); a live coding stream on Twitch
+  pops up (the pattern, and learn vs entertain has no margin), and Not
+  this one lets only that exact address through; short video and feeds
+  still name Chinese sites first (the variants tried moved nothing or
+  lifted LinkedIn's feed to 0.77); `huya.com/\w+` also matches category
+  pages; Twitch's /following, /store, /messages, /friends, /bits, /privacy
+  and /creatorcamp aren't excluded (as on main), and a Kick name nobody
+  registered (/help, /faq: "Channel Not Found") counts as a channel; round
+  1's local check of the starter wording covered 40 pages.
+- CLI: `rules test` and `review` can't hide titles and URLs from the
+  agent's provider (no redaction flag); `rules test` shows no progress
+  under `--json` and defaults to `--last 100`; `when` takes no dates
+  (`pause --from/--until` covers one-offs); `eval --suggest` still walks
+  the threshold down; `policy.OWN_URLS` names only :8765 (a moved
+  dashboard is still skipped by its title); doctor says "Your data … stays
+  on this Mac" next to the hosted model (true of the logs); change
+  commands don't warn when the running app is an older copy (status has
+  `app_older`, and the guide says what to do).
+- Local model: no "Cancel download" menu item (Hosted or Quit stops a
+  download); the setup window doesn't confirm "On this Mac" when memory is
+  short; HF_ENDPOINT from the environment isn't checked (the pinned hash
+  covers it); the menu's mirror tooltips name a plain `qualm settings set
+  hf_endpoint=…`; an unmarked Kev-4B copy saved by main's code isn't
+  pruned (4.5 GB; by its folder name it can't be told from a developer's
+  `qualm serve --model` build, and this Mac has only the pinned copy); a
+  silent listener on 8009 that isn't Kev holds up the app's start by up
+  to ~12 s (its second look).
+- App: no rule editor by design (rules change through an agent; "Edit
+  rules file…" stays); the SDK still retries a refused key; the menu
+  doesn't say when the dashboard couldn't start; "Open at login" from a
+  disk-image copy shows its move-first message cut to 80 characters; an
+  older copy on a custom home whose environment `ps` can't show is taken
+  for the default home's; a custom QUALM_HOME's app still logs to
+  ~/Library/Logs/Qualm, so its Model menu offers the main home's model log
+  when there is one; `Decision.own` is unused (app.py works it out itself);
+  onboard.py imports `NSStackViewGravityLeading` unused.
+- Dashboard: each changed refresh still reads judgements.jsonl from the
+  start (and trials.jsonl whole for tuning); the pop-up's "2nd time today"
+  (`policy.popups_today`) counts a hit re-judged under an open pop-up (the
+  dashboard and `qualm week` don't); the dashboard and `rules tune` can
+  still disagree on a rewording whose only trace is an unanswered
+  judgement older than 14 days, with no kept rules.toml version showing
+  it.
+- Tests: test_localmodel's moved-port test can fail if the OS hands its
+  fake server port 65535 (about 1 in 16,000 runs).
+- Everywhere: the interface is English only, and rule ids are ASCII (a
+  rule in other letters goes by its description's words); Qualm.app is
+  arm64 only (no universal build for Intel Macs) and ad-hoc signed.
+
 ### MVP (built after the trials)
 
 `qualm app` is a menu bar app (Python + PyObjC) that watches the
@@ -413,7 +980,9 @@ front window, and a floating panel that steps in with three answers: **Take me
 back**, **I need it: 10 min** (asks why), and **Not this one** (teaches the rule an
 exception). The policy follows docs/POLICY.md: block the mechanism (short
 video, feeds, live rooms, compulsive checking), not the site; exempt learning,
-work tools, search, sensitive pages and anything opened on purpose.
+work tools, search, sensitive pages and anything opened on purpose. (Search
+was only used for "opened on purpose" until round 3 of the audit made
+results pages an exemption of their own.)
 
 - Verified: the policy (18 unit tests, no model); `watch` live on this Mac
   (an O'Reilly chapter reads as learn 0.97, nothing flagged); the panel
@@ -434,13 +1003,15 @@ rebuild asks for Accessibility again).
 
 ```bash
 uv run qualm setup              # first time: model, permission, rules, login; copies a checkout's rules and data home
+                                #   scripted: --backend kev|jev --rules a,b [--login] [--key -] --json; --dry-run first
 uv run qualm app                # menu bar + pop-up; starts the local model server itself (or the setup window, first run)
 uv run python packaging/build_app.py   # dist/Qualm.app + dist/Qualm.dmg (packaging/README.md)
 
 uv run qualm doctor             # everything checked, with fixes
-uv run qualm serve              # the model server in this terminal: Kev-4B, 8-bit, :8009; --bits 16, --kev-dir DIR
+uv run qualm status             # app running? which model, does it answer? the dashboard's address
+uv run qualm serve              # the model server in this terminal: Kev-4B, 8-bit, :8009; --bits 16, --kev-dir DIR (never a second one)
 uv run qualm rules list         # your rules; docs/PERSONALIZE.md for the rest
-uv run qualm settings set backend=jev   # switch to hosted Jev (key: `qualm setup --backend jev`)
+uv run qualm settings set backend=jev   # switch to hosted Jev (needs a key: `qualm setup --backend jev`)
 uv run qualm probe              # state only, no model; Ctrl-C to stop
 uv run qualm ask --delay 3      # switch windows within 3 s, get one reading
 uv run qualm label              # capture + label one moment -> data/labels.jsonl
@@ -448,49 +1019,85 @@ uv run qualm eval               # precision/recall per threshold, latency
 uv run qualm install            # start the app at every login (uninstall to undo)
 uv run qualm app --demo         # show the panel once, learn nothing (deny|feed|checkin|timesup|focus|prompt)
 uv run qualm focus write the report --minutes 50   # --stop ends it
-uv run qualm pause 30           # --stop resumes
+uv run qualm pause 30           # also 2h, 2d, --until 'mon 09:00', --from 'sat 00:00' --until 'mon 09:00'; --stop resumes and cancels a planned one
 uv run qualm watch              # the same loop in the terminal, every judgement printed
-open http://127.0.0.1:8765/     # dashboard (the app serves it; or `review --web`)
-uv run qualm review             # the same judgements in the terminal
+open http://127.0.0.1:8765/     # dashboard (the app serves it; or `review --web`; `status` says if it moved)
+uv run qualm review             # the same judgements in the terminal; --json, --since, --id, --misses
+uv run qualm week               # this week's numbers, as the dashboard's Insights
 uv run qualm eval --reviews --suggest      # re-ask the model on everything you reviewed
 uv run qualm export --lang en   # labels -> Kev training JSONL
+QUALM_HOME=$(mktemp -d) uv run pytest -q -p no:cacheprovider   # the tests, from the checkout; no model, no screen
+                                # from another folder: uv run --project <repo> pytest -q <repo>/tests
 ```
 
 Everything reads and writes `~/Library/Application Support/Qualm` (rules.toml,
-data/, kev-env/, models/); logs in `~/Library/Logs/Qualm`.
+data/, kev-env/, models/); logs in `~/Library/Logs/Qualm`. The setup window
+shows until setup has left `.setup-done` there (or `data/judgements.jsonl`
+exists, a model was chosen, or a `rules.toml.bak` with no `backups/` shows
+an earlier version saved the rules). Only one app runs per Qualm folder
+(`app.lock`); a second copy says so and exits, and so does a new copy
+started while an older one runs that takes no lock ("An older Qualm is
+running (pid N): quit it from its menu bar icon first", exit 0). To update:
+quit the running app from its menu, update the checkout, then start
+`uv run qualm app` (rebuild Qualm.app before opening it: packaging/README).
+The app serves the dashboard.html it started with: after an update an open
+tab reloads itself (or says "Qualm was updated: reload this page.") and
+saves nothing until it has; when you edit dashboard.html in a checkout,
+restart the app or `review --web` to see it.
 
-Env knobs: `QUALM_HOME`, `QUALM_BACKEND=kev|jev` (over `[settings] backend`),
+Env knobs: `QUALM_HOME` (a folder other than the default leaves the main
+install's login item, shim, key and logs alone in setup and uninstall;
+`setup --login` there refuses to replace a login item that starts another
+home, and `qualm install` run with that QUALM_HOME replaces it and says so;
+an app from before `/api/hello` counts as running only for the default home),
+`QUALM_BACKEND=kev|jev` (over `[settings] backend`),
 `QUALM_MODEL`, `QUALM_SHIFT` (log-odds; default 0 for Kev, 2 for Jev),
-`KEV_URL`, `KEV_TIMEOUT` (default 30 s; the SDK's 10 s is shorter than 4B's
-warm-up), `QUALM_QUESTION_STYLE=rule|direct` (see Measured).
+`KEV_URL` (the model server; without it, the port in `models/server.json`
+while the app's moved server runs, else :8009), `KEV_TIMEOUT` (default 30 s;
+the SDK's 10 s is shorter than 4B's warm-up),
+`QUALM_QUESTION_STYLE=rule|direct` (see Measured),
+`QUALM_DASHBOARD_PORT` (over `[settings] dashboard_port`; 8765 by default,
+and a free port with data/dashboard.json when that's taken), `HF_ENDPOINT`
+(over `[settings] hf_endpoint`, which must be https), `QUALM_BUILD=1` (build
+the 8-bit copy here if the published one is gone),
+`QUALM_PREBUILT=repo@revision` (checked against its own provenance.json,
+not the pinned hash), `QUALM_KEV_ARCHIVE` (a copy of the Kev archive on
+GitHub, where GitHub is blocked; `qualm serve` once installs the runtime
+from it). The app's model server exits with the app (`QUALM_PARENT`).
 
 Permissions: **Accessibility** for Qualm.app, or for the terminal when run
-from a checkout. The AppleScript URL fallback may trigger an **Automation**
-prompt per browser the first time.
+from a checkout. **Screen Recording** (optional; *Screen & System Audio
+Recording* on macOS 15 and later) for OCR of windows drawn as pixels and
+the dashboard's screenshots. **Automation**, asked the first time Take me
+back runs there: for each Chromium browser (its AppleScript), for Safari
+(its AppleScript reads the address) and System Events (Safari's Back), and
+for System Events alone in Firefox and the other browsers driven by keys.
 
 ## Layout
 
 | File | What it does |
 |---|---|
-| `src/qualm/state.py` | Front window → `ScreenState` → compact `state` dict, cut to a character budget |
-| `src/qualm/rules.py` | Rules from `rules.toml` (checked on load: fields, sites, `when`, regexes); builds the typed questions |
-| `src/qualm/config.py` | Edits rules.toml in place, one key at a time; refuses a file that wouldn't load |
+| `src/qualm/state.py` | Front window → `ScreenState` → compact `state` dict, cut to a character budget; the browser table (`CHROMIUM`, `BY_KEYS`, `BROWSERS`), `page_address`, and `browser_window` (a browser missing from the table, known by its window) |
+| `src/qualm/rules.py` | Rules from `rules.toml` (checked on load: fields, types, sites, `when`, regexes); builds the typed questions |
+| `src/qualm/config.py` | Edits rules.toml one key at a time, comments kept; each change under a lock (`rules.toml.lock`), saved whole, the last 20 versions in `backups/` for `config undo`, and the file as Qualm last wrote it (`backups/rules.toml.saved`; an older Qualm's file as first seen), so undo after a hand edit goes back to it first; what an undo replaces or passes over is kept (`.replaced`, `.aside`); `undo_to`, undo's dry run, for the advice every load error gives; refuses a file that wouldn't load |
+| `src/qualm/jsonl.py` | Reads the data logs, skipping a line cut short (with one note on stderr), and appends to them (`jsonl.appending`: a torn last line gets a newline before the next record) |
+| `src/qualm/agent.py` | The menu's prompt for an AI agent, and the `qualm` command a stock shell can run |
 | `src/qualm/personalize.py` | The `rules` / `allow` / `except` / `never` / `settings` commands |
 | `src/qualm/trial.py` | `rules test` / `label` / `tune`: a rule on your recent screens, and its threshold from your answers |
 | `src/qualm/decide.py` | TypeSafe SDK client (Kev or Jev, from `[settings] backend`), the score shift, `ask()` |
 | `src/qualm/paths.py` | Where things live: ~/Library/Application Support/Qualm, a checkout's legacy folder, the bundle, uv |
 | `src/qualm/keychain.py` | The TypeSafe key in the login keychain (and .env / the environment first) |
-| `src/qualm/localmodel.py` | The local model: runtime install, server command, the app's managed server, memory in numbers |
+| `src/qualm/localmodel.py` | The local model: runtime install, server command, the app's managed server (and `models/server.json` when it moved off 8009), where every model call finds the server (`server_url`), memory in numbers |
 | `src/qualm/kevserve.py` | Kev's server as Qualm runs it (inside the runtime): MLX cache cap, 8-bit, weights saved once |
 | `src/qualm/setup.py` | First run, shared by `qualm setup` and the window: migrate, recommend, apply |
 | `src/qualm/onboard.py` | The setup window: a 5-page assistant (Auto Layout) |
 | `packaging/` | `build_app.py` + `launcher.c`: Qualm.app and the DMG; README on signing |
 | `src/qualm/policy.py` | Reading -> skip / allow / intervene: thresholds, URL patterns, exemptions, "opened on purpose", check-in sessions and their waits, snoozes, re-judging, user exceptions, the decision log |
 | `src/qualm/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
-| `src/qualm/app.py` | Menu bar item (focus, pause), the intervention panel and the focus prompt (PyObjC); serves the dashboard |
-| `src/qualm/ui.py` | The look: the blurred HUD panel, labels, badges, the screen dim |
-| `src/qualm/explain.py` | The pop-up's words: headline, reason, the neutral context line, which part of the screen carried it |
-| `src/qualm/review.py` | Dashboard server (http://127.0.0.1:8765): data, insights, verdicts, thresholds, exceptions, focus/pause, rule on/off |
+| `src/qualm/app.py` | Menu bar item (focus, pause, the problems line and icon, the key window), the intervention panel, the corner notice and the focus prompt (PyObjC); the one-copy lock and the older-copy check; the rules it starts on when rules.toml doesn't load (`fallback_config`); serves the dashboard |
+| `src/qualm/ui.py` | The look: the blurred HUD panel (`QualmPanel`, which ignores keys for 0.6 s), labels, badges, the screen dim |
+| `src/qualm/explain.py` | The pop-up's words: headline, reason, the neutral context line, which part of the screen carried it; rule names |
+| `src/qualm/review.py` | Dashboard server (http://127.0.0.1:8765 or the port in data/dashboard.json): paged data, insights, verdicts, thresholds, exceptions, focus/pause, rule on/off, `/api/hello` (which app, its permissions) |
 | `src/qualm/dashboard.html` | The dashboard page: Today, Review, All screens, Insights, Rules |
 | `src/qualm/doctor.py` | `qualm doctor` |
 | `src/qualm/autostart.py` | `serve`, `install`, `uninstall`: the model server in a terminal, the app's LaunchAgent, the `qualm` shim |
@@ -500,20 +1107,38 @@ prompt per browser the first time.
 | `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user |
 | `docs/MODELS.md` | On this Mac vs hosted: speed, memory, disk, Jev's usage and cost, from measurements |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
-| `tests/test_policy.py` | The policy with made-up readings |
-| `experiments/` | `demo_data.py` (made-up weeks for screenshots); trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `serve_capped.py` |
+| `tests/` | 411 tests, no model and no screen: the policy with made-up readings (`test_policy.py`), the menu bar and setup window built off-screen (`test_app.py`), the CLI's JSON contract and the guide's commands (`test_cli.py`), and the rest by module |
+| `experiments/` | `demo_data.py` (made-up weeks for screenshots, with the exceptions their answers make); trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `relabel.py`, `simulate.py` and `scenario.py` (see Measured) |
 
 `rules.toml` and `data/` are git-ignored: they contain what you read on screen.
 In `data/`, the app keeps `judgements.jsonl` (every judgement: the capture,
 exactly what the model read, every answer's probabilities, the screen before,
 what the policy did and why; sensitive pages and unmonitored apps without
-content), `shots/` (a ~900 px screenshot per new screen, none for sensitive
-pages), `reviews.jsonl` (your answers on the review page),
+content; since the audit also each rule's wording key `w`, the `backend`
+that scored it, and in `decisions` the pop-up's decision id), `shots/` (a
+~900 px screenshot per new screen, only with a reading that found the page
+not private), `reviews.jsonl` (your answers on the review page),
 `decisions.jsonl` (interventions, your answers, focus sessions), `session.json`
-(pause and focus now), `reflections.jsonl` (the weekly question), `exceptions.jsonl` ("Not
-this one", "Never here", `except`/`never` commands), `trials.jsonl` (`rules
-test` scores, per exact rule wording) and `usage.json` (today's minutes and
-check-in sessions per rule; `usage_history.json` keeps every day).
+(pause and focus now, and `pause_later` for a planned pause; `.session.lock`
+beside it), `reflections.jsonl` (the weekly question), `exceptions.jsonl` ("Not
+this one", "Never here", `never` and `except add --from`; typed exceptions
+now go to rules.toml, and older ones typed on the dashboard stay here),
+`trials.jsonl` (`rules test` scores, per exact rule wording and model, with
+the raw score), `status.json` (the running watcher's pid and whether the
+model answers, for the dashboard's chip; the app's own dashboard always
+shows itself running and asks for Accessibility live, so only `review
+--web` goes by it, and a `qualm watch` that quits no longer makes the app
+look stopped), `dashboard.json` (the port, when 8765 was taken) and
+`usage.json` (today's minutes and check-in sessions per rule, read
+leniently: a torn file is skipped with a note naming it;
+`usage_history.json` keeps every day). Next to rules.toml: `backups/` (its
+last 20 versions; `rules.toml.saved`, the file as Qualm last wrote it;
+`rules.toml.replaced`, what the last undo replaced; `rules.toml.N.aside`,
+kept versions an undo passed over),
+`rules.toml.bak` (the newest version), `rules.toml.lock`, `app.lock`,
+`kev-env.lock` (one runtime install at a time) and `.setup-done`; in
+`models/`, `server.json` (the address the app's model server moved to,
+while it runs).
 
 Never flagged: `[[allow]]` classes in rules.toml are kinds of page described
 in words (shipped: shopping, "an online store: a product page, listing, cart
@@ -721,9 +1346,9 @@ that picks which rules to ask; either would let the limit rise.
 
 ### 8-bit and 4-bit Kev-4B (2026-09-23, 119 trial pages, current rules)
 
-`KEV_QUANT_BITS` in `serve_capped.py` quantizes after the LoRA merge
-(`mlx.nn.quantize`, group 64; the pointer head stays fp32). Dumps in
-data/runs/{bf16-en-now,q8-en,q4-en}.jsonl.
+`KEV_QUANT_BITS` in `serve_capped.py` (now `src/qualm/kevserve.py`)
+quantizes after the LoRA merge (`mlx.nn.quantize`, group 64; the pointer
+head stays fp32). Dumps in data/runs/{bf16-en-now,q8-en,q4-en}.jsonl.
 
 | | bf16 | 8-bit | 4-bit |
 |---|---|---|---|
@@ -785,7 +1410,10 @@ pages. Per-rule thresholds tuned for Jev instead did worse (feeds 0.91 /
 0.67, social 0.88 / 0.70). Stores still clear the shopping class (Amazon
 0.81, Apple Store 0.48 vs 0.35), every other page 0.03 or less.
 Scores logged, tuned and tested (`rules test` / `tune`) are all shifted,
-so thresholds carry over between backends.
+so thresholds carry over between backends (true since the audit: before it,
+`rules test` and `tune` used Jev's raw scores). Off the trial set the two
+models agree less: on 53 made-up pages, pop-up or not differed on 5
+(docs/MODELS.md, "Where the two disagree").
 
 Jev sends each new screen's text to TypeSafe, so it stays a switch, not
 the default.
@@ -808,21 +1436,51 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 
 ## Next steps, in order
 
-0. **Move to Qualm.app** when convenient: quit the running copy (menu:
-   Quit), open dist/Qualm.app (or drag it to Applications), turn on "Qualm"
-   in System Settings > Privacy & Security > Accessibility. Its data folder
-   is already the one in use. Earlier step, done the same day: quit the running `qualm app` (it
-   predates check-ins and setup), then in the checkout: `uv run qualm setup`
-   (copies rules.toml and data/ to Application Support, asks the four
-   questions; on this Mac it recommends hosted, because of swap), then
-   `uv run qualm app`, or open dist/Qualm.app (then grant it Accessibility).
-   Done 2026-09-23 on this Mac: data copied home, the app runs from the
-   checkout (nohup, log in ~/Library/Logs/Qualm/app.log) against the
-   existing 8-bit server; readings 3-20 s from swap.
-   With the local model, the first start builds Kev-4B's 8-bit cache: it
-   loads bf16 once more (~11 GB peak), so stop the old server first. Not
-   verified yet: Qualm.app opened from Finder, the permission prompt's name,
-   the app's managed server on a real first start, a day of real use.
+0. **Switch to the audited code, in this order.** The audit is merged
+   into main (the checkout was updated at 07:1x on 2026-09-24), but the
+   app that was running then (`qualm app` from the checkout, started with
+   nohup at 21:12) is still the old code in memory. Until it's restarted,
+   actions that load a module for the first time (the dashboard's data,
+   some menu items) may fail; the watching loop itself is safe (its one
+   late import, ocr.py, is compatible). `dist/Qualm.app` was rebuilt from
+   the merged code the same morning (see step 4).
+   1. Quit the running app from its menu bar icon (Quit). Don't use the new
+      CLI or an agent before that: the old app can't load keys the new
+      commands write (`apps`, `overrides_allow`: `rules add` of a shopping
+      or games rule writes them), refuses every reload after one ("rules.toml
+      not reloaded"), and the command still says it worked. The model
+      server on 8009 can stay: the one running on 2026-09-24 was started
+      before this app, so Quit leaves it, and the new app uses whatever
+      model server answers there.
+   2. `uv sync` in the checkout. The three rounds are one commit on main;
+      their 25 separate commits (one per area and round, with what each
+      fixed and why) are kept on the branch `fresh-user-audit-history`.
+   3. Start `uv run qualm app` (the same nohup command as before). `uv run
+      qualm status` should say "app: running", not "an older copy". Its
+      start records your rules.toml as the version Qualm last saved (your
+      home has no backups/ yet), so a later hand edit can be undone on its
+      own; if it doesn't load then, fix it first (`qualm config check`).
+   4. Only if you want Qualm.app: dist/Qualm.app was rebuilt from the
+      merged code (after any later change, rebuild it with
+      `uv run python packaging/build_app.py`). Quit the checkout's app,
+      open dist/Qualm.app (or drag it to Applications), and turn on
+      "Qualm" in System Settings > Privacy & Security > Accessibility (each
+      rebuild needs it again; remove the old entry).
+   Then check live what the audit couldn't touch: Take me back in Chrome,
+   Safari and Firefox (Safari asks to control Safari and System Events) and
+   in a browser Qualm doesn't list (one Back, every tab kept), a Chrome or
+   Vivaldi window with hundreds of tabs, the
+   menu's warning line (turn Accessibility off and on), a second `qualm app`
+   stepping aside, a broken rules.toml (the app keeps watching and says so),
+   and on a spare Mac or account, Qualm.app from Finder with Open Anyway and
+   the managed server's first download. Your own rules.toml keeps its old
+   wording, sites and notes (its short-video note still says a video
+   someone sent is fine; on the rule's own sites it now pops up): to take
+   the new starter wording, `rules test videos --what "…"` on your screens,
+   then `rules set videos what="…"` (the same for social and livestream),
+   or leave it. Earlier, on 2026-09-23: data copied home by `qualm setup`,
+   the app run from the checkout (nohup, log in ~/Library/Logs/Qualm/app.log)
+   against the existing 8-bit server; readings 3-20 s from swap.
 1. **Use the app for a few days, and review.** Browse normally, then go
    through the dashboard's Review tab: "Was Qualm right?" per card; for
    wrong ones, "Is this X?" per rule. Use the menu's "This should have been
@@ -835,18 +1493,51 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 3. **Tell Jared about the 8-bit copy** (published 2026-09-23 as
    RoderickQiu/kev-4b-mlx-8bit, Apache-2.0, credited, marked unofficial):
    he might host it officially; and ask whether PyTorch can be optional for
-   MLX serving (most of the 1 GB runtime). If Kev's checkpoint changes, a
-   new copy must be published (Qualm checks provenance and builds locally
-   meanwhile).
-4. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
+   MLX serving (most of the 1 GB runtime). Kev-4B, its base and the copy are
+   pinned (`localmodel.MODEL`, `BASE`, `PREBUILT`), so upstream commits
+   change nothing until the pins move; to take a new checkpoint, publish a
+   new copy and bump MODEL and PREBUILT together. Qualm builds locally only
+   if the copy is gone and the Mac has 16 GB of memory and 14 GB of disk to
+   spare (`QUALM_BUILD=1` forces it).
+4. **Close what the audit left open** (its "Still open" list, after round
+   3), starting with what a fresh user meets first: `rules test` without
+   titles and URLs for agents whose provider shouldn't see them; a way to
+   score a new rule when it's added, so 0.2 isn't a blind guess; a
+   feed-or-item margin so Kev and Jev agree on thin calls; change commands
+   that warn when the running app is an older copy.
+5. **Fine-tune only on a CUDA box or Modal**, once there are a few hundred of
    your own labels:
    `qualm export --lang en --labels data/labels.jsonl --out train.jsonl`, then
    `uv run python -m kev.train --data train.jsonl --init_from jaredpalmer/kev-4b --base Qwen/Qwen3.5-4B-Base --epochs 2 --lr 2e-5 --batch 1 --accum 8 --dtype bf16 --device cuda`.
    `--base` is required with `--init_from`; the default base is Qwen3-0.6B.
-5. **Ship it:** Qualm.app exists (ad-hoc signed; opens and names itself "Qualm", verified); left: a Developer ID and
-   notarization if it's to be shared widely, a license (none chosen yet), a
-   public repository (the README is written for one).
+6. **Ship it:** Qualm.app exists (ad-hoc signed; opens and names itself "Qualm", verified); left: a Developer ID and
+   notarization if it's to be shared widely (then right-click > Open or Open
+   Anyway isn't needed), a published DMG (the README says to build one for
+   now), a license (none chosen yet), a public repository (the README is
+   written for one), a universal build if Intel Macs matter (hosted works
+   there), and a translated interface.
+
 ## Known problems and gotchas
+
+- **After the audit**, what's still open is listed at the end of "A fresh
+  user's audit". The ones a user meets first: a Twitch coding stream pops
+  up (the pattern; Not this one lets that one address through, and the
+  same channel with `?sr=a` is another; Never here lets all of Twitch
+  through); switching between Kev and Jev changes a few decisions off the
+  trial set; the interface is English only.
+- **An older app and the new CLI don't mix**: an app from before the audit
+  refuses a rules.toml with `apps` or `overrides_allow` and keeps its old
+  rules until restarted, while the command reports success. Quit it before
+  using the new commands (step 0).
+- **While the model can't answer** (a first download, a swapped Mac's
+  timeouts, a hosted outage), a rule's own sites and apps still step in,
+  and nothing is found private: a site that is also a login page pops up
+  over the password field. The starters list none; keep it in mind when
+  adding sites.
+- **`rules test` on the local model holds up the app**: Kev answers one
+  request at a time, 0.5-1.5 s each here, so `--last 300` keeps the app's
+  own readings waiting for minutes. The guide says to start at 50-100; a
+  run cut short resumes from the trials cache.
 
 - **Chromium/Electron** only build the web Accessibility tree after a client
   sets `AXManualAccessibility`. `capture()` does this every time. The set call
@@ -862,8 +1553,9 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 - **`input_tokens` counts questions too.** The state alone is measured above
   (`experiments/state_tokens.py`).
 - **Memory.** Kev-4B + a second Kev server + normal apps overflows 24 GB. Run
-  one server, with `serve_capped.py`. Swapping shows up as multi-second latency
-  and SDK timeouts, not as errors.
+  one server: the app's own, or `qualm serve` (both refuse to load a second
+  one). Swapping shows up as multi-second latency and SDK timeouts, not as
+  errors.
 - **Fixed 2026-09-23: Safari's AutoFill popover leaked into later captures.** After a sign-in page,
   "Apple Account / Continue with Touch ID / <your name>" stayed in the window's
   AX tree for the next 11 pages, which makes ordinary pages look like login
@@ -876,10 +1568,11 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
   take it for the page (URL `chrome://omnibox-popup...`), so the model saw a
   title and nothing else; that's how a CMU store page scored 0.15 for stocks.
   Chrome's internal URLs are now skipped.
-- **The running Kev server of 2026-09-22 was started from
+- **The Kev server of 2026-09-22 was started from
   ~/Documents/seenot-desktop/experiments/serve_capped.py**, a path gone since
-  the rename. It keeps running, but can't be restarted by that command: use
-  `qualm serve`.
+  the rename (the script is `src/qualm/kevserve.py` now, and the server on
+  8009 on 2026-09-24 runs it). Start one with `qualm serve`, or let the app
+  run its own.
 - **Headless Chrome screenshots of the dashboard don't exit** (the page
   refreshes every 15 s); the file is written anyway. /tmp/shoot.py-style:
   a timeout of 30 s per shot.

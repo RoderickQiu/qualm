@@ -9,7 +9,7 @@ from datetime import datetime
 
 import pytest
 
-from qualm.config import Config, apply_assignments
+from qualm.config import EXAMPLE, Config, apply_assignments
 from qualm.decide import Reading, RuleVerdict
 from qualm.policy import Policy
 from qualm.rules import Rule, Settings, in_window, site_pattern
@@ -17,7 +17,7 @@ from qualm.rules import Rule, Settings, in_window, site_pattern
 
 @pytest.fixture
 def cfg(tmp_path):
-    shutil.copyfile("rules.example.toml", tmp_path / "rules.toml")
+    shutil.copyfile(EXAMPLE, tmp_path / "rules.toml")
     return Config(tmp_path / "rules.toml")
 
 
@@ -123,11 +123,13 @@ def test_a_removed_exception_is_forgotten(tmp_path):
     p = Policy(Settings(), rules, tmp_path)
     p.mark_fine("a", "https://x.com/1", "A talk")
     p.add_exception_text("a", "lectures")
-    assert p.rules[0].exceptions == ('the page "A talk"', "lectures")
+    assert p.rules[0].exceptions == ("lectures",)
+    assert p.decide({"url": "https://x.com/1", "visible_text": ["x"]}, reading(rules, a=0.9))[0].action == "allow"
     with (tmp_path / "exceptions.jsonl").open("a") as f:
         f.write(json.dumps({"rule": "a", "title": "A talk", "url": "https://x.com/1", "removed": True}) + "\n")
+        f.write(json.dumps({"rule": "a", "text": "lectures", "removed": True}) + "\n")
     p.reload_exceptions()
-    assert p.rules[0].exceptions == ("lectures",)
+    assert p.rules[0].exceptions == ()
     got = p.decide({"url": "https://x.com/1", "visible_text": ["x"]}, reading(rules, a=0.9))
     assert got[0].action == "intervene"
 
@@ -174,6 +176,39 @@ def test_cli_round_trip(tmp_path):
     # Undo brings the previous file back.
     assert run("config", "undo").returncode == 0
     assert "videos" in {r["id"] for r in json.loads(run("config", "export").stdout)["rules"]}
+
+
+def test_apps_by_name_from_the_command_line(tmp_path):
+    """`never add --app Figma` and a rule's apps: a name works as well as a bundle id."""
+    def run(*args):
+        out = subprocess.run([sys.executable, "-m", "qualm.cli", *args, "--rules", str(tmp_path / "r.toml"),
+                              "--data", str(tmp_path / "d"), "--json"], capture_output=True, text=True)
+        assert out.returncode == 0, out.stdout + out.stderr
+        return json.loads(out.stdout)
+
+    # An installed app's name is saved as its bundle id.
+    assert run("never", "add", "--app", "safari")["added"] == {"app": "com.apple.Safari", "name": "Safari"}
+    # One nothing installed matches is saved as typed, with a warning, dry run or not.
+    dry = run("never", "add", "--app", "Figmaa", "--dry-run")
+    assert dry["appends"][0]["line"]["never"]["app"] == "Figmaa" and "no installed app" in dry["warnings"][0]
+    assert "no installed app" in run("never", "add", "--app", "Figmaa")["warnings"][0]
+    assert {n["app"] for n in run("never", "list")} == {"com.apple.Safari", "Figmaa"}
+    run("never", "remove", "--app", "Safari")
+    assert {n["app"] for n in run("never", "list")} == {"Figmaa"}
+    # A rule's apps: set, added with the rule, and checked.
+    got = run("rules", "set", "shortvideo", "apps+=com.valvesoftware.steam")["rule"]
+    assert got["apps"] == ["com.valvesoftware.steam"] and "always in com.valvesoftware.steam" in got["summary"]
+    got = run("rules", "add", "games", "--what", "video games", "--app", "safari", "--app", "Steamm")
+    assert got["added"]["apps"] == ["com.apple.Safari", "Steamm"] and "Steamm" in got["warnings"][0]
+    # Every list of apps the command line sets: a rule's, an allow class's, no_monitor; an app's path too.
+    got = run("rules", "set", "games", "apps+=/System/Applications/Mail.app", "apps-=Safari")["rule"]
+    assert got["apps"] == ["Steamm", "com.apple.mail"]
+    assert "no installed app" in run("allow", "set", "chat", "apps+=Slackk")["warnings"][0]
+    assert run("settings", "set", "no_monitor+=mail")["set"]["no_monitor"][-1] == "com.apple.mail"
+    assert "com.apple.mail" not in run("settings", "set", "no_monitor-=Mail")["set"]["no_monitor"]
+    from qualm.personalize import FIELDS
+
+    assert "bundle ids or app names" in FIELDS["rules"]["apps"]  # `qualm schema`
 
 
 def test_question_limit(tmp_path):

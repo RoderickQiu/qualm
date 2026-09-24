@@ -32,6 +32,7 @@ def mac(tmp_path, monkeypatch):
         (snap / name).symlink_to(hub / "blobs" / "a")
     key = {"k": "secret"}
     monkeypatch.setenv("QUALM_HOME", str(home))
+    monkeypatch.setattr(paths, "custom_home", lambda: False)  # this pretend home is the main install
     monkeypatch.setattr(paths, "LOGS", logs)
     monkeypatch.setattr(autostart, "AGENTS", agents)
     monkeypatch.setattr(autostart, "SHIM", shim)
@@ -43,7 +44,7 @@ def mac(tmp_path, monkeypatch):
 
 
 def run(monkeypatch, capsys, **flags):
-    monkeypatch.setattr("qualm.localmodel.listening", lambda port=0: False)
+    monkeypatch.setattr("qualm.review.app_running", lambda data_dir, settings=None: None)
     args = argparse.Namespace(**{"all": True, "yes": False, "dry_run": False, **flags})
     cli.cmd_uninstall(args)
     return capsys.readouterr().out
@@ -82,7 +83,7 @@ def test_someone_elses_qualm_command_is_left(mac, monkeypatch, capsys):
 
 
 def test_refuses_while_the_app_runs(mac, monkeypatch, capsys):
-    monkeypatch.setattr("qualm.localmodel.listening", lambda port=0: True)
+    monkeypatch.setattr("qualm.review.app_running", lambda data_dir, settings=None: {"app": "qualm", "watching": True})
     args = argparse.Namespace(all=True, yes=True, dry_run=False)
     with pytest.raises(SystemExit, match="quit it first"):
         cli.cmd_uninstall(args)
@@ -92,6 +93,29 @@ def test_refuses_while_the_app_runs(mac, monkeypatch, capsys):
 def test_plain_uninstall_only_removes_the_login_item(mac, monkeypatch, capsys):
     cli.cmd_uninstall(argparse.Namespace(all=False, yes=False, dry_run=False))
     assert not (mac.agents / "com.qualm.app.plist").exists() and mac.home.exists() and mac.key["k"] == "secret"
+
+
+def test_a_dry_run_without_all_removes_nothing(mac, monkeypatch, capsys):
+    booted = []
+    monkeypatch.setattr(autostart, "_bootout", booted.append)
+    cli.cmd_uninstall(argparse.Namespace(all=False, yes=False, dry_run=True))
+    assert "would remove" in capsys.readouterr().out
+    assert (mac.agents / "com.qualm.app.plist").exists() and booted == []
+
+
+def test_a_qualm_home_elsewhere_removes_only_itself(mac, monkeypatch, capsys):
+    """QUALM_HOME points at a second folder: the main install's login item, key, command and logs stay."""
+    monkeypatch.setattr(paths, "custom_home", lambda: True)
+    asked = []
+    monkeypatch.setattr(keychain, "stored", lambda: asked.append("keychain") or "secret")
+    out = run(monkeypatch, capsys, dry_run=True)
+    assert "QUALM_HOME is set" in out and str(mac.home) in out
+    assert "login item:" not in out and str(mac.shim) not in out and str(mac.logs) not in out and asked == []
+    run(monkeypatch, capsys, yes=True)
+    assert not mac.home.exists() and mac.shim.exists() and mac.logs.exists() and mac.key["k"] == "secret"
+    assert (mac.agents / "com.qualm.app.plist").exists()
+    cli.cmd_uninstall(argparse.Namespace(all=False, yes=False, dry_run=False))  # the login item isn't this folder's
+    assert (mac.agents / "com.qualm.app.plist").exists() and "left alone" in capsys.readouterr().out
 
 
 def test_migrate_env_key(monkeypatch):

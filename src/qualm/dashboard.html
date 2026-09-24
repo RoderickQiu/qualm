@@ -35,7 +35,9 @@ nav .right { margin-left:auto; display:flex; gap:8px; align-items:center; }
 .chip { display:inline-flex; align-items:center; gap:6px; padding:5px 11px; border-radius:20px; font-size:13px; font-weight:500; background:var(--soft); color:var(--mute); }
 .chip .dot { width:7px; height:7px; border-radius:50%; background:var(--back); }
 .chip.focus { background:var(--focusbg); color:var(--focus); } .chip.focus .dot { background:var(--focus); }
-.chip.paused { background:var(--amberbg); color:var(--amber); } .chip.paused .dot { background:var(--snooze); }
+.chip.paused, .chip.warn { background:var(--amberbg); color:var(--amber); } .chip.paused .dot, .chip.warn .dot { background:var(--snooze); }
+.chip.off .dot { background:var(--faint); }
+.notice { margin:0 0 16px; padding:12px 16px; border-radius:12px; background:var(--amberbg); color:var(--amber); font-size:14px; }
 .wrap { max-width:1180px; margin:0 auto; padding:26px 24px 60px; }
 .muted { color:var(--mute); } .faint { color:var(--faint); } .small { font-size:13px; }
 kbd { font:12px ui-monospace, SFMono-Regular, monospace; border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:0 5px; background:var(--card); color:var(--mute); }
@@ -51,7 +53,7 @@ h2 { font-size:16px; margin:0 0 12px; font-weight:650; letter-spacing:-.005em; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 20px; box-shadow:var(--shadow); }
 .grid { display:grid; gap:16px; }
 .g2 { grid-template-columns:repeat(2, minmax(0,1fr)); } .g4 { grid-template-columns:repeat(4, minmax(0,1fr)); } .g3 { grid-template-columns:repeat(3, minmax(0,1fr)); }
-@media (max-width:900px) { .g2, .g3, .g4 { grid-template-columns:1fr 1fr; } }
+@media (max-width:900px) { .g4 { grid-template-columns:1fr 1fr; } .g2, .g3 { grid-template-columns:1fr; } }
 .stat .v { font-size:34px; font-weight:700; letter-spacing:-.02em; line-height:1.1; font-variant-numeric:tabular-nums; }
 .stat .k { font-size:13px; color:var(--mute); margin-top:4px; }
 .stat .sub { font-size:12px; color:var(--faint); margin-top:2px; }
@@ -72,6 +74,7 @@ svg text { fill:var(--mute); font-size:11px; font-family:inherit; }
 .seg button.on { background:var(--card); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.12); }
 .empty { text-align:center; padding:46px 20px; color:var(--mute); }
 .empty .big { font-size:40px; margin-bottom:6px; }
+.empty a, .notice a { color:inherit; } a[data-act], a[data-goto] { cursor:pointer; text-decoration:underline; }
 .list-plain > div { padding:9px 0; border-top:1px solid var(--line); } .list-plain > div:first-child { border-top:0; }
 .quote { font-size:15px; } .quote::before { content:"“"; color:var(--faint); } .quote::after { content:"”"; color:var(--faint); }
 
@@ -80,6 +83,8 @@ svg text { fill:var(--mute); font-size:11px; font-family:inherit; }
 .progress .track { flex:1; height:6px; background:var(--soft); border-radius:3px; overflow:hidden; }
 .progress .fill { height:100%; background:var(--back); }
 .one { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:24px; }
+@media (max-width:700px) { .one { grid-template-columns:1fr; } }
+.before { margin:14px 0 -6px; font-size:14px; color:var(--mute); }
 .one img { width:100%; border-radius:12px; border:1px solid var(--line); display:block; cursor:zoom-in; }
 .noshot { aspect-ratio:16/10; border-radius:12px; background:var(--soft); display:flex; align-items:center; justify-content:center; color:var(--mute); }
 .title { font-size:19px; font-weight:650; overflow-wrap:anywhere; letter-spacing:-.01em; }
@@ -117,11 +122,16 @@ pre { background:var(--soft); border-radius:8px; padding:8px; white-space:pre-wr
 .opts { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
 .opts input[type=search] { min-width:260px; }
 .opts button.on { background:var(--ink); color:var(--card); border-color:var(--ink); }
+.scroll { overflow-x:auto; }
 table.list { width:100%; border-collapse:collapse; font-size:14px; }
+table.list td.when { white-space:nowrap; }
 table.list td { padding:8px 10px; border-top:1px solid var(--line); vertical-align:middle; }
 table.list tr { cursor:pointer; } table.list tr:hover td { background:var(--soft); }
 table.list img { width:68px; height:42px; object-fit:cover; border-radius:6px; display:block; }
 table.list .t { max-width:480px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media (max-width:900px) { table.list .t { max-width:220px; } table.list .tag { white-space:normal; } }
+.more { display:flex; gap:14px; align-items:center; justify-content:center; padding:12px 0 4px; font-size:13px; color:var(--mute); }
+.more a { color:var(--mute); cursor:pointer; }
 .tag { display:inline-block; border-radius:6px; padding:1px 8px; font-size:12px; font-weight:600; white-space:nowrap; }
 .tag.intervene { background:var(--accentbg); color:var(--accent); } .tag.allow { background:var(--amberbg); color:var(--amber); }
 .tag.count { background:var(--bluebg); color:var(--blue); } .tag.none, .tag.skip { background:var(--soft); color:var(--mute); }
@@ -130,8 +140,13 @@ table.list .t { max-width:480px; overflow:hidden; text-overflow:ellipsis; white-
 /* rules */
 .rule { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:14px; align-items:start; padding:14px 0; border-top:1px solid var(--line); }
 .rule:first-of-type { border-top:0; }
-.rule .id { font-weight:650; } .rule .sum { color:var(--mute); font-size:14px; margin-top:2px; }
-.rule.off .id, .rule.off .sum { opacity:.5; }
+.rule .id { font-weight:650; overflow-wrap:anywhere; } .rule .sum { color:var(--mute); font-size:14px; margin-top:2px; overflow-wrap:anywhere; }
+.rule details { margin-top:4px; } .rule details pre { margin:6px 0 0; }
+.rid { font:12px ui-monospace, SFMono-Regular, monospace; color:var(--faint); font-weight:400; margin-left:6px; }
+#excRule { max-width:40%; text-overflow:ellipsis; }
+.x { border:0; background:none; padding:0 6px; color:var(--faint); font-size:15px; line-height:1; }
+.x:hover { color:var(--red); }
+.rule.off .id, .rule.off .sum, .rule.off details { opacity:.5; }
 .switch { position:relative; width:42px; height:25px; border-radius:13px; background:var(--open); border:0; padding:0; cursor:pointer; transition:background .2s; flex:none; margin-top:2px; }
 .switch::after { content:""; position:absolute; top:3px; left:3px; width:19px; height:19px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s; }
 .switch.on { background:var(--back); } .switch.on::after { left:20px; }
@@ -140,7 +155,8 @@ table.tune td, table.tune th { padding:8px; border-top:1px solid var(--line); te
 table.tune th { font-size:12px; color:var(--mute); font-weight:500; border-top:0; }
 #zoom { position:fixed; inset:0; background:rgba(0,0,0,.82); display:none; align-items:center; justify-content:center; z-index:10; cursor:zoom-out; }
 #zoom img { max-width:94vw; max-height:94vh; border-radius:10px; }
-.toast { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--card); padding:9px 16px; border-radius:10px; font-size:13px; display:none; z-index:20; box-shadow:var(--shadow); }
+.toast { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--card); padding:9px 16px; border-radius:10px; font-size:13px; display:none; z-index:20; box-shadow:var(--shadow); max-width:min(640px, 92vw); }
+.toast.error { background:#c8372d; color:#fff; cursor:pointer; }
 .heat td { width:calc(100% / 25); height:18px; border-radius:3px; }
 .heat { border-collapse:separate; border-spacing:2px; width:100%; table-layout:fixed; }
 .heat th { font-size:10px; color:var(--faint); font-weight:500; }
@@ -161,141 +177,134 @@ table.tune th { font-size:12px; color:var(--mute); font-weight:500; border-top:0
 <div class="toast" id="toast"></div>
 <script>
 "use strict";
-let D = null;
-let tab = location.hash.slice(1) || "today", pos = 0, quiet = false, search = "", listFilter = "all";
+let D = null, V = "", seq = 0;  // the data on the page, its version (the server answers "same" while it holds), the latest request
+let tab = location.hash.slice(1) || "today", pos = 0, quiet = false, search = "", listFilter = "all", older = false;
+let qn = 20, rn = 100;  // review cards and All screens rows to ask for; more as you go
+let pinned = null;    // a screen opened from All screens: its card, before the queue
 let pick = null;      // while answering "wrong": the set of rule ids the page really is
 let showDetails = false, focusLen = 50;
+const openPatterns = new Set();  // rules whose address patterns you opened, kept open across refreshes
+const PAGE_VERSION = "__PAGE_VERSION__";  // filled in by the server: sent back with each request, so a tab from before an update knows
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// A qualm command as this Mac's terminal runs it (agent.command(): plain `qualm` only when it's on PATH), and the same in the server's own messages.
+const cmd = s => "<code>" + esc(D.command + " " + s) + "</code>";
+const ours = t => String(t).replace(/`qualm /g, "`" + D.command + " ");
 const OUT = {back:["Went back","var(--back)"], session:["Checked in","var(--session)"], snooze:["Unlocked","var(--snooze)"], fine:["Not this one","var(--fine)"], never:["Never here","var(--never)"], open:["No answer","var(--open)"]};
-function toast(t) { const el = $("#toast"); el.textContent = t; el.style.display = "block"; clearTimeout(el.tm); el.tm = setTimeout(() => { el.style.display = "none"; }, 1800); }
-
-async function load() {
-  const r = await (await fetch("/api/data")).json();
-  if (r.error) { $("#view").innerHTML = '<div class="card empty"><div class="big">!</div><h2>Can\'t read your setup</h2><div class="muted">' + esc(r.error) + "</div></div>"; return; }
-  D = r; render();
-}
-async function post(path, body) {
-  const r = await (await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})).json();
-  if (r.error) { toast(r.error); return false; }
-  D = r; return true;
+const WRITES = "Qualm writes here as you use your Mac. Keep it running (it lives in the menu bar) and browse as usual.";  // day 0
+function toast(t, error) {
+  const el = $("#toast"); el.textContent = t; el.className = "toast" + (error ? " error" : ""); el.style.display = "block";
+  // A confirmation goes quickly; an error stays long enough to read, or until clicked.
+  clearTimeout(el.tm); el.tm = setTimeout(() => { el.style.display = "none"; }, error ? Math.max(6000, 70 * t.length) : 1800);
 }
 
-// ---- model of the data -------------------------------------------------
+async function load(force) {
+  const n = ++seq;
+  const qs = new URLSearchParams({v: force ? "" : V, quiet: quiet ? 1 : 0, qn: qn, rn: rn, q: search, f: listFilter, older: older ? 1 : 0, page: PAGE_VERSION});
+  let res, r;
+  try { res = await fetch("/api/data?" + qs); r = res.status === 404 ? null : await res.json(); } catch (err) { if (n === seq) gone(); return; }
+  if (n !== seq || r && r.same) return;
+  if (r && r.reload) { updated(r.error); return; }
+  if (r && r.error) { $("#view").innerHTML = '<div class="card empty"><div class="big">!</div><h2>Can\'t read Qualm\'s data</h2><div class="muted">' + esc(r.error) + "</div></div>"; return; }
+  if (!r || !r.queue) {  // a Qualm started before this page changed: its server doesn't know what the page asks
+    $("#view").innerHTML = '<div class="card empty"><div class="big">↻</div><h2>Qualm was updated</h2><div class="muted">Quit it from the menu bar (Quit Qualm) and open it again to see this page.</div></div>';
+    return;
+  }
+  D = r; V = r.v; render();
+}
+function gone() { $("#state").innerHTML = chipHtml(["off", "Not running", "The dashboard can't reach Qualm: open it again, then reload this page."]); }
+// Qualm was updated since this tab opened: load its page, once; if that didn't help, say so.
+function updated(msg) {
+  const last = +sessionStorage.getItem("qualm-reloaded") || 0;
+  if (Date.now() - last > 60000) { sessionStorage.setItem("qualm-reloaded", Date.now()); location.reload(); return; }
+  $("#view").innerHTML = '<div class="card empty"><div class="big">↻</div><h2>Qualm was updated</h2><div class="muted">' + esc(msg) + "</div></div>";
+}
+// Changes go to the server; then the page asks for what it shows again.
+async function post(path, body, done) {
+  let r;
+  try { r = await (await fetch(path, {method:"POST", headers:{"Content-Type":"application/json", "X-Qualm-Page":PAGE_VERSION}, body:JSON.stringify(body)})).json(); }
+  catch (err) { gone(); toast("Qualm isn't running: open it, then try again.", true); return false; }
+  if (r.error) { toast(r.error, true); return false; }  // from a tab older than Qualm: "reload this page", nothing changed
+  if (done) done();
+  await load(true);
+  return true;
+}
+
+// ---- words for what the log says ------------------------------------------
+function rule(id) { return D.rules.find(r => r.id === id); }
+function name(id) { const r = rule(id); return r ? r.name : id; }  // a removed rule keeps its id
 function ruleName(r) {
   const t = r.text || "";
   const cut = t.split(/,? such as |[,:;，：；(（]/)[0];
   return cut.length > 60 ? cut.slice(0, 57) + "…" : cut;
 }
-function outcome(j) {
-  // Decisions for a rule you've since removed don't count.
-  const ids = new Set(D.rules.map(r => r.id));
-  const a = j.decisions.filter(d => !d.rule || ids.has(d.rule)).map(d => d.action);
-  for (const k of ["intervene", "allow", "count", "skip"]) if (a.includes(k)) return k;
-  return "none";
-}
-function nearMiss(j) {
-  if (!j.p_hit) return 0;
-  let m = 0;
-  for (const rid in j.p_hit) { const t = (j.thresholds || {})[rid] || 0.5; m = Math.max(m, j.p_hit[rid] / t); }
-  return m;
-}
-// One entry per page (URL, or app + title): the latest detailed judgement of it.
-function screens() {
-  const by = new Map();
-  for (const j of D.judgements) {
-    if ((j.screen.window_title === "Qualm" || j.screen.window_title === "SeeNot") && !j.screen.url) continue;  // our own panel
-    const key = j.screen.url || (j.screen.app + "|" + (j.screen.window_title || ""));
-    const e = by.get(key) || {key, items:[]};
-    e.items.push(j); by.set(key, e);
-  }
-  const out = [];
-  for (const e of by.values()) {
-    const detailed = e.items.filter(j => j.p_hit);
-    e.j = detailed.length ? detailed[detailed.length - 1] : e.items[e.items.length - 1];
-    e.review = null;
-    for (const j of e.items) if (D.reviews[j.id]) e.review = D.reviews[j.id];
-    e.first = e.items[0].at; e.last = e.items[e.items.length - 1].at;
-    e.shot = e.j.shot || (e.items.slice().reverse().find(j => j.shot) || {}).shot;
-    out.push(e);
-  }
-  return out;
-}
-// Similar screens: the same site and kind of page, with ids blanked out
-// (youtube.com/shorts/*, reddit.com/r/*/comments/*), and the same outcome.
-function looksLikeId(seg) { return /\d/.test(seg) || seg.length >= 12 || /^[A-Za-z0-9_-]{8,}$/.test(seg) && /[A-Z]/.test(seg) && /[a-z]/.test(seg); }
-function simKey(e) {
-  const j = e.j;
-  let where = j.screen.app;
-  if (j.screen.url && /^https?:/.test(j.screen.url)) {
-    try {
-      const u = new URL(j.screen.url);
-      const segs = u.pathname.split("/").filter(Boolean).slice(0, 4).map(x => looksLikeId(x) ? "*" : x);
-      if (segs[0] === "r" && segs.length > 1) segs[1] = "*";
-      where = u.hostname.replace(/^www\./, "") + "/" + segs.join("/");
-    } catch (err) { where = j.screen.url; }
-  }
-  const acts = j.decisions.filter(d => d.rule).map(d => d.action + ":" + d.rule).sort().join(",");
-  return where + "|" + outcome(j) + "|" + acts;
-}
-function similarGroups(list) {
-  const by = new Map();
-  for (const e of list) { const k = simKey(e); if (!by.has(k)) by.set(k, []); by.get(k).push(e); }
-  return [...by.values()].map(members => {
-    members.sort((a, b) => (b.last < a.last ? -1 : 1));
-    return {key: members[0].key, rep: members[0], members: members};
-  });
-}
-const PRIORITY = {intervene:0, allow:1, count:2, none:3, skip:4};
-function queue() {
-  const open = screens()
-    .filter(e => e.j.p_hit && !(e.review && e.review.verdict))
-    .filter(e => quiet || outcome(e.j) !== "none" || nearMiss(e.j) >= 0.5);
-  // Within each outcome, closest calls first: your answer there moves a
-  // threshold the most. URL-pattern hits are certain, so they go last.
-  return similarGroups(open)
-    .sort((a, b) => (PRIORITY[outcome(a.rep.j)] - PRIORITY[outcome(b.rep.j)]) ||
-                    (closeness(a.rep.j) - closeness(b.rep.j)) || (b.members.length - a.members.length) ||
-                    (b.rep.last < a.rep.last ? -1 : 1));
-}
-function closeness(j) {
-  if (!j.p_hit) return 99;
-  const byPattern = new Set(j.decisions.filter(d => d.reason === "matches URL pattern").map(d => d.rule));
-  let best = 99;
-  for (const rid in j.p_hit) {
-    if (byPattern.has(rid)) continue;
-    const t = (j.thresholds || {})[rid] || 0.5;
-    best = Math.min(best, Math.abs(Math.log(Math.max(j.p_hit[rid], 1e-3) / t)));
-  }
-  return best;
+const pct = p => Math.round(p * 100) + "%";
+const PAGE = {feed:"a feed", single_item:"a single page", search:"a search", work:"a work tool", other:"another page"};
+const WORDS = {"matches URL pattern": "the address is one of this rule's sites", "an entertainment feed": "it's a feed of recommendations, for entertainment",
+  "opened on purpose": "you opened it on purpose", "work tool": "it looked like a work tool", "learning material": "it looked like learning material",
+  "search results": "it looked like search results: what you open from them is judged",
+  "sensitive page": "it looked private (a sign-in, bank or mail page), so Qualm didn't read it", "app not monitored": "this app is never watched",
+  "paused": "Qualm was paused", "allowed URL": "the address is on your allow list", "Qualm's own page": "it's Qualm's own page"};
+// The policy's reasons in words: "p_hit 0.45 >= 0.30" -> "it scored 45%; this rule steps in at 30%".
+function plain(reason) {
+  let m;
+  if ((m = /^p_hit ([\d.]+) >= ([\d.]+)$/.exec(reason || ""))) return "it scored " + pct(+m[1]) + "; this rule steps in at " + pct(+m[2]);
+  if (/^too little on screen to judge/.test(reason)) return "there was too little on screen to judge";
+  if ((m = /^left within (.+)$/.exec(reason || ""))) return "you left within " + m[1] + ", before it was due";
+  return WORDS[reason] || reason || "";
 }
 function said(j) {
-  const o = outcome(j);
+  const o = j.outcome;
   const ds = j.decisions.filter(d => d.action === o);
-  const rules = ds.map(d => "<b>" + esc(d.rule) + "</b>").join(", ");
-  const why = ds.map(d => esc(d.reason)).filter(Boolean).join("; ");
-  if (o === "intervene") return {cls:"intervene", text:"Qualm popped up: this looks like " + rules, why:"because " + why + (j.focus ? " · during focus: " + esc(j.focus) : "")};
+  const names = ds.map(d => "<b>" + esc(name(d.rule)) + "</b>").join(", ");
+  const why = [...new Set(ds.map(d => plain(d.reason)).filter(Boolean))].map(esc).join("; ");
+  if (o === "intervene") {  // the app shows the first hit's pop-up
+    const more = ds.slice(1).map(d => esc(name(d.rule)));
+    return {cls:"intervene", text:"Qualm popped up: this looks like <b>" + esc(name(ds[0].rule)) + "</b>" + (more.length ? " <span class=\"small\">(" + more.join(", ") + " matched too)</span>" : ""),
+            why:"because " + esc(plain(ds[0].reason)) + (j.focus ? " · during focus: " + esc(j.focus) : "")};
+  }
   if (o === "allow") {
     let w = why;
-    if (why.includes("opened on purpose") && j.came_from) w += " (you came from a " + esc(j.came_from.page_kind) + " page)";
-    return {cls:"allow", text:"Qualm let it through: it matched " + rules + " but an exemption applied", why:w};
+    if (ds.some(d => d.reason === "opened on purpose") && j.came_from) w += " (you came from " + esc(PAGE[j.came_from.page_kind] || "another page") + ")";
+    return {cls:"allow", text:"Qualm let it through: it matched " + names + ", but an exemption applied", why:w};
   }
-  if (o === "count") return {cls:"count", text:"Qualm counted time toward " + rules, why:why};
-  if (o === "skip") return {cls:"none", text:"Not judged", why:why};
+  if (o === "count") return {cls:"count", text:"Qualm counted time toward " + names, why:why};
+  if (o === "skip") {
+    if (ds.some(d => /^left within/.test(d.reason))) return {cls:"none", text:"Qualm would have popped up (" + names + "), but you left first", why:why};
+    return {cls:"none", text:"Not judged", why:why};
+  }
   const top = j.p_hit ? Object.entries(j.p_hit).sort((a, b) => b[1] - a[1])[0] : null;
-  return {cls:"none", text:"Qualm did nothing", why: top ? "closest rule: " + esc(top[0]) + " at " + top[1].toFixed(2) + " (needs " + esc((j.thresholds || {})[top[0]]) + ")" : ""};
+  const t = top && (j.thresholds || {})[top[0]];
+  return {cls:"none", text:"Qualm did nothing", why: top ? "closest: " + esc(name(top[0])) + ", it scored " + pct(top[1]) + (t ? "; it steps in at " + pct(t) : "") : ""};
 }
 function flagged(j) { return new Set(j.decisions.filter(d => d.action === "intervene" || d.action === "count" || d.action === "allow").map(d => d.rule)); }
-const hm = iso => iso.slice(11, 16);
-const clock = t => new Date(t * 1000).toTimeString().slice(0, 5);
+// What the page may really be: the rules on now, and any this screen was judged by (even if off since).
+function pickRules(j) { const f = flagged(j); return D.rules.filter(r => r.enabled || f.has(r.id)); }
+// When a pause or session ends, as the menu bar and `qualm pause` say it: "22:34" today, "Mon 09:00" in the next six days, "Oct 5 09:00" after.
+function clock(t) {
+  const d = new Date(t * 1000), n = new Date(), hm = d.toTimeString().slice(0, 5);
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 864e5);
+  return days === 0 ? hm : days > 0 && days < 7 ? d.toLocaleDateString(undefined, {weekday:"short"}) + " " + hm
+    : d.toLocaleDateString(undefined, {month:"short", day:"numeric"}) + " " + hm;
+}
+const day = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+// "22:34" today, "yesterday 22:34", else "Sep 21, 22:34".
+function when(iso) {
+  const now = new Date(), y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1), t = iso.slice(11, 16);
+  if (iso.slice(0, 10) === day(now)) return t;
+  if (iso.slice(0, 10) === day(y)) return "yesterday " + t;
+  return new Date(iso.slice(0, 10) + "T12:00:00").toLocaleDateString(undefined, {month:"short", day:"numeric"}) + ", " + t;
+}
 
 // ---- small SVG charts ----------------------------------------------------
 // Stacked bars: cols = [{label, parts:{key:n}}], keys in stacking order.
 function stacked(cols, keys, colors, h = 150) {
   const w = 540, pad = 22, bw = (w - pad) / cols.length;
-  const max = Math.max(1, ...cols.map(c => keys.reduce((n, k) => n + (c.parts[k] || 0), 0)));
+  const most = Math.max(0, ...cols.map(c => keys.reduce((n, k) => n + (c.parts[k] || 0), 0)));
+  const max = most > 1 ? 2 * Math.ceil(most / 2) : 1;  // an even top, so the middle line is a whole number too
   let s = '<svg viewBox="0 0 ' + w + " " + (h + 20) + '" width="100%" role="img">';
-  for (const f of [0.5, 1]) s += '<line x1="' + pad + '" x2="' + w + '" y1="' + (h - f * (h - 8)) + '" y2="' + (h - f * (h - 8)) + '" stroke="var(--line)" stroke-dasharray="2 3"/><text x="0" y="' + (h - f * (h - 8) + 4) + '">' + Math.round(f * max) + "</text>";
+  for (const f of [0.5, 1]) s += '<line x1="' + pad + '" x2="' + w + '" y1="' + (h - f * (h - 8)) + '" y2="' + (h - f * (h - 8)) + '" stroke="var(--line)" stroke-dasharray="2 3"/>' +
+    (Number.isInteger(f * max) ? '<text x="0" y="' + (h - f * (h - 8) + 4) + '">' + f * max + "</text>" : "");
   cols.forEach((c, i) => {
     let y = h;
     const x = pad + i * bw + bw * 0.18, bwi = bw * 0.64;
@@ -309,11 +318,72 @@ function stacked(cols, keys, colors, h = 150) {
   });
   return s + "</svg>";
 }
-function bars(vals, labels, color, h = 120, fmt = v => v) {
+function bars(vals, labels, color, h = 120) {
   return stacked(vals.map((v, i) => ({label: labels[i], short: labels[i], parts: {v}})), ["v"], {v: color}, h);
 }
 
+// ---- what keeps Qualm from watching ----------------------------------------
+function modelDown() { const m = D.status.model; return m && m !== "ok" && m !== "starting"; }
+// The hosted model's trouble as the menu bar tells it (app.TROUBLE): the chip, the menu's words, why, and what to do.
+const TROUBLE = {
+  nokey: ["No key saved", "No TypeSafe key is saved", "The hosted model needs one, so new screens aren't judged", "Add a TypeSafe key"],
+  key: ["Key doesn't work", "Your TypeSafe key doesn't work", "TypeSafe turned it down, so new screens aren't judged", "Add a key that works"],
+  quota: ["Usage limit reached", "TypeSafe's usage limit is reached", "Until it resets, new screens aren't judged", "Add a key with room left"],
+  down: ["TypeSafe not answering", "TypeSafe isn't answering", "Until it does, new screens aren't judged", "Check your internet connection"],
+};
+function chip() {
+  const S = D.session, A = D.status, T = TROUBLE[A.trouble];
+  if (!A.running) return ["off", "Not running", "Qualm isn't running, so nothing is watched."];
+  if (S.focus) return ["focus", "Focus · " + Math.max(1, Math.round((S.focus.until - S.now) / 60)) + " min", S.focus.intent];
+  if (S.paused_until > S.now) return ["paused", "Paused until " + clock(S.paused_until), "Nothing is judged until then."];
+  if (A.accessibility === false) return ["warn", "Needs Accessibility", "Qualm can only see app names."];
+  if (T) return ["warn", T[0], T[1]];
+  if (modelDown()) return ["warn", "Model not answering", "New screens aren't judged until it answers."];
+  if (D.problem) return ["warn", "Can't read your rules", ours(D.problem)];  // on hosted, nothing is asked meanwhile: not "Starting…"
+  if (A.model === "starting") return ["", "Starting…", "Waiting for the model's first answer."];
+  if (!D.rules.some(r => r.enabled && r.active)) return ["off", "No rules on now", "Qualm won't step in anywhere right now."];
+  return ["", "Watching", "Qualm is reading the front window."];
+}
+function chipHtml(c) { return '<span class="chip ' + c[0] + '" title="' + esc(c[2]) + '"><span class="dot"></span>' + esc(c[1]) + "</span>"; }
+function notice() {
+  const A = D.status, S = D.session;
+  let t = "";
+  if (!A.running) t = "<b>Qualm isn't running</b>, so nothing is being watched. Open Qualm (it lives in the menu bar), or run " + cmd("app") + " in a terminal.";
+  else if (S.paused_until > S.now) t = "";
+  else if (A.accessibility === false) t = "<b>Qualm can only see app names.</b> Turn Qualm on in System Settings › Privacy &amp; Security › Accessibility; Qualm picks it up by itself, without a restart.";
+  else if (TROUBLE[A.trouble]) {  // in the menu's words, with its fixes (app.Controller._set_trouble)
+    const T = TROUBLE[A.trouble], menu = "Qualm's menu in the menu bar (Model)";
+    t = "<b>" + T[1] + ".</b> " + T[2] + "; a rule's own sites still step in. " + (A.trouble === "down"
+      ? T[3] + (A.local ? ", or use the model on this Mac from " + menu + "." : ".")
+      : T[3] + " from " + menu + (A.local ? ", or use the model on this Mac from the same menu." : "."));
+  }
+  else if (modelDown()) t = "<b>The model" + (D.backend === "kev" ? " on this Mac" : "") + " isn't answering</b>, so new screens aren't judged; a rule's own sites still step in." +
+    (D.backend === "kev" ? " It takes a minute or two to start (longer the first time), and Qualm restarts it if it stops; Qualm's menu in the menu bar says what it's doing." : "");
+  else if (!D.problem && !D.rules.some(r => r.enabled)) t = "<b>Every rule is off</b>, so Qualm won't step in anywhere. Switch one on in <a href=\"#rules\" data-goto=\"rules\">Rules</a>.";
+  return t ? '<div class="notice">' + t + "</div>" : "";
+}
+// The error names the file and, mostly, `qualm config undo` already: said once, with what else there is to do,
+// and what the app judges with meanwhile, as the app itself says (status.json; an app that doesn't say keeps what it had).
+function problem() {
+  if (!D.problem) return "";
+  // The error advises `config undo` only when it has a version to go back to (config.undo_to), as D.undo says.
+  const p = ours(D.problem), A = D.status, named = p.includes(D.rules_file), undo = p.includes("config undo");
+  const uses = !A.running ? "Qualm starts on " + esc(D.starts_on || "the starter rules")
+    : "the app judges with " + esc(A.rules || "the rules it last loaded") +
+      (A.hosted_off ? ", and sends nothing to TypeSafe (only a rule's own sites and apps step in)" : "");
+  return '<div class="notice"><b>Qualm can\'t read your rules file' + (named ? "" : " (" + esc(D.rules_file) + ")") + ".</b> " +
+    esc(p).replace(/`([^`]+)`/g, "<code>$1</code>") + "<br>Until it's fixed, " + uses + ". This page can't change your rules until then. " +
+    "“Edit rules file…” in the menu bar opens it" + (undo || !D.undo ? "" : ", " + cmd("config undo") + " goes back to " + esc(D.undo)) +
+    ", or ask your AI agent to fix it (“Change rules with your AI agent…”).</div>";
+}
+
 // ---- today ----------------------------------------------------------------
+// A pause planned for later (`qualm pause --from`): said on the card whatever else is going on.
+function planned() {
+  const L = D.session.pause_later;
+  return L ? '<div class="small muted" style="margin-top:10px">A pause is planned from ' + clock(L.from) + " until " + clock(L.until) +
+    ": nothing is judged then. The menu bar's “Cancel the pause…” calls it off.</div>" : "";
+}
 function sessionCard() {
   const S = D.session, f = S.focus, paused = S.paused_until > S.now;
   let h = '<div class="card session">';
@@ -333,36 +403,38 @@ function sessionCard() {
       '<button class="focusbtn" type="submit">Start</button></form>' +
       '<div class="small faint" style="margin-top:12px">Or <a href="#" data-act="pause30" style="color:var(--mute)">pause everything for 30 minutes</a>.</div>';
   }
-  return h + "</div>";
+  return h + planned() + "</div>";
 }
 function greeting() {
   const hr = new Date().getHours();
   return hr < 5 ? "Late night" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
 }
 function todayView() {
-  const I = D.insights, day = I.days[I.days.length - 1], o = I.outcomes[day];
+  const I = D.insights, today = I.days[I.days.length - 1], o = I.outcomes[today];
   const shown = Object.values(o).reduce((a, b) => a + b, 0), answered = shown - o.open;
   const reviewedN = I.trust.right + I.trust.wrong;
   const date = new Date().toLocaleDateString(undefined, {weekday:"long", month:"long", day:"numeric"});
-  let h = '<div style="margin-bottom:18px"><h1>' + greeting() + '</h1><div class="muted">' + date + "</div></div>";
+  let h = '<div style="margin-bottom:18px"><h1>' + greeting() + '</h1><div class="muted">' + date + "</div></div>" + notice();
   h += '<div class="hero">' + sessionCard();
-  const q = queue().length;
+  const q = D.queue.total;
   h += '<div class="card"><h2>Worth a look</h2>' + (q ? '<div class="stat"><div class="v">' + q + '</div><div class="k">' + (q === 1 ? "screen" : "screens") +
       " to review: the closest calls first. Your answers tune the rules.</div></div><div class=\"save\"><button class=\"accent\" data-goto=\"review\">Review now</button></div>"
-      : '<div class="empty" style="padding:18px 0"><div class="big">✓</div>Nothing waiting. New screens show up here as you browse.</div>') + "</div></div>";
+      : '<div class="empty" style="padding:18px 0">' + (D.queue.screens ? '<div class="big">✓</div>Nothing waiting. New screens show up here as you browse.'
+        : "Nothing yet: " + esc(WRITES) + " The screens it read show up here, the closest calls first.") + "</div>") + "</div></div>";
+  const where = {kev: "on this Mac, by the local model", jev: "by TypeSafe's hosted model: each new screen's text is sent to TypeSafe"}[D.backend] || "";
   h += '<div class="grid g4" style="margin-bottom:16px">' +
     stat(shown, "pop-ups today", shown ? "last at " + (lastPopup() || "–") : "none so far") +
     stat(o.back, "times you went back", answered ? Math.round(100 * o.back / answered) + "% of your answers" : "") +
-    stat(I.judged_today, "screens read today", "on this Mac, by the local model") +
+    stat(I.judged_today, "screens read today", where) +
     stat(reviewedN ? Math.round(100 * I.trust.right / reviewedN) + "%" : "–", "right, by your reviews", reviewedN ? I.trust.right + " of " + reviewedN + " pop-ups you reviewed" : "review a few to see") + "</div>";
   h += '<div class="grid g2">';
-  const todays = (I.sessions || []).filter(c => c.at.slice(0, 10) === day);
+  const todays = (I.sessions || []).filter(c => c.at.slice(0, 10) === today);
   h += '<div class="card"><h2>Check-ins today</h2>' + ((I.checkins || []).length ? I.checkins.map(b =>
-    '<div class="row" style="justify-content:space-between;margin:8px 0"><b>' + esc(b.rule) + '</b><span class="small muted">' +
+    '<div class="row" style="justify-content:space-between;margin:8px 0"><b>' + esc(name(b.rule)) + '</b><span class="small muted">' +
       Math.round(b.minutes[b.minutes.length - 1]) + " min · " + plural(todays.filter(c => c.rule === b.rule).length, "session") + "</span></div>").join("") +
     (todays.length ? '<div class="list-plain" style="margin-top:10px">' + todays.slice().reverse().map(sessionLine).join("") + "</div>"
       : '<div class="small faint" style="margin-top:8px">When you arrive at one of these, Qualm asks what for and for how long, and steps in when that time is up.</div>')
-    : '<div class="muted small">No check-in rules.</div>') + "</div>";
+    : '<div class="muted small">No check-in rules are on. A check-in rule asks what for and for how long when you arrive, instead of stepping in at once.</div>') + "</div>";
   h += '<div class="card"><h2>Today, hour by hour</h2>' + timeline() + '<div class="legend">' + Object.keys(OUT).map(k => '<span><i style="background:' + OUT[k][1] + '"></i>' + OUT[k][0] + "</span>").join("") + "</div></div>";
   h += "</div>";
   return h;
@@ -372,10 +444,10 @@ function sessionLine(c) {
   const said = c.minutes + " min", did = c.running ? "running" : c.stayed == null ? "" : c.stayed.toFixed(0) + " min on it";
   return '<div><span class="quote">' + esc(c["for"] || "no reason given") + '</span>' +
     (c.running ? ' <span class="chip focus" style="padding:1px 8px;font-size:11px">until ' + clock(c.until) + "</span>" : "") +
-    '<div class="small faint">' + esc(c.at.slice(11, 16)) + " · " + esc(c.rule) + " · said " + said + (c.extended ? " (+" + 5 * c.extended + ")" : "") + (did && !c.running ? " · " + did : "") + "</div></div>";
+    '<div class="small faint">' + esc(when(c.at)) + " · " + esc(name(c.rule)) + " · said " + said + (c.extended ? " (+" + 5 * c.extended + ")" : "") + (did && !c.running ? " · " + did : "") + "</div></div>";
 }
 function stat(v, k, sub) { return '<div class="card stat"><div class="v">' + esc(v) + '</div><div class="k">' + esc(k) + '</div><div class="sub">' + esc(sub || "") + "</div></div>"; }
-function lastPopup() { const p = D.insights.today; return p.length ? hm(p[p.length - 1].at) : ""; }
+function lastPopup() { const p = D.insights.today; return p.length ? when(p[p.length - 1].at) : ""; }
 function timeline() {
   const w = 520, h = 70, x = t => 18 + (w - 36) * t / 24;
   let s = '<svg viewBox="0 0 ' + w + " " + (h + 18) + '" width="100%" role="img"><line x1="18" x2="' + (w - 18) + '" y1="' + (h / 2) + '" y2="' + (h / 2) + '" stroke="var(--line)" stroke-width="2"/>';
@@ -385,7 +457,7 @@ function timeline() {
   D.insights.today.forEach((p, i) => {
     const t = +p.at.slice(11, 13) + p.at.slice(14, 16) / 60;
     s += '<circle cx="' + x(t) + '" cy="' + (h / 2 + (i % 3 - 1) * 11) + '" r="6" fill="' + OUT[p.ended][1] + '" stroke="var(--card)" stroke-width="2"><title>' +
-      hm(p.at) + " · " + esc(p.rule) + " · " + esc(p.title) + " · " + OUT[p.ended][0].toLowerCase() + "</title></circle>";
+      p.at.slice(11, 16) + " · " + esc(name(p.rule)) + " · " + esc(p.title) + " · " + OUT[p.ended][0].toLowerCase() + "</title></circle>";
   });
   if (!D.insights.today.length) s += '<text x="' + (w / 2) + '" y="' + (h / 2 - 12) + '" text-anchor="middle">no pop-ups today</text>';
   return s + "</svg>";
@@ -406,7 +478,7 @@ function insightsView() {
       : '<div class="empty">No pop-ups yet.</div>') + "</div>";
   const wk = Object.keys(I.weeks);
   h += '<div class="card"><h2>Pop-ups per week</h2><div class="small muted" style="margin-bottom:8px">In the one sec study, most of the drop came in the first three weeks, then held. Use settles; it doesn\'t vanish.</div>' +
-    bars(wk.map(k => I.weeks[k]), wk.map(k => k.slice(5)), "var(--accent)") + "</div></div>";
+    (wk.some(k => I.weeks[k]) ? bars(wk.map(k => I.weeks[k]), wk.map(k => k.slice(5)), "var(--accent)") : '<div class="empty">No pop-ups yet.</div>') + "</div></div>";
   // Heatmap: when in the week pop-ups happen.
   const maxh = Math.max(1, ...I.heat.flat());
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -416,69 +488,87 @@ function insightsView() {
       (n ? "color-mix(in srgb, var(--accent) " + Math.round(18 + 82 * n / maxh) + "%, var(--soft))" : "var(--soft)") + '"></td>').join("") + "</tr>").join("") + "</table></div>";
   h += '<div class="grid g2" style="margin-bottom:16px">';
   h += '<div class="card"><h2>Time you asked for, and what for</h2>' + (I.unlocks.length ? '<div class="list-plain">' + I.unlocks.slice().reverse().slice(0, 12).map(u =>
-      '<div><span class="quote">' + esc(u.reason || "no reason given") + '</span><div class="small faint">' + esc(u.at.slice(5, 16).replace("T", " ")) + " · " + esc(u.rule) + (u.minutes ? " · " + esc(u.minutes) + " min" : "") + "</div></div>").join("") + "</div>"
+      '<div><span class="quote">' + esc(u.reason || "no reason given") + '</span><div class="small faint">' + esc(when(u.at)) + " · " + esc(name(u.rule)) + (u.minutes ? " · " + esc(u.minutes) + " min" : "") + "</div></div>").join("") + "</div>"
       : '<div class="muted small">When you check in or use “I need it”, what you said it was for shows up here.</div>') + "</div>";
   h += '<div class="card"><h2>Focus sessions</h2>' + (I.focus.length ? '<div class="list-plain">' + I.focus.slice().reverse().slice(0, 10).map(f =>
-      '<div><b>' + esc(f.intent) + '</b>' + (f.running ? ' <span class="chip focus" style="padding:1px 8px;font-size:11px">running</span>' : "") + '<div class="small faint">' + esc(f.at.slice(5, 16).replace("T", " ")) + " · " + f.minutes + " of " + f.planned + " min · " +
+      '<div><b>' + esc(f.intent) + '</b>' + (f.running ? ' <span class="chip focus" style="padding:1px 8px;font-size:11px">running</span>' : "") + '<div class="small faint">' + esc(when(f.at)) + " · " + f.minutes + " of " + f.planned + " min · " +
       (f.popups ? f.popups + " pop-up" + (f.popups > 1 ? "s" : "") + ", went back " + f.back + "×" : "no pop-ups") + "</div></div>").join("") + "</div>"
-      : '<div class="muted small">Start one from the menu bar, the Today tab, or <code>qualm focus write the report</code>.</div>') + "</div>";
+      : '<div class="muted small">Start one from the menu bar, the Today tab, or ' + cmd("focus write the report") + ".</div>") + "</div>";
   h += "</div>";
   if ((I.checkins || []).length) {
     const done = I.sessions.filter(c => !c.running && c.how), kept = done.filter(c => !c.extended && c.how !== "new");
+    const any = I.sessions.length || I.checkins.some(b => b.minutes.some(m => m));
     h += '<div class="card" style="margin-bottom:16px"><h2>Check-ins: what you said, and what you did</h2><div class="small muted" style="margin-bottom:8px">' +
       (done.length ? done.length + " sessions in 14 days; " + kept.length + " ended when you said, without more time." : "No finished sessions yet.") + "</div>" +
-      '<div class="grid g' + Math.min(3, I.checkins.length) + '">' + I.checkins.map(b =>
-        "<div><b>" + esc(b.rule) + '</b> <span class="small muted">minutes a day</span>' + bars(b.minutes.map(Math.round), I.days.map(d => d.slice(8)), "var(--session)", 90) + "</div>").join("") + "</div></div>";
+      (any ? '<div class="grid g' + Math.min(3, I.checkins.length) + '">' + I.checkins.map(b =>
+        "<div><b>" + esc(name(b.rule)) + '</b> <span class="small muted">minutes a day</span>' + (b.minutes.some(m => m) ? bars(b.minutes.map(Math.round), I.days.map(d => d.slice(8)), "var(--session)", 90)
+          : '<div class="small faint" style="margin-top:6px">No time yet.</div>') + "</div>").join("") + "</div>"
+        : '<div class="muted small">When you arrive at ' + I.checkins.map(b => esc(name(b.rule))).join(" or ") + ", Qualm asks what for and for how long; the minutes you spend show up here.</div>") + "</div>";
   }
+  // The weekly question, once there's something to reflect on: a check-in this week.
   const r = (I.reflections || {})[I.this_week];
-  h += '<div class="grid g2"><div class="card"><h2>This week, one question</h2><div class="muted" style="margin-bottom:10px">Was the time you checked in for worth it? A total can\'t tell time you valued from time that slipped by; you can.</div><div class="choices">' +
+  const reflect = r || (I.sessions || []).some(c => c.at.slice(0, 10) >= I.this_week);
+  h += '<div class="grid g2">';
+  if (reflect) h += '<div class="card"><h2>This week, one question</h2><div class="muted" style="margin-bottom:10px">Was the time you checked in for worth it? A total can\'t tell time you valued from time that slipped by; you can.</div><div class="choices">' +
     [["mostly", "Mostly"], ["mixed", "Mixed"], ["not_really", "Not really"]].map(([k, l]) => '<button data-reflect="' + k + '" class="' + (r && r.answer === k ? "primary" : "") + '">' + l + "</button>").join("") + "</div>" +
     (Object.keys(I.reflections || {}).length > 1 ? '<div class="small faint" style="margin-top:10px">Earlier: ' + Object.values(I.reflections).filter(x => x.week !== I.this_week).slice(-6).map(x => esc(x.week.slice(5)) + " " + esc(x.answer.replace("_", " "))).join(" · ") + "</div>" : "") + "</div>";
   const t = I.trust, n = t.right + t.wrong;
+  const where = {kev: " Everything it reads stays on this Mac.", jev: " It uses TypeSafe's hosted model: the text of each new screen is sent to TypeSafe to be read. Screenshots and your logs stay on this Mac."}[D.backend] || "";
   h += '<div class="card"><h2>Can you trust it?</h2><div class="muted">' + (n ? "You reviewed " + n + " pop-ups and said " + t.right + " were right." : "Review a few pop-ups and this shows how often Qualm was right.") +
-    " “Not this one” taught it " + all.fine + " exception" + (all.fine === 1 ? "" : "s") + " in two weeks; “Never here” silenced " + all.never + " place" + (all.never === 1 ? "" : "s") + ". Everything it reads stays on this Mac.</div></div></div>";
+    " “Not this one” taught it " + all.fine + " exception" + (all.fine === 1 ? "" : "s") + " in two weeks; “Never here” silenced " + all.never + " place" + (all.never === 1 ? "" : "s") + "." + where + "</div></div></div>";
   return h;
 }
 
 // ---- review tab -------------------------------------------------------
+function current() { return pinned || D.queue.cards[pos] || null; }
+function more() {  // near the end of the cards the page has: ask for the next ones
+  const Q = D.queue;
+  if (!pinned && pos >= Q.cards.length - 3 && Q.cards.length < Q.total && qn <= Q.cards.length) { qn = Q.cards.length + 20; load(true); }
+}
 function reviewView() {
-  const q = queue();
-  if (!q.length) {
-    return '<div class="card empty"><div class="big">✓</div><h2>Nothing left to review</h2><div class="muted">New screens show up here as you browse.</div>' +
+  const Q = D.queue;
+  if (!pinned && !Q.total) {
+    if (!Q.screens) return '<div class="card empty"><h2>Nothing to review yet</h2><div class="muted">' + esc(WRITES) + " The screens it read show up here, the closest calls first.</div></div>";
+    return '<div class="card empty"><div class="big">✓</div><h2>Nothing left to review</h2><div class="muted">New screens show up here as you browse.' +
+      (D.older ? "" : ' This looks at the last ' + D.window + ' days: <a data-act="older">include older screens</a>.') + "</div>" +
       '<div style="margin-top:14px"><label class="small"><input type="checkbox" id="quiet" ' + (quiet ? "checked" : "") +
       '> also review screens where Qualm stayed quiet</label></div></div>';
   }
-  if (pos >= q.length) pos = q.length - 1;
-  if (pos < 0) pos = 0;
-  const g = q[pos], e = g.rep, j = e.j, s = said(j);
-  const total = screens().filter(x => x.j.p_hit).length;
-  const reviewed = screens().filter(x => x.review && x.review.verdict).length;
-  const img = e.shot ? '<img src="/shots/' + esc(e.shot) + '" alt="">' : '<div class="noshot">no screenshot for this one</div>';
-  const times = e.items.length > 1 ? " · seen " + e.items.length + "× from " + hm(e.first) + " to " + hm(e.last) : " · " + hm(e.first);
-  let h = '<div class="progress"><span class="small muted">' + (pos + 1) + " of " + q.length + " to review</span>" +
-    '<div class="track"><div class="fill" style="width:' + (total ? Math.round(100 * reviewed / total) : 0) + '%"></div></div>' +
-    '<span class="small muted">' + reviewed + " reviewed</span>" +
+  if (!pinned) pos = Math.max(0, Math.min(pos, Q.total - 1));
+  const g = current();
+  if (!g) { setTimeout(more); return '<div class="card empty"><div class="muted">Loading more screens…</div></div>'; }
+  const j = g.j, s = said(j);
+  const img = g.shot ? '<img src="/shots/' + esc(g.shot) + '" alt="">' : '<div class="noshot">no screenshot for this one</div>';
+  const times = g.seen > 1 ? " · seen " + g.seen + "× from " + when(g.first) + " to " + when(g.last) : " · " + when(g.first);
+  let h = '<div class="progress"><span class="small muted">' + (pinned ? "From All screens" : (pos + 1) + " of " + Q.total + " to review") + "</span>" +
+    '<div class="track"><div class="fill" style="width:' + (Q.screens ? Math.round(100 * Q.reviewed / Q.screens) : 0) + '%"></div></div>' +
+    '<span class="small muted">' + Q.reviewed + " reviewed</span>" +
     '<label class="small muted"><input type="checkbox" id="quiet" ' + (quiet ? "checked" : "") + "> include quiet screens</label></div>";
   h += '<div class="card one"><div>' + img + '</div><div>';
   h += '<div class="title">' + esc(j.screen.window_title || j.screen.app) + '</div>';
   h += '<div class="url">' + esc(j.screen.app) + (j.screen.url ? " · " + esc(j.screen.url) : "") + esc(times) + "</div>";
   h += '<div class="said ' + s.cls + '">' + s.text + (s.why ? '<span class="why">' + s.why + "</span>" : "") + "</div>";
-  if (g.members.length > 1) {
-    h += '<details class="similar"><summary><b>+' + (g.members.length - 1) + " similar " + (g.members.length === 2 ? "page" : "pages") +
-      "</b> with the same result. Your answer applies to all " + g.members.length + ".</summary><div class=\"small muted\" style=\"margin-top:6px\">" +
-      g.members.slice(0, 25).map(m => "· " + esc(m.j.screen.window_title || m.j.screen.url)).join("<br>") +
-      (g.members.length > 25 ? "<br>…and " + (g.members.length - 25) + " more" : "") + "</div></details>";
+  if (g.ids.length > 1) {
+    h += '<details class="similar"><summary><b>+' + (g.ids.length - 1) + " similar " + (g.ids.length === 2 ? "page" : "pages") +
+      "</b> with the same result. Your answer applies to all " + g.ids.length + ".</summary><div class=\"small muted\" style=\"margin-top:6px\">" +
+      g.titles.map(t => "· " + esc(t)).join("<br>") + (g.ids.length > g.titles.length ? "<br>…and " + (g.ids.length - g.titles.length) + " more" : "") + "</div></details>";
   }
+  const rv = g.review && g.review.verdict ? g.review : null;
+  if (rv && pick === null) {
+    const yes = Object.keys(rv.rules || {}).filter(k => rv.rules[k] === "yes").map(name);
+    h += '<div class="before">You said: <b>' + (rv.verdict === "right" ? "right" : "wrong") + "</b>" + (yes.length ? " (it's " + esc(yes.join(", ")) + ")" : rv.verdict === "should_not_block" ? " (Qualm should leave it alone)" : "") +
+      (rv.at ? ", " + esc(when(rv.at)) : "") + ". Answering again replaces that.</div>";
+  }
+  const back = pinned ? '<button data-act="skip">Back to the queue <kbd>S</kbd></button>' : '<button data-act="skip">Skip <kbd>S</kbd></button>';
   if (pick === null) {
     h += '<div class="q">Was that right?</div><div class="choices">' +
       '<button class="right" data-act="right">✓ Right <kbd>R</kbd></button>' +
-      '<button class="wrong" data-act="wrong">✗ Wrong <kbd>W</kbd></button>' +
-      '<button data-act="skip">Skip <kbd>S</kbd></button></div>';
+      '<button class="wrong" data-act="wrong">✗ Wrong <kbd>W</kbd></button>' + back + "</div>";
   } else {
     h += '<div class="q">What is this page, really? <span class="small muted">(pick all that apply)</span></div><div class="chips">';
-    D.rules.forEach((r, i) => {
-      h += '<button class="pick ' + (pick.has(r.id) ? "sel" : "") + '" data-pick="' + esc(r.id) + '"><kbd>' + (i + 1) + '</kbd><span><span class="name">' +
-        esc(r.id) + '</span> <span class="desc">' + esc(ruleName(r)) + "</span></span></button>";
+    pickRules(j).forEach((r, i) => {
+      h += '<button class="pick ' + (pick.has(r.id) ? "sel" : "") + '" data-pick="' + esc(r.id) + '">' + (i < 9 ? "<kbd>" + (i + 1) + "</kbd>" : "") + '<span><span class="name">' +
+        esc(r.name) + (r.enabled ? "" : " (off now)") + '</span> <span class="desc">' + esc(ruleName(r)) + "</span></span></button>";
     });
     h += '<button class="pick none ' + (pick.size === 0 ? "sel" : "") + '" data-pick=""><kbd>0</kbd><span><span class="name">None of these</span> ' +
       '<span class="desc">Qualm should leave this page alone</span></span></button></div>' +
@@ -494,81 +584,83 @@ function detailsHtml(j) {
   let h = '<table class="scores">';
   Object.entries(j.p_hit).sort((a, b) => b[1] - a[1]).forEach(([rid, p]) => {
     const t = (j.thresholds || {})[rid] || 0.5;
-    h += "<tr><td>" + esc(rid) + '</td><td><div class="meter"><div class="f ' + (p >= t ? "over" : "") + '" style="width:' + Math.min(100, p * 100) +
-      '%"></div><div class="t" style="left:' + (t * 100) + '%"></div></div></td><td class="small muted">' + p.toFixed(2) + " / needs " + esc(t) + "</td></tr>";
+    h += "<tr><td>" + esc(name(rid)) + '</td><td><div class="meter"><div class="f ' + (p >= t ? "over" : "") + '" style="width:' + Math.min(100, p * 100) +
+      '%"></div><div class="t" style="left:' + (t * 100) + '%"></div></div></td><td class="small muted">' + pct(p) + " · steps in at " + pct(t) + "</td></tr>";
   });
   h += "</table>";
-  const probs = o => o ? Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => esc(k) + " " + v.toFixed(2)).join(", ") : "";
-  h += '<div class="small muted" style="margin-top:8px">page: ' + probs(j.page_probs) + "<br>purpose: " + probs(j.purpose_probs) +
-    "<br>came from: " + (j.came_from ? esc(j.came_from.page_kind + " · " + j.came_from.key) : "—") + " · opened on purpose: " + (j.opened_on_purpose ? "yes" : "no") +
-    " · " + esc(j.latency_ms) + " ms · #" + esc(j.id) + "</div>";
+  const probs = o => o ? Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => esc(k.replace("_", " ")) + " " + pct(v)).join(", ") : "";
+  h += '<div class="small muted" style="margin-top:8px">what page it is: ' + probs(j.page_probs) + "<br>what it's for: " + probs(j.purpose_probs) +
+    "<br>came from: " + (j.came_from ? esc((PAGE[j.came_from.page_kind] || j.came_from.page_kind) + " · " + j.came_from.key) : "—") + " · opened on purpose: " + (j.opened_on_purpose ? "yes" : "no") +
+    " · answered in " + esc(j.latency_ms) + " ms · #" + esc(j.id) + "</div>";
   h += "<pre>" + esc(JSON.stringify(j.state, null, 2)) + "</pre>";
   return h;
 }
 async function answer(kind) {
-  const q = queue(); const g = q[pos]; if (!g) return;
-  const e = g.rep, ids = g.members.map(m => m.j.id);
-  if (kind === "skip") { pos++; pick = null; render(); return; }
-  if (kind === "right") {
-    if (await post("/api/review", {ids:ids, verdict:"right"})) { toast("✓ saved" + (ids.length > 1 ? " for " + ids.length + " pages" : "")); pick = null; render(); }
-    return;
-  }
-  if (kind === "wrong") { pick = new Set(flagged(e.j)); render(); return; }
+  const g = current(); if (!g) return;
+  const done = t => () => { toast(t + (g.ids.length > 1 ? " for " + g.ids.length + " pages" : "")); pick = null; pinned = null; };
+  if (kind === "skip") { if (pinned) pinned = null; else pos++; pick = null; render(); more(); return; }
+  if (kind === "right") { await post("/api/review", {ids:g.ids, verdict:"right"}, done("✓ saved")); return; }
+  if (kind === "wrong") { pick = new Set(flagged(g.j)); render(); return; }
   if (kind === "cancel") { pick = null; render(); return; }
   if (kind === "save") {
     const rules = {};
-    D.rules.forEach(r => { rules[r.id] = pick.has(r.id) ? "yes" : "no"; });
-    const popped = outcome(e.j) === "intervene";
+    pickRules(g.j).forEach(r => { rules[r.id] = pick.has(r.id) ? "yes" : "no"; });
+    const popped = g.j.outcome === "intervene";
     const verdict = popped && pick.size === 0 ? "should_not_block" : !popped && pick.size ? "should_block" : "wrong";
-    if (await post("/api/review", {ids:ids, verdict:verdict, rules:rules})) { toast("✗ saved" + (ids.length > 1 ? " for " + ids.length + " pages" : "")); pick = null; render(); }
+    await post("/api/review", {ids:g.ids, verdict:verdict, rules:rules}, done("✗ saved"));
   }
 }
 
 // ---- all screens tab ----------------------------------------------------
 function allView() {
-  let es = similarGroups(screens()).map(g => Object.assign({}, g.rep, {similar: g.members.length})).sort((a, b) => (b.last < a.last ? -1 : 1));
-  if (search) es = es.filter(e => (e.j.screen.window_title + " " + e.j.screen.url + " " + e.j.screen.app).toLowerCase().includes(search));
-  if (listFilter !== "all") es = es.filter(e => listFilter === "wrong" ? (e.review && e.review.verdict && e.review.verdict !== "right")
-                                                  : listFilter === "right" ? (e.review && e.review.verdict === "right") : outcome(e.j) === listFilter);
+  const R = D.rows;
   const F = [["all","All"],["intervene","Popped up"],["allow","Allowed"],["count","Counted"],["none","Nothing"],["wrong","You said wrong"],["right","You said right"]];
   let h = '<div class="opts"><input type="search" id="search" placeholder="Search title, URL, app…" value="' + esc(search) + '"> ' +
     F.map(([k, l]) => '<button data-lf="' + k + '" class="' + (listFilter === k ? "on" : "") + '">' + l + "</button>").join(" ") +
-    ' <span class="small muted">' + es.length + " kinds of screen</span></div>";
-  h += '<div class="card" style="padding:4px 8px"><table class="list">' + es.slice(0, 400).map(e => {
-    const j = e.j, o = outcome(j), rv = e.review;
-    const rules = j.decisions.filter(d => d.rule).map(d => d.rule).join(", ");
-    const you = rv && rv.verdict ? '<span class="tag ' + (rv.verdict === "right" ? "right" : "wrong") + '">you: ' + (rv.verdict === "right" ? "right" : "wrong") + "</span>" : "";
-    return '<tr data-key="' + esc(e.key) + '"><td>' + (e.shot ? '<img src="/shots/' + esc(e.shot) + '" loading="lazy" alt="">' : "") + "</td>" +
-      '<td class="small muted">' + esc(e.last.slice(5, 16).replace("T", " ")) + "</td>" +
-      '<td class="t"><b>' + esc(j.screen.window_title || j.screen.app) + '</b>' + (e.similar > 1 ? ' <span class="small muted">+' + (e.similar - 1) + " similar</span>" : "") + '<br><span class="small muted">' + esc(j.screen.url || j.screen.app) + "</span></td>" +
-      '<td><span class="tag ' + o + '">' + ({intervene:"popped up", allow:"allowed", count:"counted", none:"nothing", skip:"not judged"})[o] + (rules ? ": " + esc(rules) : "") + "</span></td>" +
+    ' <span class="small muted">' + plural(R.total, "kind") + " of screen" + (D.older ? "" : ", last " + D.window + " days") + "</span></div>";
+  const span = D.older ? '<a data-act="recent">Only the last ' + D.window + " days</a>" : "Showing the last " + D.window + ' days. <a data-act="older">Show older screens</a>';
+  if (!R.items.length) {
+    return h + '<div class="card empty">' + (search || listFilter !== "all" ? "No screens match." : "Nothing yet: " + esc(WRITES) + " Every screen it reads shows up here.") +
+      '<div class="more">' + span + "</div></div>";
+  }
+  h += '<div class="card scroll" style="padding:4px 8px"><table class="list">' + R.items.map(e => {
+    const you = e.verdict ? '<span class="tag ' + (e.verdict === "right" ? "right" : "wrong") + '">you: ' + (e.verdict === "right" ? "right" : "wrong") + "</span>" : "";
+    return '<tr data-key="' + esc(e.key) + '"' + (e.open ? "" : ' style="cursor:default"') + "><td>" + (e.shot ? '<img src="/shots/' + esc(e.shot) + '" loading="lazy" alt="">' : "") + "</td>" +
+      '<td class="small muted when">' + esc(when(e.last)) + "</td>" +
+      '<td class="t"><b>' + esc(e.title) + '</b>' + (e.similar > 1 ? ' <span class="small muted">+' + (e.similar - 1) + " similar</span>" : "") + '<br><span class="small muted">' + esc(e.where) + "</span></td>" +
+      '<td><span class="tag ' + e.outcome + '">' + ({intervene:"popped up", allow:"allowed", count:"counted", none:"nothing", skip:"not judged"})[e.outcome] + (e.rules.length ? ": " + esc(e.rules.map(name).join(", ")) : "") + "</span></td>" +
       "<td>" + you + "</td></tr>";
-  }).join("") + "</table></div>";
+  }).join("") + "</table>" +
+    '<div class="more">' + (R.items.length < R.total ? '<button data-act="more-rows">Show more (' + (R.total - R.items.length) + " left)</button>" : "") + span + "</div></div>";
   return h;
 }
 
 // ---- rules tab ----------------------------------------------------------
 function rulesView() {
   const c = D.capacity;
-  let h = '<div style="margin-bottom:18px"><h1>Rules</h1><div class="muted">Switch rules on and off, tune thresholds from your answers, and teach exceptions. Changes are checked, saved to rules.toml (the old one kept as rules.toml.bak), and picked up by the app at once.</div></div>';
-  h += '<div class="card" style="margin-bottom:16px"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Your rules</h2><span class="small muted">' +
+  let h = '<div style="margin-bottom:18px"><h1>Rules</h1><div class="muted">Switch rules on and off, tune thresholds from your answers, and teach exceptions. Changes are checked, saved to rules.toml (its last 20 versions are kept: ' + cmd("config undo") + " steps back), and picked up by the app at once.</div></div>";
+  h += '<div class="card" style="margin-bottom:16px"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Your rules</h2>' + (D.rules.length ? '<span class="small muted">' +
     c.now + " of " + c.limit + " questions per reading now" + (c.peak !== c.now ? " · " + c.peak + " at the busiest (" + esc(c.peak_at) + ")" : "") + "</span></div>" +
-    '<div class="bar" style="margin:10px 0 6px"><div style="width:' + Math.min(100, 100 * c.peak / c.limit) + '%"></div></div>';
-  D.allrules.forEach(r => {
+    '<div class="bar" style="margin:10px 0 6px"><div style="width:' + Math.min(100, 100 * c.peak / c.limit) + '%"></div></div>'
+    : '</div><div class="small muted" style="margin:12px 0">' + (D.problem ? "Your rules show here once the file is fixed." : "No rules yet.") + "</div>");
+  D.rules.forEach(r => {
     const t = D.tuning.find(x => x.rule === r.id);
     const sug = t && t.suggested != null && t.suggested !== t.threshold ? ' · suggested <b>' + t.suggested + "</b> (right " + Math.round(t.suggested_precision * 100) + "%, catches " + Math.round(t.suggested_recall * 100) + '%) <button data-apply="' + esc(r.id) + '" data-value="' + t.suggested + '" style="padding:2px 10px;font-size:12px">Apply</button>' : "";
     h += '<div class="rule ' + (r.enabled ? "" : "off") + '"><button class="switch ' + (r.enabled ? "on" : "") + '" data-toggle="' + esc(r.id) + '" title="' + (r.enabled ? "on: click to switch off" : "off: click to switch on") + '"></button>' +
-      '<div><div class="id">' + esc(r.id) + (r.enabled && !r.active ? ' <span class="small faint">(outside its hours now)</span>' : "") + '</div><div class="sum">' + esc(r.summary) + "</div>" +
-      '<div class="small faint" style="margin-top:4px">threshold ' + esc(r.threshold) + (t ? " · your answers: " + t.yes + " yes, " + t.no + " no" : "") + sug + "</div></div>" +
+      '<div><div class="id">' + esc(r.name) + '<span class="rid">' + esc(r.id) + "</span>" + (r.enabled && !r.active ? ' <span class="small faint">(outside its hours now)</span>' : "") + '</div><div class="sum">' + esc(r.summary) + "</div>" +
+      (r.patterns.length ? '<details data-rule="' + esc(r.id) + '"' + (openPatterns.has(r.id) ? " open" : "") + "><summary>" +
+        (r.patterns.length === 1 ? "Its address pattern" : "Its " + r.patterns.length + " address patterns") + "</summary><pre>" + r.patterns.map(esc).join("\n") + "</pre></details>" : "") +
+      '<div class="small faint" style="margin-top:4px">threshold ' + esc(r.threshold) + (t ? " · your answers: " + t.yes + " yes, " + t.no + " no" + (t.dropped.outside_hours ? " (" + t.dropped.outside_hours + " from outside its hours left out)" : "") : "") + sug + "</div></div>" +
       '<span class="tag ' + (r.kind === "deny" ? "intervene" : "count") + '">' + (r.kind === "deny" ? "steps in" : "checks in") + "</span></div>";
   });
-  h += '<div class="small faint" style="margin-top:10px">New rules, wording and hours: <code>qualm rules add</code> / <code>qualm rules set</code>, or ask Claude Code (it knows the CLI). “Edit rules…” in the menu opens the file.</div></div>';
+  h += '<div class="small faint" style="margin-top:10px">To add a rule or change its wording or hours, use “Change rules with your AI agent…” in the Qualm menu (your agent runs ' + cmd("guide") + "), or " + cmd("rules add") + " / " + cmd("rules set") + " in a terminal. “Edit rules file…” in the menu opens the file itself.</div></div>";
+  const on = D.rules.filter(r => r.enabled);
   h += '<div class="grid g2"><div class="card"><h2>Exceptions</h2><div class="small muted" style="margin-bottom:8px">In your own words; the model reads them with the rule. E.g. for videos: “a lecture or conference talk”.</div>' +
-    '<div style="display:flex;gap:8px;align-items:flex-start"><select id="excRule">' + D.rules.map(r => '<option value="' + esc(r.id) + '">' + esc(r.id) + "</option>").join("") +
-    '</select><input type="text" id="excText" placeholder="…is fine" style="flex:1"><button data-act="exc">Add</button></div>';
+    (on.length ? '<div style="display:flex;gap:8px;align-items:flex-start"><select id="excRule">' + on.map(r => '<option value="' + esc(r.id) + '">' + esc(r.name) + "</option>").join("") +
+      '</select><input type="text" id="excText" placeholder="…is fine" maxlength="200" style="flex:1;min-width:0"><button data-act="exc">Add</button></div>' : D.problem ? "" : '<div class="small muted">Switch a rule on to teach it exceptions.</div>');
   D.rules.forEach(r => {
-    const xs = r.exceptions.concat(D.exceptions.filter(e => e.rule === r.id && e.text && !e.removed).map(e => e.text));
-    if (xs.length) h += '<div class="small" style="margin-top:12px"><b>' + esc(r.id) + "</b>" + xs.map(x => '<div class="muted">· ' + esc(x) + "</div>").join("") + "</div>";
+    if (r.exceptions.length) h += '<div class="small" style="margin-top:12px"><b>' + esc(r.name) + "</b>" + r.exceptions.map(x =>
+      '<div class="muted row" style="gap:4px">· <span style="flex:1;overflow-wrap:anywhere">' + esc(x) + '</span><button class="x" data-unexc="' + esc(r.id) + '" data-text="' + esc(x) + '" title="Remove this exception">×</button></div>').join("") + "</div>";
   });
   h += "</div>";
   h += '<div class="card"><h2>Never here</h2><div class="small muted" style="margin-bottom:8px">Apps and sites where no rule fires, from the pop-up’s “Never here”.</div>' +
@@ -580,92 +672,100 @@ function rulesView() {
 // ---- render and input ---------------------------------------------------
 function render() {
   document.querySelectorAll(".tabs a").forEach(a => a.classList.toggle("on", a.dataset.tab === tab));
-  const S = D.session;
-  $("#state").innerHTML = S.focus ? '<span class="chip focus"><span class="dot"></span>Focus · ' + Math.max(1, Math.round((S.focus.until - S.now) / 60)) + " min</span>"
-    : S.paused_until > S.now ? '<span class="chip paused"><span class="dot"></span>Paused until ' + clock(S.paused_until) + "</span>"
-    : '<span class="chip"><span class="dot"></span>Watching</span>';
-  const n = queue().length;
+  $("#state").innerHTML = chipHtml(chip());
+  const n = D.queue.total;
   $("#nleft").innerHTML = n ? '<span class="n">' + n + "</span>" : "";
   const views = {today: todayView, review: reviewView, all: allView, insights: insightsView, rules: rulesView};
-  $("#view").innerHTML = (views[tab] || todayView)();
+  $("#view").innerHTML = problem() + (views[tab] || todayView)();
   const s = $("#search"); if (s && document.activeElement !== s && search) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
 }
-function go(t) { tab = t; pick = null; history.replaceState(null, "", "#" + t); render(); window.scrollTo(0, 0); }
+function go(t) { tab = t; pick = null; if (t !== "review") pinned = null; history.replaceState(null, "", "#" + t); render(); window.scrollTo(0, 0); }
 document.addEventListener("click", ev => {
   const t = ev.target;
+  if (t.closest("#toast")) { $("#toast").style.display = "none"; return; }
   const a = t.closest(".tabs a"); if (a) { go(a.dataset.tab); return; }
   if (t.matches(".one img, table.list img")) { $("#zoom img").src = t.src; $("#zoom").style.display = "flex"; ev.stopPropagation(); return; }
-  const b = t.closest("button, a[data-act]");
+  const b = t.closest("button, a[data-act], a[data-goto]");
   if (!b) {
     const row = t.closest("tr[data-key]");
-    if (row) { const e = screens().find(x => x.key === row.dataset.key); if (e && e.j.p_hit) reviewOne(e); }
+    if (row) { const e = D.rows.items.find(x => x.key === row.dataset.key); if (e && e.open) reviewOne(e.key); }
     return;
   }
   const act = b.dataset.act;
-  if (b.dataset.goto) { go(b.dataset.goto); return; }
+  if (b.dataset.goto) { ev.preventDefault(); go(b.dataset.goto); return; }
   if (b.dataset.len) { focusLen = +b.dataset.len; document.querySelectorAll(".seg button").forEach(x => x.classList.toggle("on", x === b)); return; }
-  if (act === "focus-stop") { post("/api/focus", {stop:true}).then(ok => { if (ok) { toast("focus session ended"); render(); } }); return; }
-  if (act === "resume") { post("/api/pause", {minutes:0}).then(ok => { if (ok) { toast("watching again"); render(); } }); return; }
-  if (act === "pause30") { ev.preventDefault(); post("/api/pause", {minutes:30}).then(ok => { if (ok) { toast("paused for 30 minutes"); render(); } }); return; }
-  if (act === "exc") {
-    post("/api/exception", {rule:$("#excRule").value, text:$("#excText").value}).then(ok => { if (ok) { toast("exception added"); render(); } });
-    return;
-  }
+  if (act === "focus-stop") { post("/api/focus", {stop:true}, () => toast("focus session ended")); return; }
+  if (act === "resume") { post("/api/pause", {minutes:0}, () => toast("watching again")); return; }
+  if (act === "pause30") { ev.preventDefault(); post("/api/pause", {minutes:30}, () => toast("paused for 30 minutes")); return; }
+  if (act === "exc") { post("/api/exception", {rule:$("#excRule").value, text:$("#excText").value}, () => { $("#excText").value = ""; toast("exception added"); }); return; }
+  if (act === "more-rows") { rn += 100; load(true); return; }
+  if (act === "older" || act === "recent") { older = act === "older"; rn = 100; qn = 20; pos = 0; load(true); return; }
   if (b.dataset.toggle) {
-    const r = D.allrules.find(x => x.id === b.dataset.toggle);
-    post("/api/rule/enabled", {rule:r.id, on:!r.enabled}).then(ok => { if (ok) { toast(r.id + (r.enabled ? " switched off" : " switched on")); render(); } });
+    const r = rule(b.dataset.toggle);
+    post("/api/rule/enabled", {rule:r.id, on:!r.enabled}, () => toast(r.name + (r.enabled ? " switched off" : " switched on")));
     return;
   }
-  if (b.dataset.reflect) { post("/api/reflect", {week:D.insights.this_week, answer:b.dataset.reflect}).then(ok => { if (ok) { toast("noted, thank you"); render(); } }); return; }
+  if (b.dataset.unexc) { post("/api/exception/remove", {rule:b.dataset.unexc, text:b.dataset.text}, () => toast("exception removed")); return; }
+  if (b.dataset.reflect) { post("/api/reflect", {week:D.insights.this_week, answer:b.dataset.reflect}, () => toast("noted, thank you")); return; }
   if (act) { answer(act); return; }
   if (b.dataset.pick !== undefined) {
     if (b.dataset.pick === "") pick = new Set(); else if (pick.has(b.dataset.pick)) pick.delete(b.dataset.pick); else pick.add(b.dataset.pick);
     render(); return;
   }
-  if (b.dataset.apply) { post("/api/threshold", {rule:b.dataset.apply, value:b.dataset.value}).then(ok => { if (ok) { toast("rules.toml updated"); render(); } }); return; }
-  if (b.dataset.lf) { listFilter = b.dataset.lf; render(); return; }
-  if (b.dataset.undo !== undefined) { post("/api/never/undo", {place:D.never[+b.dataset.undo]}).then(ok => { if (ok) { toast("undone"); render(); } }); return; }
+  if (b.dataset.apply) { post("/api/threshold", {rule:b.dataset.apply, value:b.dataset.value}, () => toast("rules.toml updated")); return; }
+  if (b.dataset.lf) { listFilter = b.dataset.lf; rn = 100; load(true); return; }
+  if (b.dataset.undo !== undefined) { post("/api/never/undo", {place:D.never[+b.dataset.undo]}, () => toast("undone")); return; }
 });
 document.addEventListener("submit", ev => {
   if (ev.target.id !== "focusform") return;
   ev.preventDefault();
   const intent = $("#intent").value.trim();
   if (!intent) { $("#intent").focus(); return; }
-  post("/api/focus", {intent:intent, minutes:focusLen}).then(ok => { if (ok) { toast("focus: " + intent); render(); } });
+  post("/api/focus", {intent:intent, minutes:focusLen}, () => toast("focus: " + intent));
 });
-function reviewOne(e) {
-  tab = "review"; pick = null; quiet = true;
-  const find = qq => qq.findIndex(g => g.members.some(m => m.key === e.key));
-  const i = find(queue());
-  if (i >= 0) { pos = i; go("review"); return; }
-  // Already reviewed: clear the verdict so it can be answered again.
-  post("/api/review", {ids:[e.j.id], verdict:null}).then(() => { pos = Math.max(0, find(queue())); go("review"); });
+// A screen from All screens, answered or not: its card first in Review. Nothing changes until you answer.
+async function reviewOne(key) {
+  let r;
+  try { r = await (await fetch("/api/screen?" + new URLSearchParams({key: key, older: older ? 1 : 0, page: PAGE_VERSION}))).json(); } catch (err) { gone(); return; }
+  if (r.reload) { updated(r.error); return; }
+  if (!r.card) { toast(r.error || "That screen isn't in the log any more.", true); return; }
+  pinned = r.card; go("review");
 }
-document.addEventListener("change", ev => { if (ev.target.id === "quiet") { quiet = ev.target.checked; pos = 0; render(); } });
-document.addEventListener("input", ev => { if (ev.target.id === "search") { search = ev.target.value.toLowerCase(); render(); } });
-document.addEventListener("toggle", ev => { if (ev.target.id === "det") showDetails = ev.target.open; }, true);
+document.addEventListener("change", ev => { if (ev.target.id === "quiet") { quiet = ev.target.checked; pos = 0; qn = 20; load(true); } });
+let typing = 0;
+document.addEventListener("input", ev => {
+  if (ev.target.id !== "search") return;
+  search = ev.target.value.toLowerCase();
+  clearTimeout(typing); typing = setTimeout(() => { rn = 100; load(true); }, 250);
+});
+addEventListener("hashchange", () => { const t = location.hash.slice(1); if (D && t && t !== tab) go(t); });
+document.addEventListener("toggle", ev => {
+  if (ev.target.id === "det") showDetails = ev.target.open;
+  else if (ev.target.dataset && ev.target.dataset.rule) { if (ev.target.open) openPatterns.add(ev.target.dataset.rule); else openPatterns.delete(ev.target.dataset.rule); }
+}, true);
 $("#zoom").onclick = () => { $("#zoom").style.display = "none"; };
 document.addEventListener("keydown", ev => {
-  if (tab !== "review" || ev.target.matches("input, textarea, select") || ev.metaKey || ev.ctrlKey) return;
-  const k = ev.key.toLowerCase();
+  if (tab !== "review" || !D || ev.target.matches("input, textarea, select") || ev.metaKey || ev.ctrlKey) return;
+  const k = ev.key.toLowerCase(), g = current();
   if (pick === null) {
     if (k === "r") answer("right");
     else if (k === "w") answer("wrong");
     else if (k === "s" || k === "arrowright") answer("skip");
-    else if (k === "arrowleft") { pos = Math.max(0, pos - 1); render(); }
+    else if (k === "arrowleft") { if (pinned) pinned = null; else pos = Math.max(0, pos - 1); render(); }
     else if (k === "d") { showDetails = !showDetails; render(); }
     else return;
   } else {
+    const rs = g ? pickRules(g.j) : [];
     if (k === "enter") answer("save");
     else if (k === "escape") answer("cancel");
     else if (k === "0") { pick = new Set(); render(); }
-    else if (/^[1-9]$/.test(k) && D.rules[+k - 1]) { const id = D.rules[+k - 1].id; if (pick.has(id)) pick.delete(id); else pick.add(id); render(); }
+    else if (/^[1-9]$/.test(k) && rs[+k - 1]) { const id = rs[+k - 1].id; if (pick.has(id)) pick.delete(id); else pick.add(id); render(); }
     else return;
   }
   ev.preventDefault();
 });
 load();
-// Refresh, but never over something you're typing or choosing.
+// Refresh (the server says "same" while nothing changed), but never over something you're typing or choosing.
 const busy = () => pick !== null || document.querySelector("textarea:focus, input:focus, select:focus") ||
   [...document.querySelectorAll("#intent, #excText")].some(el => el.value.trim());
 setInterval(() => { if (!busy()) load(); }, 15000);

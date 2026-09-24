@@ -23,9 +23,6 @@ from typesafe_sdk import TypeSafeClient
 from .keychain import api_key
 from .rules import AllowClass, Rule, build_questions
 
-KEV_PORT = 8009
-
-
 SHIFT = {"kev": 0.0, "jev": 2.0}  # log-odds; Jev's 1.5-3 all matched Kev on the trial pages
 
 
@@ -60,12 +57,22 @@ def make_client(settings=None) -> Client:
     if name == "jev":
         key = api_key()
         if not key:
-            raise RuntimeError("no TypeSafe API key: `qualm setup` stores one in the keychain")
+            from .agent import command
+
+            raise RuntimeError(f"no TypeSafe API key: `{command()} setup` stores one in the keychain")
         return Client(name, api_key=key, model=os.environ.get("QUALM_MODEL", "jev-1.13.0"))
+    from . import localmodel
+
+    # KEV_URL, the port the app's server moved to, or :8009: the server `status` and `doctor` ask.
+    url, port = localmodel.server_url(), localmodel.PORT
+    if url == f"http://127.0.0.1:{port}" and localmodel.probe(port, timeout=3) == "other":
+        # What's on screen never goes to a program that isn't a model server.
+        raise RuntimeError(f"port {port} is used by another app, not a model server, so nothing was sent "
+                           "to it. The Qualm app runs the model on the next free port: open it, then try again")
     return Client(
         name,
         api_key=os.environ.get("KEV_API_KEY", "local"),
-        base_url=os.environ.get("KEV_URL", f"http://127.0.0.1:{KEV_PORT}"),
+        base_url=url,
         model=os.environ.get("QUALM_MODEL", "kev-latest"),
         # Kev-4B's first call on MLX takes ~25 s; the SDK default of 10 s times
         # out and retries, queueing duplicate work on a one-request-at-a-time server.

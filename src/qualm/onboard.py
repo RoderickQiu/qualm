@@ -2,10 +2,13 @@
 
     Welcome -> Where the model runs -> Permission -> What to watch for -> Ready
 
-Shown by the app when there are no rules yet where it looks (setup.needed()).
+Shown by the app until setup has run for this Qualm folder (setup.needed():
+no .setup-done mark, no judgements, no model chosen, no rules.toml an
+earlier version saved).
 Every choice goes through setup.apply, the same as `qualm setup`. Each option
-says what it costs in plain numbers: memory and download for the local model,
-what leaves the Mac for the hosted one.
+says what it costs in plain numbers: memory and download for the local model;
+what leaves the Mac, the account and the price for the hosted one. Each
+permission says what it's for (Screen Recording is optional).
 
 Laid out with Auto Layout (stack views), in the system's colors, so it follows
 light and dark mode and the accent color you picked.
@@ -13,6 +16,7 @@ light and dark mode and the accent color you picked.
 
 from __future__ import annotations
 
+import platform
 import subprocess
 import threading
 from pathlib import Path
@@ -57,7 +61,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import keychain, localmodel, paths
+from . import autostart, keychain, localmodel, paths
 from . import setup as s
 from .watcher import SETUP_TITLE
 
@@ -67,6 +71,47 @@ TEXT_W = W - 2 * SIDE
 BAR_H = 64.0
 KEY_URL = "https://console.typesafe.ai"
 ICON = Path(__file__).resolve().parent / "icon.png"
+# docs/MODELS.md: $0.02-0.06 a workday, $0.50-1.25 a month, at the early-access price.
+DOWNLOAD_GB = localmodel.DOWNLOAD_GB + localmodel.RUNTIME_GB  # the model and its runtime, the first time
+HOSTED_COST = "at TypeSafe's early-access price that's about $1 a month"
+SCREEN_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+# Opened from the disk image (or a copy macOS runs from a temporary folder): the setup window's words for
+# autostart.MOVE_FIRST, short enough to sit above the buttons.
+MOVE_FIRST = ("Qualm is running from its disk image: drag it to Applications and open it from there, so it can "
+              "start when you log in.")
+
+
+def screen_pane() -> str:
+    """Screen Recording's pane as System Settings names it: macOS 15 added system audio to it."""
+    mac = platform.mac_ver()[0]
+    return "Screen & System Audio Recording" if not mac or int(mac.split(".")[0]) >= 15 else "Screen Recording"
+
+
+def key_trouble(err: str) -> str:
+    """What a failed key check (setup.check_key's "ErrorClass: message") means, in words."""
+    if "Authentication" in err or "PermissionDenied" in err:
+        return "That key didn't work. Check it and try again."
+    if "Connection" in err or "Timeout" in err:
+        return "Couldn't reach TypeSafe. Check your internet connection and try again."
+    if "RateLimit" in err:
+        return "TypeSafe says this key has reached its usage limit. Try another key, or try again later."
+    return "TypeSafe couldn't check the key just now. Try again in a minute."
+
+
+def screen_recording() -> bool:
+    """Screen Recording: for windows that draw their text as pixels (read from a
+    picture of the window), and the screenshots on the review page."""
+    from Quartz import CGPreflightScreenCaptureAccess
+
+    return bool(CGPreflightScreenCaptureAccess())
+
+
+def ask_screen_recording() -> None:
+    """macOS's own prompt (it adds Qualm to the list), and the settings pane."""
+    from Quartz import CGRequestScreenCaptureAccess
+
+    CGRequestScreenCaptureAccess()
+    subprocess.run(["open", SCREEN_PANE], check=False)
 
 # -- small builders ---------------------------------------------------------------
 
@@ -238,7 +283,8 @@ class Onboarding(NSObject):
             self._feature("hand.raised", "Steps in gently",
                           "A pause, a question and a way back. It never locks you out."),
             self._feature("slider.horizontal.3", "Yours to shape",
-                          "Rules in plain words. Change them any time from the menu bar."),
+                          "Rules in plain words. Switch them on and off from the menu bar; change the wording "
+                          "with your AI agent."),
         ], spacing=16)
         col = _stack([icon,
                       _text("Welcome to Qualm", 28, 0.4),
@@ -266,12 +312,14 @@ class Onboarding(NSObject):
         self.card_local = self._card(card_w, "laptopcomputer", "On this Mac", "Private: nothing leaves your Mac", [
             ("bolt", "About 1 s per check"),
             ("memorychip", f"{localmodel.NEED_GB[0]:.0f}–{localmodel.NEED_GB[1]:.0f} GB of memory while running"),
-            ("arrow.down.circle", f"{localmodel.DOWNLOAD_GB:.0f} GB download, once"),
+            ("arrow.down.circle", f"About {DOWNLOAD_GB:.0f} GB download, once"),
+            ("checkmark.circle", "Free, no account needed"),
         ], "kev")
-        self.card_hosted = self._card(card_w, "cloud", "Hosted", "By TypeSafe, over the internet", [
+        self.card_hosted = self._card(card_w, "cloud", "Hosted", "By TypeSafe, about $1 a month", [
             ("bolt", "About 0.2 s per check"),
             ("memorychip", "Almost no memory"),
             ("paperplane", "Screen text is sent to TypeSafe"),
+            ("key", "Needs a TypeSafe account and key"),
         ], "jev")
         cards = _stack([self.card_local, self.card_hosted], vertical=False, spacing=16)
         cards.setAlignment_(NSLayoutAttributeTop)
@@ -295,7 +343,7 @@ class Onboarding(NSObject):
             get.setContentTintColor_(NSColor.linkColor())
             key_row = _stack([self.key, get], vertical=False, spacing=10)
         self.key_row = key_row
-        self.model_error = _text("", 12, 0.0, NSColor.systemRedColor(), width=TEXT_W)
+        self.model_error = _text("", 12, 0.0, NSColor.secondaryLabelColor(), width=TEXT_W)
         return self._page(1, "Where should the model run?",
                           "Each time the screen changes, Qualm asks a small language model what's on it. "
                           "You can switch later.", cards, note, key_row, self.model_error, spacing=16)
@@ -329,9 +377,10 @@ class Onboarding(NSObject):
         body.setCustomSpacing_afterView_(14, body.views()[2])
         _fill_box(card, body, inset=18)
         card.icon = icon
-        if backend == "kev" and not localmodel.apple_silicon():
+        if backend == "kev" and (why := localmodel.unsupported()):  # the note under the cards says why
             card.on_pick = lambda: None
             card.setAlphaValue_(0.45)
+            card.setToolTip_(why)
         return card
 
     @objc.python_method
@@ -348,10 +397,24 @@ class Onboarding(NSObject):
         box = _fill_box(_fixed(_box(radius=12, fill=NSColor.controlBackgroundColor(), border=NSColor.separatorColor()),
                                width=TEXT_W), _stack([row, self.perm_button], spacing=16), inset=18)
         self.perm_note = _text("Without it, Qualm sees only app names, and can't tell a lecture from a feed.",
-                               12, 0.0, NSColor.tertiaryLabelColor(), width=TEXT_W)
+                               12, 0.0, NSColor.secondaryLabelColor(), width=TEXT_W)
+        # Screen Recording: optional, and said plainly what it's for.
+        self.rec_icon = _symbol("rectangle.dashed.badge.record", 22, NSColor.secondaryLabelColor(), 0.2)
+        _fixed(self.rec_icon, 34, 34)
+        self.rec_title = _text("Screen Recording is off (optional)", 13, 0.3)
+        self.rec_ask = (f"In System Settings › Privacy & Security › {screen_pane()}, turn on {who}, then "
+                        "reopen Qualm if macOS asks.")
+        self.rec_detail = _text("", 12, 0.0, NSColor.secondaryLabelColor(), width=TEXT_W - 36 - 50)
+        rec_row = _stack([self.rec_icon, _stack([self.rec_title, self.rec_detail], spacing=3)], vertical=False,
+                         spacing=16)
+        rec_row.setAlignment_(NSLayoutAttributeTop)
+        self.rec_button = NSButton.buttonWithTitle_target_action_("Allow Screen Recording", self, "grantScreen:")
+        rec_box = _fill_box(_fixed(_box(radius=12, fill=NSColor.controlBackgroundColor(),
+                                        border=NSColor.separatorColor()), width=TEXT_W),
+                            _stack([rec_row, self.rec_button], spacing=12), inset=18)
         return self._page(2, "Let Qualm see the front window",
                           "Qualm reads the front window's title, address and a few headings through macOS "
-                          "Accessibility. It doesn't use screenshots to decide.", box, self.perm_note)
+                          "Accessibility.", box, self.perm_note, rec_box, spacing=16)
 
     @objc.python_method
     def _rules(self):
@@ -365,7 +428,7 @@ class Onboarding(NSObject):
                             _text(examples[:1].upper() + examples[1:], 11.5, 0.0, NSColor.secondaryLabelColor(),
                                   width=TEXT_W - 28 - 30 - 14 - 140)], spacing=1)
             tag = _text("Asks first" if x["kind"] != "steps in" else "Steps in", 11.5, 0.0,
-                        NSColor.tertiaryLabelColor())
+                        NSColor.secondaryLabelColor())
             switch = NSSwitch.alloc().init()
             switch.setState_(1 if x["on"] else 0)
             self.rule_switches.append((x["id"], switch))
@@ -386,7 +449,9 @@ class Onboarding(NSObject):
     def _ready(self):
         self.summary = _stack([], spacing=10)
         self.login = NSButton.checkboxWithTitle_target_action_("Open Qualm when I log in", None, None)
-        self.login.setState_(1)
+        # From a checkout it starts unticked, as `qualm setup` asks it: a login item there runs Python,
+        # which has no Accessibility of its own (the menu offers "Open at login" from Qualm.app only).
+        self.login.setState_(1 if paths.bundle() else 0)
         opts = [self.login]
         self.shim = None
         if paths.bundle():
@@ -398,7 +463,7 @@ class Onboarding(NSObject):
         self.status = _text("", 12, 0.0, NSColor.secondaryLabelColor(), width=TEXT_W)
         return self._page(4, "Ready when you are",
                           "Qualm lives in the menu bar: click its eye for focus sessions, pauses and your dashboard.",
-                          box, _stack(opts, spacing=8), self.status)
+                          box, _stack(opts, spacing=8), self.status, spacing=18)  # room for two lines of status
 
     @objc.python_method
     def _fill_summary(self):
@@ -408,7 +473,9 @@ class Onboarding(NSObject):
         lines = [
             ("laptopcomputer" if self.backend == "kev" else "cloud",
              "The model runs on this Mac" if self.backend == "kev" else "The model is hosted by TypeSafe",
-             f"The first start downloads about {localmodel.DOWNLOAD_GB:.0f} GB; the menu bar shows how it's going."
+             (f"The first start downloads about {need:.0f} GB; the menu bar shows how it's going."
+              if (need := localmodel.disk_needed_gb()) >= 0.5
+              else "It's on this Mac already: ready in about half a minute.")
              if self.backend == "kev" else "Each new screen's text goes to TypeSafe to be judged."),
             ("checklist", f"Watching for {len(on)} of {len(self.rule_switches)} things" if on else "Watching for nothing yet",
              ", ".join(on[:1] + [t[:1].lower() + t[1:] for t in on[1:]]) if on
@@ -485,7 +552,8 @@ class Onboarding(NSObject):
             self._fill_summary()
         if page == 1 and self.backend == "jev" and self.key is not None:
             self.window.makeFirstResponder_(self.key)
-        self._say("")
+        # Opened from the disk image: said before Start Qualm refuses (login and the command need a real copy).
+        self._say(MOVE_FIRST if page == len(self.pages) - 1 and autostart.temporary_bundle() else "")
 
     @objc.python_method
     def _choose(self, backend):
@@ -513,6 +581,15 @@ class Onboarding(NSObject):
                                          "› Accessibility, if you ever want it off." if ok else self.perm_ask)
         self.perm_button.setHidden_(ok)
         self.perm_note.setHidden_(ok)
+        rec = screen_recording()
+        self.rec_icon.setContentTintColor_(NSColor.systemGreenColor() if rec else NSColor.secondaryLabelColor())
+        self.rec_title.setStringValue_("Screen Recording is on" if rec else "Screen Recording is off (optional)")
+        self.rec_detail.setStringValue_(
+            "Qualm can read apps that draw their text as pixels, and keeps a small screenshot of each new screen "
+            f"for your review page. It's in System Settings › Privacy & Security › {screen_pane()}." if rec else
+            "Qualm reads a picture of windows that draw their text as pixels, and keeps a small screenshot of "
+            f"each new screen for your review page. {self.rec_ask}")
+        self.rec_button.setHidden_(rec)
 
     def tick_(self, timer):
         if self.page == 2:
@@ -524,6 +601,9 @@ class Onboarding(NSObject):
     def grant_(self, sender):
         s.ask_accessibility()
 
+    def grantScreen_(self, sender):
+        ask_screen_recording()
+
     def back_(self, sender):
         if self.page > 0 and self.next.isEnabled():
             self._go(self.page - 1)
@@ -532,7 +612,7 @@ class Onboarding(NSObject):
         if self.page == 1 and self.backend == "jev":
             key = self._key()
             if not key and not self.has_key:
-                self._say("The hosted model needs a TypeSafe API key.")
+                self._say("The hosted model needs a TypeSafe API key.", True)
                 return
             if key:
                 self._busy("Checking the key…")
@@ -541,8 +621,10 @@ class Onboarding(NSObject):
         if self.page < len(self.pages) - 1:
             self._go(self.page + 1)
             return
+        # The key only goes with the hosted model: it was checked on the model page then.
         choices = s.Choices(self.backend, [rid for rid, sw in self.rule_switches if sw.state()],
-                            bool(self.login.state()), self._key(), bool(self.shim.state()) if self.shim else False)
+                            bool(self.login.state()), self._key() if self.backend == "jev" else None,
+                            bool(self.shim.state()) if self.shim else False)
         self._busy("Setting up…")
         threading.Thread(target=self._apply, args=(choices,), daemon=True).start()
 
@@ -558,18 +640,21 @@ class Onboarding(NSObject):
         self._say(text)
 
     @objc.python_method
-    def _idle(self, text=""):
+    def _idle(self, text="", error=False):
         self.next.setEnabled_(True)
         self.back.setEnabled_(True)
         self.spinner.stopAnimation_(None)
-        self._say(text)
+        self._say(text, error)
 
     @objc.python_method
-    def _say(self, text):
+    def _say(self, text, error=False):
         """A line of status or error under the page: the key on the model page, setting up on the last."""
         self.model_error.setStringValue_(text if self.page == 1 else "")
         self.model_error.setHidden_(not (text and self.page == 1))
         self.status.setStringValue_(text if self.page == len(self.pages) - 1 else "")
+        self.status.setHidden_(not (text and self.page == len(self.pages) - 1))
+        for label in (self.model_error, self.status):
+            label.setTextColor_(NSColor.systemRedColor() if error else NSColor.secondaryLabelColor())
 
     @objc.python_method
     def _check_key(self, key):
@@ -579,7 +664,7 @@ class Onboarding(NSObject):
     @objc.python_method
     def _key_checked(self, err):
         if err:
-            self._idle("That key didn't work. Check it and try again.")
+            self._idle(key_trouble(err), True)
             return
         self._idle()
         self._go(self.page + 1)
@@ -589,7 +674,8 @@ class Onboarding(NSObject):
         try:
             s.apply(choices)
         except Exception as e:
-            AppHelper.callAfter(self._idle, f"Couldn't finish: {e}"[:200])
+            text = MOVE_FIRST if str(e) == autostart.MOVE_FIRST else f"Couldn't finish: {e}"
+            AppHelper.callAfter(self._idle, text, True)
             return
         AppHelper.callAfter(self._finish)
 

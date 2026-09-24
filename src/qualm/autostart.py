@@ -28,18 +28,39 @@ from . import keychain, localmodel, paths
 AGENTS = Path.home() / "Library" / "LaunchAgents"
 APP_LABEL = "com.qualm.app"
 OLD_LABELS = ("com.qualm.kev",)  # the model server's own agent, before the app started it
+MOVE_FIRST = ("Qualm is running from its disk image (or from a temporary copy macOS made of it): move Qualm to "
+              "Applications first and open it from there, so starting at login and the `qualm` command keep working.")
+
+
+def temporary_bundle() -> bool:
+    """Qualm.app opened straight from the DMG, or from a download macOS runs
+    from a random read-only folder (App Translocation): gone after an eject
+    or a restart, so a login item or `qualm` command there would break."""
+    b = paths.bundle()
+    return bool(b) and ("/AppTranslocation/" in str(b) or (str(b).startswith("/Volumes/") and not os.access(b, os.W_OK)))
 
 
 def serve(kev_dir: Path | None = None, model: str = localmodel.MODEL, port: int = localmodel.PORT,
           bits: int = localmodel.BITS) -> None:
-    """Run the model server in the foreground (Ctrl-C stops it)."""
+    """Run the model server in the foreground (Ctrl-C stops it); never a second one."""
+    # Before anything installs or loads: a second model would take another 4.5 GB, only to find the port taken.
+    if localmodel.starting():
+        sys.exit("A model server is already running or getting ready for this Qualm folder (the app starts its own; "
+                 "its menu bar item shows how far): nothing to do.")
+    there = localmodel.probe(port, timeout=3) if localmodel.listening(port) else "none"
+    if there == "model":
+        sys.exit(f"A model server already answers at http://127.0.0.1:{port} (the app's, or another `qualm serve`): "
+                 "nothing to do.")
+    if there == "other":
+        sys.exit(f"Port {port} is used by another app. Quit it, or run this on a free port (`--port {port + 1}`) and "
+                 f"point Qualm at it: KEV_URL=http://127.0.0.1:{port + 1}.")
     if kev_dir is None and not localmodel.runtime_ready():
         localmodel.install_runtime()
     argv, env, cwd = localmodel.server_command(model, port, bits, kev_dir)
-    first = not any(paths.models_dir().glob(f"*q{bits}g*/model.safetensors"))
+    first = bits != 16 and not (localmodel.saved_copy(bits) / "model.safetensors").exists()
     print(f"Kev server: {model}, {'bf16' if bits == 16 else f'{bits}-bit'}, http://127.0.0.1:{port}"
-          + (f" (first start: downloads ~{localmodel.DOWNLOAD_GB:.0f} GB; a few minutes)"
-             if first and bits != 16 else ""), flush=True)
+          + (f" (first start: downloads about {localmodel.DOWNLOAD_GB:.0f} GB, picked up where it stopped if cut off)"
+             if first else ""), flush=True)
     os.chdir(cwd)
     inherited = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}  # Qualm's venv, not Kev's
     os.execvpe(argv[0], argv, {**inherited, **env})
@@ -62,7 +83,9 @@ def _plist(args: list[str], cwd: Path) -> dict:
         "ProgramArguments": args,
         "WorkingDirectory": str(cwd),
         "EnvironmentVariables": {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin:" + str(Path(args[0]).parent),
-                                 "PYTHONUNBUFFERED": "1"},
+                                 "PYTHONUNBUFFERED": "1",
+                                 # Asked for from a QUALM_HOME: the app it starts uses that folder too.
+                                 **({"QUALM_HOME": str(paths.home())} if paths.custom_home() else {})},
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},  # restart after a crash, not after Quit
         "ProcessType": "Interactive",
@@ -79,10 +102,40 @@ def installed() -> bool:
     return (AGENTS / f"{APP_LABEL}.plist").exists()
 
 
+def login_home() -> Path | None:
+    """The Qualm folder the login item starts the app on; None without one."""
+    path = AGENTS / f"{APP_LABEL}.plist"
+    if not path.exists():
+        return None
+    try:
+        env = plistlib.loads(path.read_bytes()).get("EnvironmentVariables", {})
+    except Exception:
+        env = {}
+    return Path(env["QUALM_HOME"]).expanduser() if env.get("QUALM_HOME") else paths.default_home()
+
+
+def up_to_date() -> bool:
+    """The login item already starts this copy, just as install() would write it."""
+    try:
+        return plistlib.loads((AGENTS / f"{APP_LABEL}.plist").read_bytes()) == _plist(*app_command())
+    except (Exception, SystemExit):  # none yet, unreadable, or no way to start this copy
+        return False
+
+
+def login_is_ours() -> bool:
+    """The login item is this folder's: always for the main install, for a QUALM_HOME only if it was asked for there."""
+    where = login_home()
+    return where is not None and (not paths.custom_home() or where.resolve() == paths.home().resolve())
+
+
 def install(quiet: bool = False) -> None:
     if paths.legacy():
-        sys.exit("Your rules and data are still in this folder: `qualm setup` copies them to "
+        from .agent import command
+
+        sys.exit(f"Your rules and data are still in this folder: `{command()} setup` copies them to "
                  f"{paths.home()} first, where the app started at login looks.")
+    if temporary_bundle():
+        raise RuntimeError(MOVE_FIRST)
     argv, cwd = app_command()
     AGENTS.mkdir(parents=True, exist_ok=True)
     paths.LOGS.mkdir(parents=True, exist_ok=True)
@@ -140,18 +193,21 @@ def _size(path: Path) -> int:
 
 
 def everything() -> list[tuple[str, Path | None]]:
-    """What `uninstall --all` removes: (what, where), where there's a path."""
+    """What `uninstall --all` removes: (what, where), where there's a path.
+    For a QUALM_HOME, only that folder (and a login item asked for there):
+    the rest belongs to the main install."""
     items: list[tuple[str, Path | None]] = []
+    custom = paths.custom_home()
     for label in (APP_LABEL, *OLD_LABELS):
-        if (p := AGENTS / f"{label}.plist").exists():
+        if (p := AGENTS / f"{label}.plist").exists() and (not custom or (label == APP_LABEL and login_is_ours())):
             items.append(("the login item", p))
-    if keychain.stored() is not None:
+    if not custom and keychain.stored() is not None:
         items.append(("the TypeSafe API key in your keychain", None))
-    if _ours(SHIM):
+    if not custom and _ours(SHIM):
         items.append(("the `qualm` command", SHIM))
     if paths.home().exists():
         items.append(("your rules and data, the local model's runtime and its 8-bit weights", paths.home()))
-    if paths.LOGS.exists():
+    if not custom and paths.LOGS.exists():
         items.append(("the logs", paths.LOGS))
     return items
 
@@ -187,11 +243,24 @@ def uninstall_all() -> list[str]:
     return done
 
 
+def on_path(folder: Path) -> bool:
+    """`folder` is on this shell's PATH (a stock macOS shell has no ~/.local/bin)."""
+    return any(Path(p).expanduser() == folder for p in os.environ.get("PATH", "").split(os.pathsep) if p)
+
+
+def path_line(folder: Path) -> str:
+    """The line that puts `folder` on PATH in new terminals, for the user's shell."""
+    rc = "~/.bash_profile" if os.environ.get("SHELL", "").endswith("bash") else "~/.zprofile"
+    return f"echo 'export PATH=\"{str(folder).replace(str(Path.home()), '$HOME', 1)}:$PATH\"' >> {rc}"
+
+
 def cli_shim() -> Path | None:
     """From Qualm.app: a `qualm` command in ~/.local/bin that runs the app's copy."""
     b = paths.bundle()
     if not b:
         return None
+    if temporary_bundle():
+        raise RuntimeError(MOVE_FIRST)
     target = SHIM
     if target.exists() and not _ours(target):
         return None  # someone else's qualm (a uv tool install): leave it

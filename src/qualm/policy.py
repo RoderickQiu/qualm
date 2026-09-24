@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -24,8 +25,9 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 
-from .decide import Reading
-from .rules import Rule, Settings
+from . import jsonl
+from .decide import Reading, backend
+from .rules import AllowClass, Rule, Settings, app_listed, question_key, site_pattern
 
 LEARN_MIN = 0.6  # P(purpose = learn) needed for the learning exemption
 # P(purpose = entertain) a feed needs before feed_hit fires. Every trial feed
@@ -65,14 +67,46 @@ def host_of(url: str) -> str:
     return m.group(1).lower().removeprefix("www.") if m else ""
 
 
+def _site(site: str) -> tuple[str, str]:
+    """ "https://www.Music.YouTube.com/watch" -> ("music.youtube.com", "watch")."""
+    host, _, path = re.sub(r"^[a-z]+://", "", site.strip(), flags=re.I).partition("/")
+    return host.lower().removeprefix("www."), path.strip("/")
+
+
+def claims(rule: Rule, c: AllowClass, bundle_id: str, url: str, app: str = "") -> bool:
+    """Whether `rule` steps in on allow class `c`'s own sites and apps, which
+    the class lets through before any other rule: it lists the class in
+    overrides_allow, or names that very place: the app, or a site as narrow
+    as the class's or narrower. A rule on youtube.com leaves the music
+    class's music.youtube.com alone; one naming music.youtube.com, or
+    Spotify, steps in there."""
+    if c.id in rule.overrides_allow:
+        return True
+    if app_listed(c.apps, bundle_id, app) and rule.matches_app(bundle_id, app):
+        return True
+    for mine in rule.sites:
+        if not url or not re.search(site_pattern(mine), url):
+            continue
+        host, path = _site(mine)
+        for theirs in c.sites:
+            h, p = _site(theirs)
+            narrower = host.endswith("." + h) or host == h and (not p or f"{path}/".startswith(f"{p}/"))
+            if narrower and re.search(site_pattern(theirs), url):
+                return True
+    return False
+
+
 def gate(rule: Rule, p: float, state: dict, reading: Reading, settings: Settings,
-         intentional: bool = False) -> tuple[str, str] | None:
+         intentional: bool = False, bundle_id: str = "") -> tuple[str, str] | None:
     """One rule on one reading, before anything you said at runtime (snoozes,
     "Not this one", check-ins): None (no hit), ("hit", why), or ("allow" |
     "skip", why) for a hit an exemption covers. Shared by the live policy and
-    `rules test`, so a test shows what the rule would really do."""
-    url = state.get("url", "")
-    pattern = rule.matches_url(url)
+    `rules test`, so a test shows what the rule would really do. The rule's
+    own sites, patterns and apps count the same way: always a hit, but on an
+    allow class's own sites and apps only if it names that place (claims)."""
+    url, app = state.get("url", ""), state.get("app", "")
+    site = rule.matches_url(url)
+    pattern = site or rule.matches_app(bundle_id, app)
     feed = rule.feed_hit and reading.page_kind == "feed" and reading.purpose_probs.get("entertain", 0) >= ENTERTAIN_MIN
     if not (pattern or feed or p >= rule.threshold):
         return None
@@ -84,24 +118,78 @@ def gate(rule: Rule, p: float, state: dict, reading: Reading, settings: Settings
     # leaves the model guessing; only a URL pattern may fire then.
     if not pattern and not url and not state.get("headings") and not state.get("visible_text"):
         return "skip", f"too little on screen to judge (p_hit {p:.2f})"
-    # A kind of page you said is never flagged ([[allow]]: shopping, ...).
-    allowed_as = next((c.id for c in settings.allow if c.enabled and reading.allow.get(c.id, 0) >= c.threshold), None)
-    if allowed_as and not pattern:
+    # A kind of page you said is never flagged ([[allow]]: shopping, ...),
+    # unless this rule is about that kind of page too (overrides_allow): by
+    # the model's say, where the rule's own sites and apps still hit, and on
+    # the class's own sites and apps, where only a rule naming that very
+    # place does (claims: youtube.com leaves music.youtube.com to the class).
+    allowed_as = next((c.id for c in settings.allow if c.enabled and c.id not in rule.overrides_allow and (
+        reading.allow.get(c.id, 0) >= c.threshold and not pattern
+        or c.matches(bundle_id, url, app) and not claims(rule, c, bundle_id, url, app))), None)
+    if allowed_as:
         return "allow", f"{allowed_as} is never flagged"
     # The model's best guess is a work tool (editor, terminal, docs): leave
     # it alone. Code and notes are full of words any rule can match.
     if reading.page_kind == "work" and not pattern:
         return "allow", "work tool"
+    # Search results: searching is the intentional act, and the page opened
+    # from them is where a rule looks (docs/POLICY.md). A deny rule that
+    # judges the page itself (target = "page": a store's results are the
+    # store) still does, and a rule's own sites always do.
+    if reading.page_kind == "search" and not pattern and (rule.kind == "check_in" or rule.target == "content"):
+        return "allow", "search results"
     if rule.allow_learning and reading.page_kind != "feed" and reading.purpose_probs.get("learn", 0) >= LEARN_MIN:
         return "allow", "learning material"
-    if rule.allow_intentional and intentional:
+    # One item you opened on purpose is fine, but never on the rule's own
+    # sites: a Short opened from a link is still a Short.
+    if rule.allow_intentional and intentional and not pattern:
         return "allow", "opened on purpose"
-    return "hit", ("matches URL pattern" if pattern else f"p_hit {p:.2f} >= {rule.threshold:.2f}"
-                   if p >= rule.threshold else "an entertainment feed")
+    return "hit", ("matches URL pattern" if site else "the app is on this rule's list" if pattern
+                   else f"p_hit {p:.2f} >= {rule.threshold:.2f}" if p >= rule.threshold else "an entertainment feed")
+
+
+def fine_entry(rule_id: str, url: str, title: str, bundle_id: str = "", p_hit: float | None = None) -> dict:
+    """What "Not this one" writes to exceptions.jsonl: see Policy.mark_fine."""
+    e = {"rule": rule_id, "url": url, "title": title, "at": datetime.now().isoformat(timespec="seconds")}
+    if not url:
+        e |= {"app": bundle_id, "p_hit": round(p_hit if p_hit is not None else 1 - FINE_MARGIN, 4)}
+    return e
+
+
+def removes(r: dict, e: dict) -> bool:
+    """Whether a removal record in exceptions.jsonl (`except remove`, the
+    review page) takes away exception `e`: the page with its address, the
+    exception in its words, or the app window with its title in its app. A
+    title alone (as older records have it) takes away that title saved as
+    words, and app windows with that title in any app. Titles repeat across
+    pages ("Instagram"), so a record with an address takes away only that
+    address. Policy._add_exception does the same."""
+    if r.get("rule") != e.get("rule") or e.get("removed"):
+        return False
+    if r.get("url"):
+        return e.get("url") == r["url"]
+    if r.get("text"):
+        return e.get("text") == r["text"]
+    if not r.get("title") or e.get("title") != r["title"] or e.get("url") or e.get("text"):
+        return False
+    return not r.get("app") or e.get("app") == r["app"] and e.get("p_hit") is not None
+
+
+def _moment(v) -> bool:
+    """A wall time a clock can show: a millisecond timestamp (year 58,000, as agents have written) isn't one."""
+    if not isinstance(v, (int, float)):
+        return False
+    try:
+        datetime.fromtimestamp(v)
+        return True
+    except (OverflowError, ValueError, OSError):
+        return False
 
 
 def read_session(data_dir: Path) -> dict:
-    """{"paused_until": wall time, "focus": {"intent", "started", "until"} or None}, expired entries dropped."""
+    """{"paused_until": wall time, "pause_later": {"from", "until"} or None, "focus": {"intent", "started",
+    "until"} or None}, expired entries dropped. `pause_later` is a pause planned to start later (`qualm pause
+    --from`): once it has begun, it's the pause running now."""
     path = Path(data_dir) / SESSION_FILE
     try:
         s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -111,21 +199,40 @@ def read_session(data_dir: Path) -> dict:
         s = {}
     now = time.time()
     paused = s.get("paused_until")
-    focus = s.get("focus")
-    # Written by hand or by an agent too: anything malformed counts as not set.
+    paused = float(paused) if _moment(paused) and paused > now else 0.0
+    later, focus = s.get("pause_later"), s.get("focus")
+    # Written by hand or by an agent too: anything malformed counts as not set (and the next write drops it).
+    ok_later = (isinstance(later, dict) and all(_moment(later.get(k)) for k in ("from", "until"))
+                and later["from"] < later["until"] > now)
+    if ok_later and later["from"] <= now:
+        paused, ok_later = max(paused, float(later["until"])), False
     ok_focus = (isinstance(focus, dict) and isinstance(focus.get("intent"), str)
-                and all(isinstance(focus.get(k), (int, float)) for k in ("started", "until")))
-    return {"paused_until": float(paused) if isinstance(paused, (int, float)) and paused > now else 0.0,
+                and all(_moment(focus.get(k)) for k in ("started", "until")))
+    return {"paused_until": paused,
+            "pause_later": {"from": float(later["from"]), "until": float(later["until"])} if ok_later else None,
             "focus": focus if ok_focus and focus["until"] > now else None}
+
+
+def clock(t: float, now: float | None = None) -> str:
+    """When a pause or session ends, as the menu, the CLI and the dashboard say
+    it: "22:34" today, "Mon 09:00" in the next six days, "Oct 5 09:00" after."""
+    d = datetime.fromtimestamp(t)
+    days = (d.date() - datetime.fromtimestamp(time.time() if now is None else now).date()).days
+    return f"{d:%H:%M}" if days == 0 else f"{d:%a %H:%M}" if 0 < days < 7 else f"{d:%b} {d.day} {d:%H:%M}"
 
 
 _SESSION_LOCK = threading.Lock()  # the menu, the dashboard and the watcher share the file
 
 
 def write_session(data_dir: Path, **changes) -> dict:
+    import fcntl
+
     path = Path(data_dir) / SESSION_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    with _SESSION_LOCK:
+    # The CLI and agents write it too, from other processes: a file lock, so
+    # two changes at once don't lose one.
+    with _SESSION_LOCK, open(path.parent / ".session.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
         s = read_session(data_dir) | changes
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".session-", suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -137,7 +244,9 @@ def write_session(data_dir: Path, **changes) -> dict:
 def start_focus(data_dir: Path, intent: str, minutes: float) -> dict:
     """A focus session: what you're here to do, until when. While it runs,
     every rule hit steps in at once (check-ins don't apply) and the pop-up
-    reminds you what you said: SeeNot's session intents, on the desktop."""
+    reminds you what you said: SeeNot's session intents, on the desktop.
+    It ends a pause: asking to be kept on task means now. A pause planned
+    for later stays."""
     intent = " ".join(intent.split())
     if not intent:
         raise ValueError("say what you're focusing on, in a few words")
@@ -147,7 +256,7 @@ def start_focus(data_dir: Path, intent: str, minutes: float) -> dict:
     now = time.time()
     focus = {"intent": intent[:120], "started": now, "until": now + minutes * 60}
     _log_line(data_dir, {"type": "focus", "intent": focus["intent"], "minutes": minutes})
-    write_session(data_dir, focus=focus)
+    write_session(data_dir, focus=focus, paused_until=0.0)
     return focus
 
 
@@ -160,18 +269,29 @@ def end_focus(data_dir: Path) -> dict | None:
     return focus
 
 
-def pause_for(data_dir: Path, minutes: float) -> float:
-    """Pause every rule for `minutes` (0: resume). Returns when it ends (0.0 if not paused)."""
+def pause_for(data_dir: Path, minutes: float, start: float | None = None) -> float:
+    """Pause every rule for `minutes` (0: resume), from now or from `start`
+    (a wall time: a weekend, planned on a Thursday). A planned pause is kept
+    beside the one running now, and one planned later replaces it. Returns
+    when it ends (0.0 if not paused)."""
+    if start is not None and start > time.time():
+        write_session(data_dir, pause_later={"from": start, "until": start + minutes * 60})
+        return start + minutes * 60
     until = time.time() + minutes * 60 if minutes > 0 else 0.0
     write_session(data_dir, paused_until=until)
     return until
+
+
+def cancel_pauses(data_dir: Path) -> None:
+    """No pause now and none planned: `qualm pause --stop`."""
+    write_session(data_dir, paused_until=0.0, pause_later=None)
 
 
 def _log_line(data_dir: Path, event: dict) -> None:
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     event = {"at": datetime.now().isoformat(timespec="seconds"), **event}
-    with (data_dir / "decisions.jsonl").open("a", encoding="utf-8") as f:
+    with jsonl.appending(data_dir / "decisions.jsonl") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
@@ -182,6 +302,9 @@ class Decision:
     reason: str = ""
     id: str = ""  # set on interventions, to join the user's response in the log
     panel: str = ""  # interventions: "" (step in), "check_in" or "times_up"
+    # Interventions: on one of the rule's own sites, patterns or apps, where
+    # the pop-up's quiet links wait with "I need it".
+    own: bool = False
 
 
 @dataclass
@@ -213,10 +336,14 @@ class Usage:
     def __init__(self, path: Path):
         self.path = path
         self.day, self.counts = date.today().isoformat(), {}
-        if path.exists():
-            saved = json.loads(path.read_text(encoding="utf-8"))
-            if saved.get("day") == self.day:
-                self.counts = saved["counts"]
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except ValueError:  # cut short (older versions wrote it in place): today's counts start again
+            print(f"skipped {path}: it isn't whole JSON (cut short by a crash?); today's check-in minutes start from 0",
+                  file=sys.stderr)
+            saved = {}
+        if isinstance(saved, dict) and saved.get("day") == self.day:
+            self.counts = saved.get("counts", {})
 
     def _rule(self, rule_id: str) -> dict:
         today = date.today().isoformat()
@@ -257,6 +384,7 @@ class Policy:
         self._back_times: dict[str, list[float]] = {}  # rule -> when "Take me back" / "Done" was answered
         self._snoozes: dict[str, tuple[float, float, str]] = {}  # rule id -> (ends at, minutes, what for)
         self.paused_until = 0.0
+        self.pause_later: dict | None = None  # {"from", "until"}: a pause planned to start later
         self.focus: dict | None = None  # {"intent", "started", "until"}: see start_focus()
         self.reload_session()
         self.counting: set[str] = set()  # check-in rules whose session the current screen is in
@@ -270,23 +398,31 @@ class Policy:
         self._allowed: dict[str, set[str]] = {}  # rule id -> URLs marked "Not this one"
         self._titles: dict[str, list[str]] = {}
         self._bars: dict[tuple[str, str, str], float] = {}  # (rule, bundle id, title) -> "Not this one" below this score
-        self._never_apps: dict[str, str] = {}  # bundle id -> app name: "Never in WhatsApp"
+        self._never_apps: dict[str, str] = {}  # bundle id (or app name) -> app name: "Never in WhatsApp"
         self._never_hosts: set[str] = set()  # "Never on example.com"
         self._load_exceptions()
+        # "It's part of the task" in a focus session: focus start -> {(rule, page)} let through until it ends
+        self._task_fine: dict[float, set[tuple[str, str]]] = {}
         self._last_tick: float | None = None
         self._last_save = 0.0
         # The screen before this one, for "opened on purpose".
         self._cur = {"key": None, "page_kind": "other", "purpose": "", "app": "", "intentional": False}
+        self._arrivals: OrderedDict[str, bool] = OrderedDict()  # recent screens -> opened on purpose
+        self._apps_seen: set[str] = set()
 
     # -- rules, with what the user taught ------------------------------------
 
     @property
     def rules(self) -> list[Rule]:
         """The rules on right now (enabled, inside their `when`), with what you taught them."""
-        return [
-            replace(r, exceptions=r.exceptions + tuple(self._titles.get(r.id, [])[-MAX_EXCEPTIONS:]))
-            for r in self.active_rules()
-        ]
+        return [self.taught(r) for r in self.active_rules()]
+
+    def taught(self, rule: Rule) -> Rule:
+        """The rule as the model reads it: with the exceptions you typed on
+        the review page (and titles saved as words before "Not this one"
+        stopped doing that). `rules test` asks this, so it measures the live
+        question."""
+        return replace(rule, exceptions=rule.exceptions + tuple(self._titles.get(rule.id, [])[-MAX_EXCEPTIONS:]))
 
     def active_rules(self) -> list[Rule]:
         now = datetime.now()
@@ -296,12 +432,8 @@ class Policy:
         return next(r for r in self._base_rules if r.id == rule_id)
 
     def _load_exceptions(self) -> None:
-        path = self.data_dir / "exceptions.jsonl"
-        if not path.exists():
-            return
-        for line in path.open(encoding="utf-8"):
-            if line.strip():
-                self._add_exception(json.loads(line))
+        for e in jsonl.lines(self.data_dir / "exceptions.jsonl"):
+            self._add_exception(e)
 
     def _add_exception(self, e: dict) -> None:
         if e.get("never"):
@@ -316,13 +448,24 @@ class Policy:
             return
         titles = self._titles.setdefault(e["rule"], [])
         bar = e.get("app") is not None and e.get("p_hit") is not None and not e.get("url")
-        said = [f'the page "{e["title"]}"'] if e.get("title") and not bar else []
+        # A page with an address is let through by its address alone. Its title
+        # as words for the model raised other pages' scores: a Reddit thread and
+        # an X post marked fine took YouTube's home page from 0.20 to 0.34 on
+        # social, over its threshold. Only typed exceptions are read, and
+        # titles saved without an address before score bars existed.
+        said = [f'the page "{e["title"]}"'] if e.get("title") and not bar and not e.get("url") else []
         said += [e["text"]] if e.get("text") else []  # typed on the review page or `except add`
-        if e.get("removed"):  # `except remove`
-            self._allowed.get(e["rule"], set()).discard(e.get("url"))
-            titles[:] = [t for t in titles if t not in said and t != f'the page "{e.get("title")}"']
-            for k in [k for k in self._bars if k[0] == e["rule"] and k[2] == e.get("title")]:
-                del self._bars[k]
+        if e.get("removed"):  # `except remove`: the one exception it names (see removes())
+            if e.get("url"):
+                self._allowed.get(e["rule"], set()).discard(e["url"])
+            elif e.get("text"):
+                titles[:] = [t for t in titles if t != e["text"]]
+            elif e.get("title"):
+                if not e.get("app"):
+                    titles[:] = [t for t in titles if t != f'the page "{e["title"]}"']
+                for k in [k for k in self._bars if k[0] == e["rule"] and k[2] == e["title"]
+                          and (not e.get("app") or k[1] == e["app"])]:
+                    del self._bars[k]
             return
         if bar:
             k = (e["rule"], e["app"], e.get("title", ""))
@@ -334,22 +477,12 @@ class Policy:
 
     # -- decisions -----------------------------------------------------------
 
-    def precheck(self, bundle_id: str, url: str, title: str = "") -> Decision | None:
-        """Decisions that need no model call. None means: ask the model."""
+    def precheck(self, bundle_id: str, url: str, title: str = "", app: str = "") -> Decision | None:
+        """Decisions that need no model call. None means: ask the model.
+        `app` is the app's name: app lists match it as well as the bundle id."""
         with self.lock:
-            if time.time() < self.paused_until:
-                d = Decision("skip", reason="paused")
-            elif bundle_id in self.settings.no_monitor:
-                d = Decision("skip", reason="app not monitored")
-            elif url.startswith(OWN_URLS) or title.startswith(OWN_TITLES):
-                d = Decision("skip", reason="Qualm's own page")
-            elif self.settings.allowed_url(url):
-                d = Decision("allow", reason="allowed URL")
-            elif bundle_id in self._never_apps or host_of(url) in self._never_hosts:
-                d = Decision("allow", reason="you said never here")
-            elif (c := next((c for c in self.settings.allow if c.enabled and c.matches(bundle_id, url)), None)) is not None:
-                d = Decision("allow", reason=f"{c.id} is never flagged")
-            else:
+            d = Decision("skip", reason="paused") if self.paused() else self.known_place(bundle_id, url, title, app)
+            if d is None:
                 return None
             self.counting = set()
             if url and d.action == "allow":
@@ -359,16 +492,60 @@ class Policy:
             self._arrive(url or bundle_id, kind, "task", bundle_id)
             return d
 
+    def known_place(self, bundle_id: str, url: str, title: str = "", app: str = "",
+                    rules: list[Rule] | None = None) -> Decision | None:
+        """What precheck decides from the app and address alone, pause aside.
+        An allow class's own sites and apps are let through here unless a
+        rule on (`rules`: the active ones) steps in there (claims: it names
+        that very site or app, or overrides the class): gate() judges those."""
+        if self.settings.never_read(bundle_id, app):
+            return Decision("skip", reason="app not monitored")
+        if url.startswith(OWN_URLS) or title.startswith(OWN_TITLES):
+            return Decision("skip", reason="Qualm's own page")
+        if self.settings.allowed_url(url):
+            return Decision("allow", reason="allowed URL")
+        if app_listed(self._never_apps, bundle_id, app) or host_of(url) in self._never_hosts:
+            return Decision("allow", reason="you said never here")
+        if (c := next((c for c in self.settings.allow if c.enabled and c.matches(bundle_id, url, app)), None)) is not None:
+            rules = self.active_rules() if rules is None else rules
+            if not any(claims(r, c, bundle_id, url, app) for r in rules):
+                return Decision("allow", reason=f"{c.id} is never flagged")
+        return None
+
+    def marked_fine(self, rule_id: str, url: str, bundle_id: str, title: str, p_hit: float | None) -> str:
+        """Why "Not this one" lets this page or window through for this rule; "" if it doesn't."""
+        if url and url in self._allowed.get(rule_id, ()):
+            return "you marked this page fine"
+        # No score: a rule's own app, which steps in without asking the model. A bar lets it through.
+        if not url and (p_hit or 0.0) < self._bars.get((rule_id, bundle_id, title), 0.0):
+            return "you marked this window fine"
+        return ""
+
     def _arrive(self, key: str, page_kind: str, purpose: str, app: str) -> None:
         cur = self._cur
         if key != cur["key"]:
             cur["from"] = {k: cur[k] for k in ("key", "page_kind", "purpose", "app")} if cur["key"] else None
-            # One item opened straight from search, a work tool, or a link in
-            # another app (chat, mail) is on purpose. From a feed or from
-            # another item it is drift.
-            from_intent = cur["page_kind"] in ("search", "work") or (cur["purpose"] == "task" and cur["app"] != app)
-            cur["intentional"] = page_kind == "single_item" and from_intent
+            if key in self._arrivals:
+                # Back to a page that was already open (Cmd-Tab from the editor,
+                # another tab, Back): on purpose only if it was when it opened.
+                on_purpose = self._arrivals[key]
+            elif cur["app"] == app:
+                # One item opened straight from search or a work tool is on
+                # purpose. From a feed or from another item it is drift.
+                on_purpose = cur["page_kind"] in ("search", "work")
+            else:
+                # A link followed in another app (chat, mail, an editor) opens
+                # a new page in this one; switching apps doesn't. A screen with
+                # no address, or an app not seen before, can't show it's new.
+                on_purpose = (key.startswith(("http://", "https://")) and app in self._apps_seen
+                              and (cur["page_kind"] in ("search", "work") or cur["purpose"] == "task"))
+            cur["intentional"] = page_kind == "single_item" and on_purpose
+            self._arrivals[key] = cur["intentional"]
+            self._arrivals.move_to_end(key)
+            while len(self._arrivals) > 500:
+                self._arrivals.popitem(last=False)
         cur.update(key=key, page_kind=page_kind, purpose=purpose, app=app)
+        self._apps_seen.add(app)
 
     def decide(self, state: dict, reading: Reading, bundle_id: str = "") -> list[Decision]:
         with self.lock:
@@ -380,27 +557,33 @@ class Policy:
                 return [Decision("skip", reason="sensitive page")]
             self._arrive(key, reading.page_kind, reading.purpose, bundle_id)
             out, counted, now, check_ins = [], set(), time.time(), []
+            focus = self.focusing()
+            for_task = self._task_fine.get(focus["started"], set()) if focus else set()
+            page = url or f"{bundle_id}|{state.get('window_title', '')}"
             for rule in self.active_rules():
                 v = reading.verdict(rule.id)
-                g = gate(rule, v.p_hit if v else 0.0, state, reading, self.settings, self._cur["intentional"])
+                g = gate(rule, v.p_hit if v else 0.0, state, reading, self.settings, self._cur["intentional"], bundle_id)
                 if g is None:
                     continue
                 action, why = g
                 if action != "hit":
                     out.append(Decision(action, rule.id, why))
-                elif url and url in self._allowed.get(rule.id, ()):
-                    out.append(Decision("allow", rule.id, "you marked this page fine"))
-                elif (not url and v is not None
-                      and v.p_hit < self._bars.get((rule.id, bundle_id, state.get("window_title", "")), 0.0)):
-                    out.append(Decision("allow", rule.id, "you marked this window fine"))
+                elif fine := self.marked_fine(rule.id, url, bundle_id, state.get("window_title", ""), v.p_hit if v else None):
+                    out.append(Decision("allow", rule.id, fine))
+                elif (rule.id, page) in for_task:
+                    out.append(Decision("allow", rule.id, "you said it's part of the task"))
                 elif self.snoozed.get(rule.id, 0) > now:
                     until = datetime.fromtimestamp(self.snoozed[rule.id]).strftime("%H:%M")
                     out.append(Decision("allow", rule.id, f"snoozed until {until}"))
-                elif rule.kind == "deny" or self.focusing():
+                elif rule.kind == "deny" or focus:
                     out.append(Decision("intervene", rule.id, why, uuid.uuid4().hex[:12]))
                 else:
                     check_ins.append((rule, why))
             out += self._check_in(check_ins, counted, now)
+            for d in out:
+                if d.action == "intervene":
+                    r = self.rule(d.rule)
+                    d.own = r.matches_url(url) or r.matches_app(bundle_id, state.get("app", ""))
             self.counting = counted
             if url:
                 self._remember(url, not any(d.action == "intervene" or d.reason.startswith(("your ", "snoozed")) for d in out))
@@ -559,14 +742,9 @@ class Policy:
 
     def _restore_sessions(self) -> None:
         """Today's sessions from the log, so a restart keeps a running one and the wait."""
-        path = self.data_dir / "decisions.jsonl"
-        if not path.exists():
-            return
         today = date.today().isoformat()
-        for line in path.open(encoding="utf-8"):
-            if not line.startswith('{"at": "' + today) or '"session"' not in line:
-                continue
-            e = json.loads(line)
+        for e in jsonl.lines(self.data_dir / "decisions.jsonl",
+                             lambda line: line.startswith('{"at": "' + today) and '"session"' in line):
             if e.get("type") != "session":
                 continue
             at = datetime.fromisoformat(e["at"]).timestamp()
@@ -590,25 +768,41 @@ class Policy:
         self.log_response(decision_id, "snooze", rule_id, reason=reason, minutes=minutes)
 
     def mark_fine(self, rule_id: str, url: str, title: str, decision_id: str = "",
-                  bundle_id: str = "", p_hit: float | None = None) -> int:
-        """"Not this one". A page with an address: that address is let through,
-        and the model reads its title as fine. An app window with none: this
-        window is let through below the score it had (FINE_MARGIN). Returns how
-        many times you've said it here, this one included."""
-        e = {"rule": rule_id, "url": url, "title": title, "at": datetime.now().isoformat(timespec="seconds")}
-        if not url and bundle_id and p_hit is not None:
-            e |= {"app": bundle_id, "p_hit": round(p_hit, 4)}
+                  bundle_id: str = "", p_hit: float | None = None, until_focus_ends: bool = True,
+                  focus: dict | None = None) -> int:
+        """"Not this one". A page with an address: that address is let through.
+        An app window with none: this window is let through below the score it
+        had (FINE_MARGIN), or at any score if it had none. Nothing is added to
+        what the model reads. In a focus session the pop-up calls it "It's part
+        of the task": then it holds until that session ends, and isn't saved
+        (`until_focus_ends=False`, as `except add --from` passes, saves it).
+        `focus`: the session the pop-up was shown in (the one running now if
+        not given); an answer clicked after it ended lets nothing through,
+        and returns 0. Otherwise returns how many times you've said it for
+        this rule on this site (or in this app window), this one included:
+        Short after Short counts."""
+        if until_focus_ends and (focus := focus or self.focusing()) is not None:
+            running = self.focusing()
+            held = running is not None and running["started"] == focus["started"]
+            if held:
+                with self.lock:  # only the running session's are kept: older ones have ended
+                    self._task_fine = {focus["started"]: self._task_fine.get(focus["started"], set())
+                                       | {(rule_id, url or f"{bundle_id}|{title}")}}
+            self.log_response(decision_id, "fine", rule_id, until="focus ends")
+            return int(held)
+        e = fine_entry(rule_id, url, title, bundle_id, p_hit)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        path = self.data_dir / "exceptions.jsonl"
-        said = sum(1 for line in path.open(encoding="utf-8")
-                   if line.strip() and (x := json.loads(line)).get("rule") == rule_id and not x.get("removed")
-                   and (x.get("url") == url if url else x.get("title") == title and x.get("app") in (None, bundle_id))
-                   ) if path.exists() else 0
-        with path.open("a", encoding="utf-8") as f:
+        path, host = self.data_dir / "exceptions.jsonl", host_of(url)
+        said = sum(1 for x in jsonl.lines(path)
+                   if x.get("rule") == rule_id and not x.get("removed")
+                   and ((host_of(x.get("url")) == host if host else x.get("url") == url) if url
+                        else x.get("title") == title and x.get("app") in (None, bundle_id)))
+        with jsonl.appending(path) as f:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
         with self.lock:
             self._add_exception(e)
-        self.log_response(decision_id, "fine", rule_id)
+        if decision_id:  # the answer to a pop-up; `except add --from` a screen answers none
+            self.log_response(decision_id, "fine", rule_id)
         return said + 1
 
     def last_snooze(self, rule_id: str) -> tuple[float, float, str] | None:
@@ -617,16 +811,12 @@ class Policy:
 
     def popups_today(self, rule_id: str, but: str = "") -> list[str]:
         """When this rule popped up today (ISO times, oldest first), leaving out decision `but`."""
-        path = self.data_dir / "decisions.jsonl"
-        if not path.exists():
-            return []
         today = date.today().isoformat()
         out = []
-        for line in path.open(encoding="utf-8"):
-            if line.startswith('{"at": "' + today) and '"intervention"' in line:
-                e = json.loads(line)
-                if e.get("type") == "intervention" and e.get("rule") == rule_id and e.get("id") != but:
-                    out.append(e["at"])
+        for e in jsonl.lines(self.data_dir / "decisions.jsonl",
+                             lambda line: line.startswith('{"at": "' + today) and '"intervention"' in line):
+            if e.get("type") == "intervention" and e.get("rule") == rule_id and e.get("id") != but:
+                out.append(e["at"])
         return out
 
     def snoozes_in_last_hour(self) -> int:
@@ -641,7 +831,7 @@ class Policy:
         never = {"host": host} if host else {"app": bundle_id, "name": app_name}
         e = {"never": never, "at": datetime.now().isoformat(timespec="seconds")}
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        with (self.data_dir / "exceptions.jsonl").open("a", encoding="utf-8") as f:
+        with jsonl.appending(self.data_dir / "exceptions.jsonl") as f:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
         with self.lock:
             self._add_exception(e)
@@ -652,7 +842,7 @@ class Policy:
         """An exception in your own words ("a lecture on YouTube is fine"); the model reads it."""
         e = {"rule": rule_id, "text": text, "at": datetime.now().isoformat(timespec="seconds")}
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        with (self.data_dir / "exceptions.jsonl").open("a", encoding="utf-8") as f:
+        with jsonl.appending(self.data_dir / "exceptions.jsonl") as f:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
         with self.lock:
             self._add_exception(e)
@@ -676,7 +866,7 @@ class Policy:
         """data/session.json changed (the menu, the dashboard or `qualm pause|focus`)."""
         s = read_session(self.data_dir)
         with self.lock:
-            self.paused_until, self.focus = s["paused_until"], s["focus"]
+            self.paused_until, self.pause_later, self.focus = s["paused_until"], s["pause_later"], s["focus"]
 
     def focusing(self) -> dict | None:
         """The focus session running now, if any."""
@@ -684,10 +874,13 @@ class Policy:
         return f if f and f["until"] > time.time() else None
 
     def paused(self) -> bool:
-        return time.time() < self.paused_until
+        now, later = time.time(), self.pause_later
+        if later and later["from"] <= now:  # a planned pause has begun: it's the one running now
+            self.paused_until, self.pause_later = max(self.paused_until, later["until"]), None
+        return now < self.paused_until
 
-    def usage_summary(self) -> str:
-        """For the menu: a running session, or today's minutes."""
+    def usage_summary(self, name=lambda rule_id: rule_id) -> str:
+        """For the menu: a running session, or today's minutes; `name` gives a rule's display name."""
         with self.lock:
             parts, now = [], time.time()
             for r in self.active_rules():
@@ -696,15 +889,15 @@ class Policy:
                 c = self.sessions.get(r.id)
                 seconds, _ = self.usage.get(r.id)
                 if c is not None and c.until > now:
-                    parts.append(f"{r.id} until {datetime.fromtimestamp(c.until):%H:%M}")
+                    parts.append(f"{name(r.id)} until {datetime.fromtimestamp(c.until):%H:%M}")
                 elif seconds >= 60:
-                    parts.append(f"{r.id} {seconds / 60:.0f} min today")
+                    parts.append(f"{name(r.id)} {seconds / 60:.0f} min today")
             return " · ".join(parts)
 
     # -- the log that becomes labels -----------------------------------------
 
     def log_judgement(self, screen: dict, reading: Reading | None, decisions: list[Decision],
-                      state: dict | None = None, shot: str = "") -> str:
+                      state: dict | None = None, shot: str = "", id: str = "") -> str:
         """Every judgement, to data/judgements.jsonl, for `qualm review`:
         what was on screen, exactly what the model read, every answer's
         probabilities, the screen before, and what the policy did and why.
@@ -716,10 +909,12 @@ class Policy:
         private = sensitive or any(d.reason == "app not monitored" for d in decisions)
         with self.lock:
             event = {
-                "id": uuid.uuid4().hex[:8],
+                "id": id or uuid.uuid4().hex[:8],
                 "at": datetime.now().isoformat(timespec="seconds"),
                 "screen": {"app": screen.get("app", ""), "bundle_id": screen.get("bundle_id", "")} if private else screen,
-                "decisions": [{"action": d.action, "rule": d.rule, "reason": d.reason} for d in decisions],
+                # A pop-up's decision id too: the menu's prompt names pop-ups by it, `review --id` finds them.
+                "decisions": [{"action": d.action, "rule": d.rule, "reason": d.reason, **({"id": d.id} if d.id else {})}
+                              for d in decisions],
                 "thresholds": {r.id: r.threshold for r in self.active_rules()},
                 "came_from": None if private else self._cur.get("from"),
                 "opened_on_purpose": self._cur["intentional"],
@@ -745,9 +940,14 @@ class Policy:
                 "latency_ms": round(reading.latency_ms),
                 "cached": reading.cached,
                 "allow": {k: round(v, 3) for k, v in reading.allow.items()},
+                # Which model and which wording of each rule gave these scores:
+                # `rules tune` compares like with like.
+                "backend": backend(self.settings),
+                "w": {r.id: question_key(r, self.settings.lang) for r in self.active_rules()
+                      if reading.verdict(r.id) is not None},
             }
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        with (self.data_dir / "judgements.jsonl").open("a", encoding="utf-8") as f:
+        with jsonl.appending(self.data_dir / "judgements.jsonl") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
         return event["id"]
 
@@ -767,6 +967,20 @@ class Policy:
             with self.lock:
                 self._back_times.setdefault(rule_id, []).append(time.time())
         self._log({"type": "response", "id": decision_id, "rule": rule_id, "response": response, **extra})
+
+    def went_back(self, rule_id: str, how: str) -> None:
+        """What "Take me back" managed (watcher.go_back). "stayed": the page
+        couldn't be left (a tab with no history that won't open a new one),
+        or you went to another app before it was done. Then it isn't a
+        return, which would lengthen the next wait, and it doesn't pop up
+        again RECHECK_S later on the same page: it's judged again when the
+        screen changes."""
+        if how != "stayed":
+            return
+        with self.lock:
+            if times := self._back_times.get(rule_id):
+                back = times.pop()
+                self._rejudge_at = [t for t in self._rejudge_at if abs(t - back - RECHECK_S) > 1]
 
     def returns(self, rule_id: str, within: float = RETURN_S) -> int:
         """How often you went back from this rule's pages lately, and are here again.

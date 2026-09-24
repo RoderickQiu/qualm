@@ -24,6 +24,7 @@ focus session never rotate.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime
 
 from .decide import Reading, ask
@@ -39,32 +40,84 @@ def ordinal(n: int) -> str:
     return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
+def cut(text: str, n: int) -> str:
+    """At most `n` characters wide (a CJK character is two): cut at a word
+    where one ends in the second half of that width, else mid-word (CJK has
+    no spaces), with an ellipsis."""
+    text = " ".join(text.split())
+    widths = [2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text]
+    if sum(widths) <= n:
+        return text
+    end, room = 0, n - 1
+    while widths[end] <= room:
+        room -= widths[end]
+        end += 1
+    head = text[:end]
+    space = head.rfind(" ")
+    # Mid-word: back to the last space, unless that drops more than half the width
+    # ("You're here to: 准备明天…" would keep only "You're here to").
+    if text[end] != " " and space > 0 and 2 * sum(widths[:space]) >= sum(widths[:end]):
+        head = head[:space]
+    return head.rstrip(" ,.;:!?，。；：、") + "…"
+
+
+def sentence(text: str) -> str:
+    """Text ending in one full stop, whatever it ended with."""
+    text = text.rstrip(" ,;:，；：、")
+    return text if text.endswith(("…", ".", "?", "!", "。", "？", "！")) else text + "."
+
+
+def name(rule: Rule) -> str:
+    """The rule as the menu names it: "Short videos", "Online shopping"; never the raw id."""
+    from .setup import rule_name
+
+    return rule_name(rule.id, rule.description)
+
+
 def label(rule: Rule, lang: str = "en") -> str:
     """The rule's description cut to a phrase: "short videos made for endless
     swiping, such as Douyin, ..." -> "short videos made for endless swiping"."""
     what = rule.text(lang)
-    head = re.split(r",? such as |[,:;，：；(（]", what, maxsplit=1)[0].strip()
-    return head or rule.id
+    head = re.split(r",? such as |[,:;，：；(（]", what, maxsplit=1)[0].strip().rstrip(".。!！")
+    return cut(head, 90) or name(rule)
 
 
-DENY_WORDS = ("This looks like {}.", "Qualm reads this as {}.", "A second look: this seems to be {}.")
+def starter(rule: Rule) -> bool:
+    """One of the starter rules, whose descriptions are noun phrases written
+    for "This looks like …"; a rule you wrote may be any sentence."""
+    from .setup import RULE_LOOK
+
+    return rule.id in RULE_LOOK
+
+
+DENY_WORDS = ("This looks like {}", "Qualm reads this as {}", "A second look: this seems to be {}")
+# Your own rules are quoted, not fitted into the sentence: "news sites and
+# headlines" or "YouTube after 10pm" don't read as what a page "looks like".
+YOURS_WORDS = ("This looks like it's under your rule: {}", "Qualm reads this as a case of your rule: {}",
+               "A second look: this seems to fall under your rule: {}")
 FEED_WORDS = ("This is a feed, picked for you.", "A feed of recommendations, chosen by the site.",
               "Nothing here is your pick yet: it's a feed.")
 
 
+def looks_like(rule: Rule, lang: str, n: int = 0) -> str:
+    """"This looks like …" for the rule, in one of the rotating wordings."""
+    words = DENY_WORDS if starter(rule) else YOURS_WORDS
+    return sentence(words[n % len(words)].format(label(rule, lang)))
+
+
 def headline(d: Decision, rule: Rule, lang: str, focus: dict | None = None, n: int = 0) -> tuple[str, str]:
     """(eyebrow, headline) for the pop-up; `n`: this rule's pop-ups earlier today, to rotate the wording."""
-    name = rule.id.replace("_", " ")
+    called = name(rule)
     if focus is not None:
         left = max(1, round((focus["until"] - datetime.now().timestamp()) / 60))
-        return f"Focus · {left} min left", f"You're here to: {focus['intent']}."
+        return f"Focus · {left} min left", sentence(f"You're here to: {cut(focus['intent'], 110)}")
     if d.panel == "check_in":
-        return f"{name} · check in", "What are you here for?"
+        return f"{called} · check in", "What are you here for?"
     if d.panel == "times_up":
-        return f"{name} · time's up", d.reason[0].upper() + d.reason[1:] + "."
+        return f"{called} · time's up", d.reason[0].upper() + d.reason[1:] + "."
     if d.reason == "an entertainment feed":
-        return name, FEED_WORDS[n % len(FEED_WORDS)]
-    return name, DENY_WORDS[n % len(DENY_WORDS)].format(label(rule, lang))
+        return called, FEED_WORDS[n % len(FEED_WORDS)]
+    return called, looks_like(rule, lang, n)
 
 
 def reason(d: Decision, reading: Reading | None, rule: Rule, lang: str) -> str:
@@ -72,19 +125,20 @@ def reason(d: Decision, reading: Reading | None, rule: Rule, lang: str) -> str:
     if d.panel == "times_up":
         return "Done takes you back."
     if d.panel == "check_in":
-        return (f"This looks like {label(rule, lang)}. Say what for and how long, "
-                "and Qualm stays out of the way until then.")
+        return f"{looks_like(rule, lang)} Say what for and how long, and Qualm stays out of the way until then."
     if d.reason == "matches URL pattern":
-        head = f"This address is on your list for {rule.id}."
+        head = f"This address is on your “{name(rule)}” list."
+    elif d.reason == "the app is on this rule's list":
+        head = f"This app is on your “{name(rule)}” list."
     elif d.reason == "an entertainment feed":
         head = "Nothing on it was your choice yet: it's a feed of recommendations, for entertainment."
         return head
     elif reading is not None and (v := reading.verdict(rule.id)) is not None:
         ratio = v.p_hit / rule.threshold if rule.threshold else 1.0
         sure = "A clear match" if ratio >= 3 else "A likely match" if ratio >= 1.5 else "A close call"
-        head = f"{sure} for your {rule.id} rule."
+        head = f"{sure} for your “{name(rule)}” rule."
     else:
-        head = f"It matches your {rule.id} rule."
+        head = f"It matches your “{name(rule)}” rule."
     if reading is None:
         return head
     seen = f"Qualm read the screen as {PAGE_WORDS.get(reading.page_kind, 'a page')}, for {PURPOSE_WORDS.get(reading.purpose, 'something')}."
@@ -98,7 +152,7 @@ def context(shown_today: list[str], snooze: tuple[float, float, str] | None = No
     parts = []
     now = datetime.now().timestamp()
     if snooze and snooze[2] and 0 <= now - snooze[0] < 30 * 60:
-        parts.append(f"Your {snooze[1]:g} minutes for “{snooze[2]}” are up")
+        parts.append(f"Your {snooze[1]:g} minutes for “{cut(snooze[2], 60)}” are up")
     n = len(shown_today) + 1
     if n > 1:
         parts.append(f"{ordinal(n)} time today · last at {shown_today[-1][11:16]}")
@@ -125,8 +179,8 @@ def evidence(client, state: dict, rule: Rule, lang: str) -> str:
     p_head = ask(client, head, [rule], lang).verdict(rule.id).p_hit
     p_body = ask(client, body, [rule], lang).verdict(rule.id).p_hit
     t = rule.threshold
-    title = (state.get("window_title") or state.get("url") or "")[:70]
-    snippet = next(iter(state.get("headings") or state.get("visible_text") or []), "")[:70]
+    title = cut(state.get("window_title") or state.get("url") or "", 70)
+    snippet = cut(next(iter(state.get("headings") or state.get("visible_text") or []), ""), 70)
     if p_head >= t and p_body < t:
         return f'The title and address alone are enough: "{title}".'
     if p_body >= t and p_head < t:

@@ -4,6 +4,7 @@ The same steps back `qualm setup` in a terminal and the app's setup window
 (onboard.py), so both leave the same state behind:
 
     ~/Library/Application Support/Qualm/rules.toml   the rules you picked, and [settings] backend
+    ~/Library/Application Support/Qualm/.setup-done  setup ran (the app's setup window looks for it)
     the login keychain                               the TypeSafe key, for the hosted model
     ~/Library/LaunchAgents/com.qualm.app.plist       start at login, if you asked
 
@@ -13,14 +14,20 @@ first (`migrate`), so nothing you taught Qualm is lost. Nothing is deleted.
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import subprocess
+import tomllib
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from . import autostart, keychain, localmodel, paths
-from .config import EXAMPLE, Config
+from .config import EXAMPLE, Config, starter_blocks
 from .rules import load_config
+
+DONE = paths.SETUP_DONE
 
 # The starter rules, as a person would name them (the setup window, the menu);
 # the sentence the model reads stays in rules.toml.
@@ -33,8 +40,19 @@ RULE_LOOK = {
 }
 
 
-def rule_name(rule_id: str) -> str:
-    return RULE_LOOK.get(rule_id, (rule_id.replace("_", " ").capitalize(), ""))[0]
+def rule_name(rule_id: str, description: str = "") -> str:
+    """A rule as a person would name it: a starter's name, or your rule's id,
+    "Late news". An id is plain lowercase letters, so a rule described in
+    other letters is named by its description's first words ("刷短视频", not
+    the "Duanshipin" typed for its id)."""
+    if rule_id in RULE_LOOK:
+        return RULE_LOOK[rule_id][0]
+    head = re.split(r",? such as |[,:;，：；、(（]", description, maxsplit=1)[0].strip().rstrip(".。!！")
+    if any(c.isalpha() and not c.isascii() for c in head):
+        from .explain import cut
+
+        return cut(head[:1].upper() + head[1:], 28)
+    return rule_id.replace("_", " ").capitalize()
 
 
 ACCESSIBILITY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
@@ -44,21 +62,48 @@ ACCESSIBILITY_PANE = "x-apple.systempreferences:com.apple.preference.security?Pr
 class Choices:
     backend: str  # "kev" or "jev"
     rules: list[str]  # starter rule ids to turn on; the rest are kept, switched off
-    login: bool = True
+    login: bool | None = True  # None: leave start at login as it is
     key: str | None = None  # a new TypeSafe key, for "jev"
     shim: bool = True  # from Qualm.app: a `qualm` command for the terminal
     done: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)  # what was left alone, and what to do next
+    started: bool = False  # the login item was loaded just now, so the app is starting
 
 
 def needed() -> bool:
-    """No rules yet where the app looks: a first run."""
-    return not paths.rules_file().exists()
+    """A first run: setup never ran for this folder, and nothing shows it was
+    set up before setup left its mark: judgements (an app or `watch` ran), a
+    model chosen, or a rules.toml an earlier version saved (it kept only
+    rules.toml.bak; now backups/ comes with it, and DONE is written when
+    backups/ is first made next to such a .bak: config.Config._backups). A
+    rules.toml alone doesn't count: the first `qualm status` or `rules list`
+    creates one from the starter rules. Nor does decisions.jsonl: `qualm
+    focus` writes it."""
+    if paths.legacy():
+        return False
+    home = paths.home()
+    earlier = all((home / f).exists() for f in ("rules.toml", "rules.toml.bak")) and not (home / "backups").exists()
+    if (home / DONE).exists() or (home / "data" / "judgements.jsonl").exists() or earlier:
+        return False
+    try:
+        return "backend" not in tomllib.loads((home / "rules.toml").read_text(encoding="utf-8")).get("settings", {})
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError):  # a rules.toml that doesn't load: not a first run; loading it says what's wrong
+        return False
+
+
+def terminal_name() -> str:
+    """The terminal app this runs in, as System Settings lists it."""
+    t = os.environ.get("TERM_PROGRAM", "")
+    return {"Apple_Terminal": "Terminal", "iTerm.app": "iTerm", "vscode": "Visual Studio Code or Cursor",
+            "WarpTerminal": "Warp", "ghostty": "Ghostty"}.get(t, t or "your terminal app")
 
 
 def migrate(src: Path = Path(".")) -> list[str]:
     """A checkout's rules.toml (and .bak) and data/ copied home, if home has none yet."""
     home = paths.home()
-    if (home / "rules.toml").exists() or not (src / "rules.toml").exists():
+    if (home / "rules.toml").exists() or not (src / "rules.toml").exists() or not paths.checkout(src):
         return []
     home.mkdir(parents=True, exist_ok=True)
     copied = []
@@ -80,10 +125,12 @@ def starters() -> list[dict]:
 
 
 def recommend() -> tuple[str, str]:
-    """("kev" or "jev", why), from this Mac: Apple silicon, and memory to spare now."""
-    if not localmodel.apple_silicon():
-        return "jev", "The local model needs Apple silicon (M1 or later); this Mac can use the hosted model."
+    """("kev" or "jev", why), from this Mac: Apple silicon and macOS 14, memory to spare now, and disk space."""
+    if why := localmodel.unsupported():
+        return "jev", f"{why} This Mac can use the hosted model."
     m = localmodel.memory()
+    if m.fits and (short := localmodel.disk_short()):
+        return "jev", f"{m.summary()} But there's {short}."
     return ("kev" if m.fits else "jev"), m.summary()
 
 
@@ -114,38 +161,73 @@ def check_key(key: str) -> str | None:
 
 
 def apply(c: Choices, say=print) -> list[str]:
-    """Everything chosen, in one go. Returns what was done, in words."""
+    """Everything chosen, in one go. Returns what was done, in words; c.notes
+    says what was left alone and why. Everything is checked before anything
+    is written."""
+    from .agent import command, start_hint
+
+    starter_rules = [id for id, (table, _) in starter_blocks().items() if table == "rules"]
     if c.backend not in ("kev", "jev"):
         raise ValueError("backend: kev or jev")
+    if c.backend == "kev" and (why := localmodel.unsupported()):  # not Apple silicon, or before macOS 14
+        raise ValueError(f"{why[0].lower()}{why[1:].rstrip('.')}. Pick jev, the hosted model")
     if c.backend == "jev" and not (c.key or keychain.api_key()):
         raise ValueError("the hosted model needs a TypeSafe API key")
+    if unknown := [r for r in c.rules if r not in starter_rules]:
+        raise ValueError(f"not a starter rule: {', '.join(unknown)}. The starter rules are: {', '.join(starter_rules)}")
+    if paths.legacy():
+        raise ValueError(f"this folder still has its own rules.toml: `{command()} setup` copies it home first")
+    custom = paths.custom_home()  # QUALM_HOME: the login item and the `qualm` command are the main install's
+    shim = c.shim and bool(paths.bundle()) and not custom
+    if (c.login or shim) and autostart.temporary_bundle():
+        raise ValueError(autostart.MOVE_FIRST)
+    if c.login and custom and autostart.installed() and not autostart.login_is_ours():
+        raise ValueError(f"the login item starts Qualm on {autostart.login_home()}, not on this QUALM_HOME. Leave start "
+                         f"at login off to keep it; `{command()} install`, run with this QUALM_HOME, replaces it (and "
+                         "quits the Qualm it started)")
     if c.key:
         keychain.store(c.key)
         c.done.append("saved the TypeSafe key in your keychain")
-    if paths.legacy():
-        raise ValueError("this folder still has its own rules.toml: `qualm setup` copies it home first")
     path = paths.home() / "rules.toml"  # setup only ever writes the per-user copy
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(EXAMPLE, path)
-        c.done.append(f"created {path} from the starter rules")
     cfg = Config(path)
-    _, rules = cfg.load()
-    starter_ids = {s["id"] for s in starters()}
+    if cfg.create():  # kept as the version Qualm last saved, for `config undo` after a hand edit
+        c.done.append(f"created {path} from the starter rules")
     with cfg.batch():
         cfg.edit_settings({"backend": "jev"} if c.backend == "jev" else {}, [] if c.backend == "jev" else ["backend"])
-        for r in rules:
-            if r.id in starter_ids:
+        have = {r.id for r in cfg.load()[1]}
+        for rid in c.rules:  # a starter removed from the file comes back when asked for
+            if rid not in have:
+                cfg.add("rules", {"id": rid}, text=starter_blocks()[rid][1])
+                c.done.append(f"added {rid} back from the starter rules")
+        for r in cfg.load()[1]:
+            if r.id in starter_rules:
                 on = r.id in c.rules
                 cfg.edit("rules", r.id, {} if on else {"enabled": False}, ["enabled"] if on else [])
+    _, rules = cfg.load()
     c.done.append(f"the model runs {'hosted by TypeSafe (Jev)' if c.backend == 'jev' else 'on this Mac (Kev-4B, 8-bit)'}")
-    c.done.append("rules on: " + (", ".join(c.rules) or "none"))
-    if c.login:
+    c.done.append("rules on: " + (", ".join(r.id for r in rules if r.enabled) or "none"))
+    if c.login and autostart.up_to_date():  # loading it again would restart the running app
+        c.done.append("starts at login, as before")
+    elif c.login:
         autostart.install(quiet=True)
-        c.done.append("starts at login")
-    elif autostart.installed():
-        autostart.uninstall(quiet=True)
-        c.done.append("won't start at login")
-    if c.shim and (shim := autostart.cli_shim()):
-        c.done.append(f"`qualm` in the terminal runs this app's copy ({shim})")
+        c.started = True
+        c.done.append("starts at login" + (f" (on {paths.home()}, the QUALM_HOME folder)" if custom else ""))
+    elif c.login is False and autostart.installed():
+        if autostart.login_is_ours():
+            say(f"Removing the login item. If it started the Qualm that's running, that copy quits now: "
+                f"{start_hint()} to start it again.")
+            autostart.uninstall(quiet=True)
+            c.done.append("won't start at login")
+        else:
+            c.notes.append(f"the login item starts Qualm on {autostart.login_home()}, not on this QUALM_HOME: left alone")
+    elif c.login is None and custom:
+        c.notes.append("start at login is the main install's and was left alone (QUALM_HOME is set); --login points it here")
+    if c.shim and custom and paths.bundle():
+        c.notes.append("the `qualm` command is the main install's and was left alone (QUALM_HOME is set)")
+    elif shim and (made := autostart.cli_shim()):
+        c.done.append(f"`qualm` in the terminal runs this app's copy ({made})")
+        if not autostart.on_path(made.parent):
+            c.notes.append(f"{made.parent} isn't on your PATH, so a new terminal won't find `qualm` yet. Add it with\n"
+                           f"    {autostart.path_line(made.parent)}\n  and open a new terminal; until then, run {made}")
+    (paths.home() / DONE).write_text(datetime.now().isoformat(timespec="seconds") + "\n", encoding="utf-8")
     return c.done

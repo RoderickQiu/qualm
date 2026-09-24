@@ -5,6 +5,8 @@ __pycache__/
 rules.toml
 data/
 rules.toml.bak
+rules.toml.lock
+backups/
 # API keys
 .env
 # App builds (packaging/build_app.py)

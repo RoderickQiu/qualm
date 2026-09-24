@@ -36,6 +36,15 @@ def api_key() -> str | None:
     return os.environ.get(ACCOUNT) or stored()
 
 
+def unsaved() -> bool:
+    """The key is only in this shell's TYPESAFE_API_KEY: neither the keychain
+    nor a checkout's .env has it, so Qualm started from Finder or at login finds none."""
+    if not os.environ.get(ACCOUNT) or stored() is not None:
+        return False
+    lines = ENV_FILE.read_text(encoding="utf-8").splitlines() if ENV_FILE.exists() else []
+    return not any(line.partition("=")[0].strip() == ACCOUNT for line in lines)
+
+
 def forget() -> bool:
     """Remove the key from the keychain; False if there was none."""
     if stored() is None:

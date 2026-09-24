@@ -64,3 +64,16 @@ def test_backend_from_settings_and_the_environment_wins(monkeypatch):
     assert backend(Settings()) == "kev" and backend(Settings(backend="jev")) == "jev"
     monkeypatch.setenv("QUALM_BACKEND", "kev")
     assert backend(Settings(backend="jev")) == "kev"
+
+
+def test_hosted_with_no_key_says_how_this_terminal_saves_one(monkeypatch):
+    from qualm import agent, decide
+    from qualm.rules import Settings
+
+    q = "QUALM_HOME=/tmp/second uv run --project /src/qualm qualm"  # another Qualm folder: a bare qualm is the main one
+    monkeypatch.delenv("QUALM_BACKEND", raising=False)
+    monkeypatch.setattr(decide, "api_key", lambda: None)
+    monkeypatch.setattr(agent, "command", lambda: q)
+    with pytest.raises(RuntimeError) as e:
+        decide.make_client(Settings(backend="jev"))
+    assert str(e.value) == f"no TypeSafe API key: `{q} setup` stores one in the keychain"
