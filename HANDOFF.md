@@ -413,6 +413,10 @@ terminals, everything relative to the checkout, "16 GB" as the bar.
 
 ### A fresh user's audit (night of 2026-09-23; rounds 2 and 3 on 2026-09-24)
 
+How it was run, step by step (which agents, how they worked together, what
+each step produced, why it took all night), written for the user:
+docs/AUDIT-2026-09-24.md.
+
 Asked to make Qualm work for someone who isn't its author: another Mac,
 maybe neither Chinese- nor English-speaking, through the app (setup window,
 menu bar, pop-ups, dashboard) or through Claude Code driving the CLI.
