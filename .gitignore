@@ -14,3 +14,5 @@ dist/
 build/
 .vercel/
 .env.local
+# Drafts for posts and articles: personal, never published from here
+docs/drafts/
