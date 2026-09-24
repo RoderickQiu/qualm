@@ -52,8 +52,9 @@ ACCENTS = {
     "focus": (0.38, 0.78, 0.98),  # clear blue
     "done": (0.45, 0.85, 0.55),  # green, for "got it"
     "watch": (0.38, 0.78, 0.98),  # the setup window: the menu bar's eye
+    "agent": (0.62, 0.72, 1.0),  # periwinkle: hand it to your AI agent
 }
-SYMBOLS = {"deny": "hand.raised.fill", "checkin": "timer", "timesup": "hourglass", "focus": "scope", "done": "checkmark", "watch": "eye"}
+SYMBOLS = {"deny": "hand.raised.fill", "checkin": "timer", "timesup": "hourglass", "focus": "scope", "done": "checkmark", "watch": "eye", "agent": "sparkles"}
 
 
 def rgb(r: float, g: float, b: float, a: float = 1.0) -> NSColor:
@@ -129,6 +130,18 @@ def set_symbol(view: NSImageView, kind: str, size: float = 46) -> None:
     img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(SYMBOLS[kind], kind)
     view.setImage_(img.imageWithSymbolConfiguration_(cfg))
     view.setContentTintColor_(rgb(r, g, b))
+
+
+def well(frame) -> NSBox:
+    """A faint rounded inset, for text to copy."""
+    box = NSBox.alloc().initWithFrame_(frame)
+    box.setBoxType_(BOX_CUSTOM)
+    box.setBorderWidth_(1)
+    box.setBorderColor_(rgb(1, 1, 1, 0.10))
+    box.setCornerRadius_(10)
+    box.setFillColor_(rgb(1, 1, 1, 0.05))
+    box.setTitle_("")
+    return box
 
 
 def recolor(box: NSBox, kind: str) -> None:

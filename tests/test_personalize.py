@@ -223,3 +223,12 @@ def test_block_clicks_is_on_unless_turned_off(tmp_path):
     assert not parse_config(path.read_text())[0].block_clicks
     Config(path).edit_settings({}, ["block_clicks"])
     assert parse_config(path.read_text())[0].block_clicks and "block_clicks" not in path.read_text()
+
+
+def test_the_agent_guide_is_the_claude_code_skill():
+    from pathlib import Path
+
+    from qualm.personalize import guide
+
+    skill = (Path(__file__).parent.parent / ".claude" / "skills" / "qualm" / "SKILL.md").read_text(encoding="utf-8")
+    assert skill.split("\n---\n", 1)[1].strip() == guide().strip()

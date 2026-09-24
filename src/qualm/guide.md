@@ -1,8 +1,3 @@
----
-name: qualm
-description: Set up, change or check Qualm's rules for the user - what it blocks or time-limits, when, exceptions, apps and sites it leaves alone, settings. Use when the user asks to block, limit, allow, pause-by-schedule or stop flagging something, asks why Qualm popped up, or asks what their rules are. Drives the `qualm` CLI; never edits rules.toml by hand.
----
-
 # Driving Qualm for the user
 
 Everything goes through the `qualm` command: `qualm …` where Qualm.app

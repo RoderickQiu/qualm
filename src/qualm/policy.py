@@ -35,6 +35,12 @@ ENTERTAIN_MIN = 0.6
 RETURN_S = 1800  # coming back to a rule's pages within this long after going back: a return
 MAX_TICK_S = 5.0  # longer gaps (sleep, a stalled model call) don't count as usage
 MAX_EXCEPTIONS = 10  # per rule; the newest "Not this one" titles the model reads
+# "Not this one" in an app with no address (WeChat's window is always
+# "Weixin"): that rule lets this window through below the score it had, plus
+# this. The title as words for the model didn't hold: four presses on WeChat
+# chats and it still fired, and naming the apps in an exception made the
+# model flag them more.
+FINE_MARGIN = 0.1
 OWN_URLS = ("http://127.0.0.1:8765",)  # the review page: never judge Qualm itself
 OWN_TITLES = ("Qualm review", "SeeNot review")  # the same page shown elsewhere (Cursor's browser: a vscode-file:// URL)
 SESSION_FILE = "session.json"  # pause and focus: set from the menu, the dashboard or the CLI
@@ -263,6 +269,7 @@ class Policy:
         self._base_rules = rules
         self._allowed: dict[str, set[str]] = {}  # rule id -> URLs marked "Not this one"
         self._titles: dict[str, list[str]] = {}
+        self._bars: dict[tuple[str, str, str], float] = {}  # (rule, bundle id, title) -> "Not this one" below this score
         self._never_apps: dict[str, str] = {}  # bundle id -> app name: "Never in WhatsApp"
         self._never_hosts: set[str] = set()  # "Never on example.com"
         self._load_exceptions()
@@ -308,11 +315,18 @@ class Policy:
                 (self._never_hosts.discard if e.get("removed") else self._never_hosts.add)(n["host"])
             return
         titles = self._titles.setdefault(e["rule"], [])
-        said = [f'the page "{e["title"]}"'] if e.get("title") else []
+        bar = e.get("app") is not None and e.get("p_hit") is not None and not e.get("url")
+        said = [f'the page "{e["title"]}"'] if e.get("title") and not bar else []
         said += [e["text"]] if e.get("text") else []  # typed on the review page or `except add`
         if e.get("removed"):  # `except remove`
             self._allowed.get(e["rule"], set()).discard(e.get("url"))
-            titles[:] = [t for t in titles if t not in said]
+            titles[:] = [t for t in titles if t not in said and t != f'the page "{e.get("title")}"']
+            for k in [k for k in self._bars if k[0] == e["rule"] and k[2] == e.get("title")]:
+                del self._bars[k]
+            return
+        if bar:
+            k = (e["rule"], e["app"], e.get("title", ""))
+            self._bars[k] = max(self._bars.get(k, 0.0), float(e["p_hit"]) + FINE_MARGIN)
             return
         if e.get("url"):
             self._allowed.setdefault(e["rule"], set()).add(e["url"])
@@ -376,6 +390,9 @@ class Policy:
                     out.append(Decision(action, rule.id, why))
                 elif url and url in self._allowed.get(rule.id, ()):
                     out.append(Decision("allow", rule.id, "you marked this page fine"))
+                elif (not url and v is not None
+                      and v.p_hit < self._bars.get((rule.id, bundle_id, state.get("window_title", "")), 0.0)):
+                    out.append(Decision("allow", rule.id, "you marked this window fine"))
                 elif self.snoozed.get(rule.id, 0) > now:
                     until = datetime.fromtimestamp(self.snoozed[rule.id]).strftime("%H:%M")
                     out.append(Decision("allow", rule.id, f"snoozed until {until}"))
@@ -572,14 +589,27 @@ class Policy:
             self._snoozes[rule_id] = (self.snoozed[rule_id], minutes, reason)
         self.log_response(decision_id, "snooze", rule_id, reason=reason, minutes=minutes)
 
-    def mark_fine(self, rule_id: str, url: str, title: str, decision_id: str = "") -> None:
+    def mark_fine(self, rule_id: str, url: str, title: str, decision_id: str = "",
+                  bundle_id: str = "", p_hit: float | None = None) -> int:
+        """"Not this one". A page with an address: that address is let through,
+        and the model reads its title as fine. An app window with none: this
+        window is let through below the score it had (FINE_MARGIN). Returns how
+        many times you've said it here, this one included."""
         e = {"rule": rule_id, "url": url, "title": title, "at": datetime.now().isoformat(timespec="seconds")}
+        if not url and bundle_id and p_hit is not None:
+            e |= {"app": bundle_id, "p_hit": round(p_hit, 4)}
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        with (self.data_dir / "exceptions.jsonl").open("a", encoding="utf-8") as f:
+        path = self.data_dir / "exceptions.jsonl"
+        said = sum(1 for line in path.open(encoding="utf-8")
+                   if line.strip() and (x := json.loads(line)).get("rule") == rule_id and not x.get("removed")
+                   and (x.get("url") == url if url else x.get("title") == title and x.get("app") in (None, bundle_id))
+                   ) if path.exists() else 0
+        with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
         with self.lock:
             self._add_exception(e)
         self.log_response(decision_id, "fine", rule_id)
+        return said + 1
 
     def last_snooze(self, rule_id: str) -> tuple[float, float, str] | None:
         """(ends at, minutes, what for) of this rule's latest "I need it"."""
@@ -630,7 +660,7 @@ class Policy:
     def reload_exceptions(self) -> None:
         """exceptions.jsonl changed (the review page adds to it)."""
         with self.lock:
-            self._allowed, self._titles = {}, {}
+            self._allowed, self._titles, self._bars = {}, {}, {}
             self._load_exceptions()
 
     def reload(self, settings: Settings, rules: list[Rule]) -> None:

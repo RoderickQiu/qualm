@@ -416,6 +416,8 @@ class Onboarding(NSObject):
             ("checkmark.shield" if s.accessibility() else "exclamationmark.triangle",
              "Accessibility is on" if s.accessibility() else "Accessibility is off",
              "Qualm can read the front window." if s.accessibility() else "Qualm will only see app names until you turn it on."),
+            ("sparkles", "Change rules with your AI agent",
+             "Claude Code, Codex or the like: the menu bar has a prompt for it. It tests each change on your screens first."),
         ]
         for sym, title, detail in lines:
             words = _stack([_text(title, 13, 0.3), _text(detail, 12, 0.0, NSColor.secondaryLabelColor(),

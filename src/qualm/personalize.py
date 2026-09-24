@@ -383,6 +383,61 @@ def allow_add(args) -> None:
              "except by a rule's own sites or patterns")
 
 
+def allow_test(args) -> None:
+    """An allow class as saved, with new wording (--what), or a draft under a new id: what it would let through."""
+    from dataclasses import replace
+
+    from .decide import make_client
+    from .trial import run_allow
+
+    settings, _ = config_path(args.rules).load()
+    c = next((x for x in settings.allow if x.id == args.id), None)
+    if c is None:
+        if not args.what:
+            _find_allow(settings, args.id)
+        c = AllowClass(args.id, args.what, threshold=args.threshold or 0.5)
+    elif args.what or args.threshold:
+        c = replace(c, description=args.what or c.text(settings.lang), description_en="",
+                    threshold=args.threshold or c.threshold)
+    draft = c not in settings.allow
+
+    def progress(n, total):
+        if not args.json and sys.stderr.isatty():
+            print(f"\r  asking the model: {n}/{total}", end="" if n < total else "\n", file=sys.stderr, flush=True)
+
+    try:
+        rows = run_allow(make_client(settings), Path(args.data), c, settings, last=args.last, on_progress=progress)
+    except Exception as e:  # the server is down or slow
+        _fail(f"couldn't ask the model ({type(e).__name__}: {e}). Is the Kev server running? `qualm status`", "unreachable")
+    if not rows:
+        _fail(f"no screens in {args.data}/judgements.jsonl yet: run `qualm app` for a while first", "not_found")
+    yes = [x for x in rows if x["is_it"]]
+    cleared = [x for x in yes if x["stepped_in"]]
+    lines = [f"{c.id}{' (draft, not saved)' if draft else ''} on your last {len(rows)} distinct screens, at threshold "
+             f"{c.threshold:g}: {len(yes)} read as this; {len(cleared)} of them had a pop-up, which it would stop.", ""]
+    for x in (rows if args.all else rows[:args.show]):
+        was = f"  stopped: {', '.join(x['stepped_in'])}" if x["stepped_in"] else ""
+        lines.append(f"#{x['id']}  {x['p']:.2f}  {'yes' if x['is_it'] else 'no '}{was}\n"
+                     f"      {(x['title'] or x['app'])[:70]}  {x['url'][:70]}")
+    if not args.all and len(rows) > args.show:
+        lines.append(f"… {len(rows) - args.show} more, lower scores (--all to see them)")
+    lines += ["", "Check the yes rows: a page you'd want flagged among them means the wording is too broad."]
+    _out(args, {"allow": c.id, "draft": draft, "reads": c.text(settings.lang), "threshold": c.threshold,
+                "read_as_this": len(yes), "would_stop": len(cleared), "screens": rows}, "\n".join(lines))
+
+
+def guide() -> str:
+    """How an agent should drive Qualm (.claude/skills/qualm/SKILL.md without its header)."""
+    return (Path(__file__).parent / "guide.md").read_text(encoding="utf-8")
+
+
+def _find_allow(settings, allow_id: str):
+    c = next((x for x in settings.allow if x.id == allow_id), None)
+    if c is None:
+        _fail(f"no allow class {allow_id!r}; `allow list` shows them, or give --what for a draft", "not_found")
+    return c
+
+
 def allow_set(args) -> None:
     set_, unset = _assignments(args, "allow", AllowClass, args.id, args.pairs)
     config_path(args.rules).edit("allow", args.id, set_, unset)
@@ -423,6 +478,8 @@ def _same(x: dict, e: dict) -> bool:
 
 
 def except_list(args) -> None:
+    from .policy import FINE_MARGIN
+
     _, rules = config_path(args.rules).load()
     if args.rule:
         _find(rules, args.rule, "rule")
@@ -433,9 +490,13 @@ def except_list(args) -> None:
         rows += [{"rule": r.id, "text": x, "source": "rules.toml"} for x in r.exceptions]
     for e in live_exceptions(Path(args.data)):
         if not args.rule or e["rule"] == args.rule:
-            rows.append({"rule": e["rule"], "text": e.get("text") or e.get("title") or "", "url": e.get("url", ""),
-                         "source": "typed" if e.get("text") else "not this one", "at": e.get("at", "")})
-    text = "\n".join(f"{x['rule']:<12} {x['text']}" + (f"  <{x['url']}>" if x.get("url") else "") + f"  ({x['source']})" for x in rows)
+            row = {"rule": e["rule"], "text": e.get("text") or e.get("title") or "", "url": e.get("url", ""),
+                   "source": "typed" if e.get("text") else "not this one", "at": e.get("at", "")}
+            if e.get("app") and e.get("p_hit") is not None:  # this window of this app, below a score
+                row |= {"app": e["app"], "below": round(e["p_hit"] + FINE_MARGIN, 2)}
+            rows.append(row)
+    text = "\n".join(f"{x['rule']:<12} {x['text']}" + (f"  <{x['url']}>" if x.get("url") else "")
+                     + (f"  [{x['app']}, under {x['below']:.2f}]" if x.get("app") else "") + f"  ({x['source']})" for x in rows)
     _out(args, rows, text or "no exceptions")
 
 
@@ -861,6 +922,14 @@ def register(sub, defaults: dict) -> None:
     sp.add_argument("--site", action="append", help="known to be this: allowed without the model; repeat")
     sp.add_argument("--app", action="append", help="bundle id known to be this; repeat")
     sp.add_argument("--from-starter", action="store_true")
+    sp = cmd(g, "test", allow_test, "what an allow class would let through on your recent screens (asks the model); "
+             "--what tries other wording, or a draft under a new id, without saving")
+    sp.add_argument("id")
+    sp.add_argument("--what", help="wording to try instead of the saved one (or for a draft)")
+    sp.add_argument("--threshold", type=float, help="threshold to try")
+    sp.add_argument("--last", type=int, default=100, help="how many recent distinct screens")
+    sp.add_argument("--show", type=int, default=15, help="how many to print, highest score first")
+    sp.add_argument("--all", action="store_true", help="print all of them")
     sp = cmd(g, "set", allow_set, "change fields, like `rules set`", changes=True)
     sp.add_argument("id")
     sp.add_argument("pairs", nargs="+", metavar="KEY=VALUE")
@@ -926,6 +995,9 @@ def register(sub, defaults: dict) -> None:
     sp.add_argument("--data", default=defaults["data"])
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(fn=run, cmd_fn=pause)
+    sp = sub.add_parser("guide", help="how an AI agent should change your rules: paste `qualm guide` into Claude Code, Codex, ...",
+                        description="how an AI agent should change your rules; the same text as the Claude Code skill")
+    sp.set_defaults(fn=lambda args: print(guide(), end=""))
     sp = sub.add_parser("schema", help="every field: type, default, meaning, and the value grammar",
                         description="every field: type, default, meaning, and the value grammar")
     sp.add_argument("--json", action="store_true")

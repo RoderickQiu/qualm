@@ -227,6 +227,26 @@ daily budgets"): it reads as an allowance, puts no friction on the first
   pop-up was about (matched by title and frame) when the app has others
   open; with one window, the app is hidden as before. Verified live on two
   Finder windows; not yet on WeChat's viewer itself.
+- **Chats aren't social media; rules change through an agent** (user,
+  same night: WeChat chats kept checking in as social, four "Not this one"
+  didn't stop it, and "hand-written rules backfire a lot"). Measured on
+  their 760 screens: WeChat chats scored 0.15-0.41 on social (threshold
+  0.30). An exception in words ("chatting in WeChat, WhatsApp or iMessage
+  is fine") pushed WhatsApp from ~0.17 to ~0.50; an allow class `chat`
+  scored chats 0.56-0.81 and social pages 0.16 or less, so it's a starter
+  now (live on their Mac). Three changes follow from it:
+  (1) "Not this one" in a window with no address saves a score bar for
+  (rule, app, title) at its score + 0.1 (`FINE_MARGIN`) instead of the
+  title as words, which the model couldn't use ("Weixin");
+  (2) `qualm allow test` scores an allow class like `rules test` does, and
+  says which past pop-ups it would stop; `qualm guide` prints the agent
+  guide (= the skill's body, kept equal by a test), with "measure, don't
+  guess" and a workflow for wrong pop-ups;
+  (3) menu bar "Change rules with your AI agent…" (`agent.py`): why, and a
+  prompt to copy with the pop-ups marked wrong in the last 24 h; a second
+  "Not this one" in one place points there; setup's last page says so.
+  Screenshots checked off-screen (panel, confirm, setup light); the live
+  app needs a restart for all but the `chat` class.
 
 Verified: 75 tests (the session life cycle, the wait, the migration, and a
 watcher test where only the re-check can say time's up; it caught a bug

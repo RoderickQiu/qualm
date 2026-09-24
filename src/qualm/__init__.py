@@ -17,11 +17,13 @@ Jev-style typed decision model (local Kev, or hosted Jev).
     qualm install            start the model server and the app at login (uninstall: remove)
     qualm export             labels -> Kev training JSONL, for a fine-tune
 
-Make it yours (each takes --help and --json; each change takes --dry-run):
+Make it yours: easiest with an AI agent that can run commands (Claude Code, Codex, ...).
+Tell it `run qualm guide`, then what you want. Each command takes --help and --json;
+each change takes --dry-run:
 
     qualm rules list|show|add|set|on|off|remove|starters
     qualm rules test|label|tune   try a rule on your recent screens, then set its threshold
-    qualm allow list|add|set|on|off|remove   kinds of page never flagged
+    qualm allow list|test|add|set|on|off|remove   kinds of page never flagged
     qualm except list|add|remove  things that look like a rule but are fine
     qualm never list|add|remove   apps and sites where no rule fires
     qualm settings show|set       apps never read, sites never judged, check-in waits, the question limit

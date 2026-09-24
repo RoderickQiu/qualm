@@ -45,10 +45,14 @@ from AppKit import (
     NSMakeRect,
     NSMenu,
     NSMenuItem,
+    NSPasteboard,
+    NSPasteboardTypeString,
+    NSScrollView,
     NSScreen,
     NSSegmentedControl,
     NSStatusBar,
     NSTextField,
+    NSTextView,
     NSTimer,
     NSVariableStatusItemLength,
 )
@@ -166,7 +170,8 @@ class Controller(NSObject):
                      NSMenuItem.separatorItem(),
                      self._item("This should have been blocked", "flagMiss:"),
                      self._item("Open dashboard", "openReview:", "d"),
-                     self._item("Edit rules…", "openRules:"), NSMenuItem.separatorItem(),
+                     self._item("Change rules with your AI agent…", "openAgent:"),
+                     self._item("Edit rules file…", "openRules:"), NSMenuItem.separatorItem(),
                      self._item("Quit Qualm", "quit:", "q")):
             menu.addItem_(item)
         self.status_item.setMenu_(menu)
@@ -413,6 +418,81 @@ class Controller(NSObject):
         from .review import PORT
 
         subprocess.run(["open", f"http://127.0.0.1:{PORT}/"], check=False)
+
+    def openAgent_(self, sender):
+        from . import agent
+
+        if getattr(self, "agent_panel", None) is None:
+            self._build_agent_panel()
+        self.agent_text.setString_(agent.prompt(self.policy.data_dir))
+        self.agent_copy.setTitle_("Copy prompt")
+        self.agent_panel.center()
+        NSApp.activateIgnoringOtherApps_(True)
+        self.agent_panel.makeKeyAndOrderFront_(None)
+
+    def agentCopy_(self, sender):
+        board = NSPasteboard.generalPasteboard()
+        board.clearContents()
+        board.setString_forType_(self.agent_text.string(), NSPasteboardTypeString)
+        self.agent_copy.setTitle_("Copied")
+        self.set_status("prompt copied: paste it into your AI agent")
+        panel = self.agent_panel
+        AppHelper.callLater(0.9, lambda: panel.orderOut_(None))
+
+    def agentCancel_(self, sender):
+        self.agent_panel.orderOut_(None)
+
+    @objc.python_method
+    def _build_agent_panel(self):
+        """Why rules are changed through an agent, and the prompt to hand it."""
+        w = 540.0
+        body = ui.label("Rules are sentences a small model reads, and a change that reads right can make it worse: "
+                        "naming the apps you want left alone can make it flag them more. An AI agent that runs "
+                        "commands on this Mac (Claude Code, Codex, Cursor) scores each change on your recent "
+                        "screens before it saves it.", 13, 0.0, NSColor.secondaryLabelColor(), width=w - 2 * PAD, wrap=True)
+        body_h = ui.fit(body, str(body.stringValue()), w - 2 * PAD)
+        hint = ui.label("Paste it into your agent, then say what you want in your own words.", 12, 0.0,
+                        NSColor.tertiaryLabelColor(), width=w - 2 * PAD)
+        box_h, buttons_h = 188.0, 60.0
+        h = 30 + BADGE + 18 + body_h + 16 + box_h + 10 + hint.frame().size.height + buttons_h
+        self.agent_panel, view = ui.hud(w, h, PANEL_TITLE)
+        box, icon = ui.badge("agent", BADGE)
+        text_x = PAD + BADGE + 16
+        for v in (box, icon):
+            v.setFrame_(NSMakeRect(PAD, h - 30 - BADGE, BADGE, BADGE))
+        eyebrow = ui.label("CHANGE RULES", 11, 0.4, NSColor.secondaryLabelColor(), width=w - text_x - PAD)
+        eyebrow.setFrameOrigin_((text_x, h - 30 - 14))
+        title = ui.label("Ask your AI agent", 21, 0.3, width=w - text_x - PAD)
+        title.setFrameOrigin_((text_x, h - 30 - 14 - 3 - title.frame().size.height))
+        y = h - 30 - BADGE - 18 - body_h
+        body.setFrame_(NSMakeRect(PAD, y, w - 2 * PAD, body_h))
+        y -= 16 + box_h
+        well = ui.well(NSMakeRect(PAD, y, w - 2 * PAD, box_h))
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(PAD + 1, y + 1, w - 2 * PAD - 2, box_h - 2))
+        scroll.setDrawsBackground_(False)
+        scroll.setHasVerticalScroller_(True)
+        scroll.setAutohidesScrollers_(True)
+        self.agent_text = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, w - 2 * PAD - 2, box_h - 2))
+        self.agent_text.setEditable_(False)
+        self.agent_text.setSelectable_(True)
+        self.agent_text.setDrawsBackground_(False)
+        self.agent_text.setTextContainerInset_((10, 9))
+        self.agent_text.setFont_(NSFont.monospacedSystemFontOfSize_weight_(11.5, 0.0))
+        self.agent_text.setTextColor_(NSColor.labelColor())
+        self.agent_text.textContainer().setWidthTracksTextView_(True)
+        scroll.setDocumentView_(self.agent_text)
+        y -= 10 + hint.frame().size.height
+        hint.setFrameOrigin_((PAD, y))
+        self.agent_copy = NSButton.buttonWithTitle_target_action_("Copy prompt", self, "agentCopy:")
+        self.agent_copy.setKeyEquivalent_("\r")
+        self.agent_copy.setControlSize_(3)
+        cancel = NSButton.buttonWithTitle_target_action_("Close", self, "agentCancel:")
+        cancel.setKeyEquivalent_("\x1b")
+        cancel.setControlSize_(3)
+        self.agent_copy.setFrame_(NSMakeRect(w - PAD - 130, 12, 130, 36))
+        cancel.setFrame_(NSMakeRect(w - PAD - 130 - 10 - 100, 12, 100, 36))
+        for v in (box, icon, eyebrow, title, body, well, scroll, hint, cancel, self.agent_copy):
+            view.addSubview_(v)
 
     def openRules_(self, sender):
         subprocess.run(["open", "-t", self.rules_path], check=False)
@@ -796,7 +876,7 @@ class Controller(NSObject):
         return cur
 
     @objc.python_method
-    def _confirm(self, text: str):
+    def _confirm(self, text: str, seconds: float = 1.4):
         """A short "got it" in the panel, then it goes."""
         self.mode = "done"
         ui.recolor(self.badge_box, "done")
@@ -805,7 +885,7 @@ class Controller(NSObject):
         self.headline.setStringValue_(text)
         self._layout()
         which = self.current
-        AppHelper.callLater(1.4, lambda: self._close() if self.current is which else None)
+        AppHelper.callLater(seconds, lambda: self._close() if self.current is which else None)
 
     def back_(self, sender):
         if self.current is None or self.mode == "done":
@@ -880,8 +960,14 @@ class Controller(NSObject):
         if self.current is None or self.mode == "done":
             return
         d, ev = self.current
-        self.policy.mark_fine(d.rule, ev.screen.url, ev.screen.window_title, d.id)
-        self._confirm("Got it. I'll let pages like this through.")
+        v = ev.reading.verdict(d.rule) if ev.reading is not None else None
+        times = self.policy.mark_fine(d.rule, ev.screen.url, ev.screen.window_title, d.id,
+                                      ev.screen.bundle_id, v.p_hit if v else None)
+        if times >= 2:
+            # Clicks teach one place; a rule that keeps missing needs its wording tested.
+            self._confirm("Got it. Still wrong here? In the menu bar: Change rules with your AI agent.", 3.0)
+        else:
+            self._confirm("Got it. I'll let pages like this through.")
 
     # -- the focus prompt ----------------------------------------------------
 

@@ -1,5 +1,21 @@
 # Making Qualm yours, from the command line
 
+**The easy way is an AI agent** that can run commands on your Mac (Claude
+Code, Codex, Cursor). In Qualm's menu bar, *Change rules with your AI
+agent…* copies a prompt for it, with the pop-ups you recently said were
+wrong. Paste it into your agent and say what you want in your own words. The
+prompt tells the agent to run `qualm guide`, and the guide makes it score
+each change on your own screens before saving it.
+
+Why not by hand: rules and exceptions are sentences a small model reads, and
+it reacts to words, not intentions. On a real Mac, an exception written as
+"chatting with friends in a messaging app such as WeChat, WhatsApp or
+iMessage is fine" pushed WhatsApp's score on the social rule from ~0.17 to
+~0.50: the opposite of what it said. What worked was an allow class, scored
+on that Mac's last 760 screens first (chats 0.56–0.81, social media 0.16 or
+less). The commands below make that kind of check possible; an agent runs
+them for you.
+
 Everything you can personalize is a command. The commands edit the same
 files the app, the pop-up and the review page use: `rules.toml` for rules,
 allow classes and settings, and `data/exceptions.jsonl` for what you taught
@@ -123,7 +139,9 @@ order.
 ## Everything else
 
 ```bash
-# Kinds of page no rule fires on, in your words
+# Kinds of page no rule fires on, in your words. Score a draft first:
+# which of your recent screens it covers, and which pop-ups it would stop.
+qualm allow test chat --what "a chat conversation in a messaging app" --last 500
 qualm allow list
 qualm allow add games --what "a video game or game launcher" --app com.valvesoftware.steam
 qualm allow set music sites+=music.amazon.com
@@ -131,6 +149,9 @@ qualm allow off shopping
 
 # Things that look like a rule but are fine
 qualm except list                  # typed ones, and those learned from "Not this one"
+# "Not this one" on a page with an address lets that address through. In an
+# app window (no address), it lets that window through below the score it
+# had, plus 0.1; `except list` shows the app and the bar.
 qualm except add videos "a lecture or conference talk"
 qualm except remove shortvideo "How to fix a bike chain"   # the text, page title or URL
 
@@ -191,10 +212,12 @@ qualm schema            # every field and its grammar
 
 ## For an agent
 
-`.claude/skills/qualm/SKILL.md` is the operating guide for Claude Code:
+`qualm guide` prints the operating guide (the same text as
+`.claude/skills/qualm/SKILL.md`, which Claude Code picks up in this repo):
 start with `status`, `rules list` and `schema`, map the user's words onto
-fields, dry-run, respect the question limit, and test a new rule before
-switching it on. A user saying "stop me watching streams during work, but
+fields, dry-run, respect the question limit, score every wording on the
+user's screens (`rules test`, `allow test`) before saving it, and never put
+app or site names into an exception to exclude them. A user saying "stop me watching streams during work, but
 lectures are fine" maps to:
 
 ```bash

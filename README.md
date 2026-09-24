@@ -43,7 +43,7 @@ search is on purpose. The fifth thread opened from a feed is drift.
   default: it goes back off the site (to the lecture before the Shorts, not the next feed), or to
   a new tab if there's nothing to go back to; in an app, it closes the window (a photo opened from a chat) or, if that's the only one, hides the app. *I need it* unlocks after a short wait that grows each time you use it, and each
   time you come back after going back, and asks what for. The wording changes now and then, on purpose, so it doesn't turn
-  into wallpaper. *Not this one* teaches the rule an exception, and *Never here* silences an app or site.
+  into wallpaper. *Not this one* lets that page through (in an app, that window, below the score it had), and *Never here* silences an app or site.
 - **Checks in instead of counting a daily budget.** For entertainment video and social media,
   it asks on arrival: what are you here for, and for 5, 15 or 30 minutes? Then it stays quiet
   until that time is up, and *Done* takes you back. Each session today makes the next one wait
@@ -105,10 +105,15 @@ flowchart LR
   model read, and 92% of real calls had been re-asks.
 - **Rules are sentences, not site lists.** "Short videos made for endless swiping" works on a site
   nobody listed. Sites and URL patterns are there for what must always count.
-- **Everything is a command**, so you can personalize it from a terminal, or have Claude Code do it
-  ([.claude/skills/qualm](.claude/skills/qualm/SKILL.md)): `qualm rules add news --what "news
-  articles and headlines" --check-in`, then `rules test`, `rules label` and `rules tune`.
-  [docs/PERSONALIZE.md](docs/PERSONALIZE.md) covers all of it.
+- **Change rules with your AI agent, not by hand.** Rules are sentences a small model reads, and
+  wording that reads right can make it worse: on a real Mac, an exception naming WeChat, WhatsApp
+  and iMessage made the social rule flag WhatsApp more (~0.17 → ~0.50). So every change is a
+  command that can be scored on your own recent screens first (`rules test`, `allow test`), and an
+  agent that runs commands (Claude Code, Codex, Cursor) does that for you. In the menu bar,
+  *Change rules with your AI agent…* copies a prompt for it, with the pop-ups you recently said were
+  wrong; the agent runs `qualm guide` and takes it from there. Say "WeChat chats aren't social
+  media" and it measures an allow class for chats before saving it.
+  [docs/PERSONALIZE.md](docs/PERSONALIZE.md) covers the commands.
 
 ## Get started
 

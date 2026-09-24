@@ -22,7 +22,7 @@ from pathlib import Path
 from .decide import Reading
 from .policy import OWN_TITLES, OWN_URLS, gate
 from .review import MIN_EACH, _pick, _pr, load_judgements, load_reviews, rule_answers, save_review
-from .rules import Rule, Settings, rule_question
+from .rules import AllowClass, Rule, Settings, allow_question, rule_question
 
 
 def question_key(rule: Rule, lang: str) -> str:
@@ -101,6 +101,40 @@ def run(client, data_dir: Path, rule: Rule, settings: Settings, last: int = 100,
                 "you_said": None if answer is None else "yes" if answer else "no",
             })
     rows.sort(key=lambda r: -r["p_hit"])
+    return rows
+
+
+def run_allow(client, data_dir: Path, c: AllowClass, settings: Settings, last: int = 100, on_progress=None) -> list[dict]:
+    """Ask an allow class's yes/no question on your last `last` distinct
+    screens. Each row says which rules stepped in there (or would have,
+    as far as the log knows) and so would now be let through. Highest first."""
+    from .decide import score_shift, shifted
+
+    q = allow_question(c, settings.lang)
+    qkey = hashlib.sha1(json.dumps(["allow", q.model_dump(mode="json", exclude_none=True)], sort_keys=True,
+                                   ensure_ascii=False).encode()).hexdigest()[:12]
+    key = f"allow:{c.id}"
+    known = load_trials(data_dir, key, qkey)
+    k = score_shift(getattr(client, "backend", "kev"))
+    screens = recent_screens(data_dir, last)
+    rows = []
+    with (data_dir / "trials.jsonl").open("a", encoding="utf-8") as log:
+        for n, j in enumerate(screens, 1):
+            if j["id"] in known:
+                p = known[j["id"]]
+            else:
+                p = shifted(float(client.system_one(state=j["state"], questions={"a": q}).answers["a"].noul), k)
+                log.write(json.dumps({"rule": key, "q": qkey, "jid": j["id"], "p_hit": round(p, 4),
+                                      "at": datetime.now().isoformat(timespec="seconds")}) + "\n")
+                log.flush()
+            if on_progress:
+                on_progress(n, len(screens))
+            s = j["screen"]
+            stepped_in = sorted({d["rule"] for d in j.get("decisions", []) if d.get("action") == "intervene" and d.get("rule")})
+            rows.append({"id": j["id"], "at": j["at"], "p": round(p, 3), "is_it": p >= c.threshold,
+                         "app": s.get("app", ""), "title": s.get("window_title", ""), "url": s.get("url", ""),
+                         "stepped_in": stepped_in})
+    rows.sort(key=lambda r: -r["p"])
     return rows
 
 

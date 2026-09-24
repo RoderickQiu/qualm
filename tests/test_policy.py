@@ -229,6 +229,26 @@ def test_not_this_one_allows_the_url_and_teaches_the_model(policy, tmp_path):
     assert see(again, "https://a.com/x", reading(shortvideo=0.9)) == [("allow", "shortvideo")]
 
 
+def test_not_this_one_in_an_app_lets_that_window_through_below_its_score(policy, tmp_path):
+    chats = {"app": "WeChat", "window_title": "Weixin", "visible_text": ["File Transfer", "wow"]}
+    viewer = chats | {"window_title": "Photos and Videos"}
+    wechat = "com.tencent.xinWeChat"
+    assert policy.mark_fine("feeds", "", "Weixin", bundle_id=wechat, p_hit=0.55) == 1
+    assert actions(policy.decide(chats, reading(feeds=0.6), wechat)) == [("allow", "feeds")]
+    assert actions(policy.decide(chats, reading(feeds=0.9), wechat)) == [("intervene", "feeds")]  # well above it
+    assert actions(policy.decide(viewer, reading(feeds=0.6), wechat)) == [("intervene", "feeds")]  # another window
+    assert actions(policy.decide(chats, reading(feeds=0.6), "com.other")) == [("intervene", "feeds")]  # another app
+    # Not read as words: an app's name in an exception made the model flag it more.
+    assert next(r for r in policy.rules if r.id == "feeds").exceptions == ()
+    assert policy.mark_fine("feeds", "", "Weixin", bundle_id=wechat, p_hit=0.7) == 2  # the bar only rises
+    assert actions(Policy(SETTINGS, RULES, tmp_path).decide(chats, reading(feeds=0.75), wechat)) == [("allow", "feeds")]
+    # `except remove feeds Weixin` undoes it.
+    with (tmp_path / "exceptions.jsonl").open("a") as f:
+        f.write(json.dumps({"rule": "feeds", "title": "Weixin", "removed": True}) + "\n")
+    policy.reload_exceptions()
+    assert actions(policy.decide(chats, reading(feeds=0.6), wechat)) == [("intervene", "feeds")]
+
+
 def test_interventions_and_responses_are_logged(policy, tmp_path):
     d = policy.decide({"url": "https://a.com/x"}, reading(shortvideo=0.9))[0]
     policy.log_intervention(d, {"app": "Safari"}, reading(shortvideo=0.9))
@@ -533,3 +553,53 @@ def test_the_headline_rotates_but_focus_words_do_not():
     assert all("short videos made for endless swiping" in h for h in heads)
     focus = {"intent": "write the report", "until": time.time() + 600}
     assert {headline(d, rule, "en", focus, n=n)[1] for n in range(3)} == {"You're here to: write the report."}
+
+
+def test_allow_test_says_which_pop_ups_a_kind_of_page_would_stop(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from qualm.rules import AllowClass
+    from qualm.trial import run_allow
+
+    monkeypatch.delenv("QUALM_SHIFT", raising=False)
+    screens = [("a", "Weixin", ["intervene"]), ("b", "Weixin", []), ("c", "小红书", ["intervene"])]
+    with (tmp_path / "judgements.jsonl").open("w") as f:
+        for jid, title, acts in screens:
+            f.write(json.dumps({"id": jid, "at": "2026-09-23T20:00:00", "screen": {"app": "x", "window_title": title},
+                                "state": {"window_title": title, "visible_text": [jid]},
+                                "decisions": [{"action": a, "rule": "social"} for a in acts]}) + "\n")
+
+    class Client:
+        backend, asked = "kev", 0
+
+        def system_one(self, state, questions):
+            Client.asked += 1
+            return NS(answers={"a": NS(noul=0.8 if state["window_title"] == "Weixin" else 0.1)})
+
+    chat = AllowClass("chat", "a chat conversation", threshold=0.5)
+    rows = run_allow(Client(), tmp_path, chat, Settings(), last=10)
+    assert [(r["id"], r["is_it"], r["stepped_in"]) for r in rows] == [
+        ("b", True, []), ("a", True, ["social"]), ("c", False, ["social"])]
+    run_allow(Client(), tmp_path, chat, Settings(), last=10)
+    assert Client.asked == 3  # the same question on the same screen is asked once
+
+
+def test_the_agent_prompt_names_the_pop_ups_you_said_were_wrong(tmp_path):
+    from qualm import agent
+
+    lines = [
+        {"at": "2026-09-23T20:30:00", "type": "intervention", "id": "d1", "rule": "social",
+         "screen": {"app": "WeChat", "window_title": "Weixin"}},
+        {"at": "2026-09-23T20:30:05", "type": "response", "id": "d1", "rule": "social", "response": "fine"},
+        {"at": "2026-09-23T20:31:00", "type": "intervention", "id": "d2", "rule": "feeds",
+         "screen": {"app": "Chrome", "window_title": "Home", "url": "https://www.youtube.com/"}},
+        {"at": "2026-09-23T20:31:05", "type": "response", "id": "d2", "rule": "feeds", "response": "back"},
+    ]
+    (tmp_path / "decisions.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+    from datetime import datetime
+
+    got = agent.wrong_popups(tmp_path, now=datetime(2026, 9, 23, 21, 0))
+    assert got == ['- 20:30 social popped up in WeChat, window "Weixin"; I said not this one (decision d1)']
+    assert agent.wrong_popups(tmp_path, now=datetime(2026, 9, 25, 21, 0)) == []  # older than a day
+    p = agent.prompt(tmp_path)
+    assert "guide` first" in p and "rules.toml by hand" in p and p.endswith("What I want: ")
