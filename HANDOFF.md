@@ -8,7 +8,8 @@ late on the night of 2026-09-23 after an audit for a fresh user, early on
 2026-09-24 after its verification round, and later that morning after the
 third and last round (see "A fresh user's audit"). This is the working
 document: update the Status and Measured sections as you go. README.md is
-the public face: what it is, screenshots, getting started.
+the public face and stays short: built on Kev and Jev, local-ready, what it
+does, getting started. docs/MANUAL.md is the long version.
 
 ## What this is
 
@@ -1107,6 +1108,7 @@ for System Events alone in Firefox and the other browsers driven by keys.
 | `src/qualm/autostart.py` | `serve`, `install`, `uninstall`: the model server in a terminal, the app's LaunchAgent, the `qualm` shim |
 | `src/qualm/cli.py` | `probe` / `ask` / `app` / `watch` / `label` / `harvest` / `eval` / `export`, plus the commands above |
 | `src/qualm/rules.example.toml` | The starter rules and allow classes, in English, with measured thresholds and why in `note` |
+| `docs/MANUAL.md` | The long README: every feature, setup in full (permissions, mirrors, from source), commands, the numbers, privacy |
 | `docs/PERSONALIZE.md` | Every personalization command, the question limit, and the test-then-tune loop for a new rule |
 | `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user |
 | `docs/MODELS.md` | On this Mac vs hosted: speed, memory, disk, Jev's usage and cost, from measurements |
