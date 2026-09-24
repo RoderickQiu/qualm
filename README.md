@@ -41,7 +41,7 @@ search is on purpose. The fifth thread opened from a feed is drift.
 - **Steps in gently.** A dark, blurred panel dims the screen and says why; until you answer, clicks
   behind it don't go through (switch that off in the menu bar). *Take me back* is the
   default: it goes back off the site (to the lecture before the Shorts, not the next feed), or to
-  a new tab if there's nothing to go back to. *I need it* unlocks after a short wait that grows each time you use it, and each
+  a new tab if there's nothing to go back to; in an app, it closes the window (a photo opened from a chat) or, if that's the only one, hides the app. *I need it* unlocks after a short wait that grows each time you use it, and each
   time you come back after going back, and asks what for. The wording changes now and then, on purpose, so it doesn't turn
   into wallpaper. *Not this one* teaches the rule an exception, and *Never here* silences an app or site.
 - **Checks in instead of counting a daily budget.** For entertainment video and social media,

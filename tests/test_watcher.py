@@ -307,3 +307,17 @@ def test_take_me_back_does_nothing_if_you_already_left():
     tab = FakeTab(["https://www.xiaohongshu.com/explore", "https://mail.example/"])
     assert w.leave(tab, "https://www.xiaohongshu.com/explore", poll=0, patience=0) == "left"
     assert tab.url() == "https://mail.example/" and not tab.blanked
+
+
+def test_take_me_back_closes_the_photo_viewer_not_the_chats():
+    chats, viewer = ("Weixin", [228.0, 65.0, 1284.0, 853.0]), ("Photos and Videos", [221.0, 57.0, 825.0, 901.0])
+    assert w.judged_window([viewer, chats], "Photos and Videos", [221.0, 57.0, 825.0, 901.0]) == 0
+    assert w.judged_window([viewer, chats], "Photos and Videos", []) == 0  # no frame: by title
+    assert w.judged_window([viewer, chats], "Photos and Videos", [221.5, 56.0, 825.0, 901.0]) == 0  # moved a pixel
+
+
+def test_take_me_back_hides_an_app_with_one_window_or_an_unknown_one():
+    chats = ("Weixin", [228.0, 65.0, 1284.0, 853.0])
+    assert w.judged_window([chats], "Weixin", chats[1]) is None
+    assert w.judged_window([chats, ("Weixin", [0.0, 0.0, 400.0, 300.0])], "Weixin", []) is None  # two alike
+    assert w.judged_window([chats, ("Settings", [0.0, 0.0, 400.0, 300.0])], "Photos and Videos", [9.0, 9.0, 9.0, 9.0]) is None

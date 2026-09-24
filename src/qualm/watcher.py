@@ -18,12 +18,13 @@ from pathlib import Path
 from typing import Callable
 
 from AppKit import NSRunningApplication, NSWorkspace
+from ApplicationServices import AXUIElementCreateApplication, AXUIElementPerformAction
 
 from .decide import Reading, ask, backend, make_client
 from .policy import Decision, Policy, host_of
 from .presence import Presence
 from .rules import build_questions, load_config
-from .state import DEFAULT_CHAR_BUDGET, ScreenState, capture
+from .state import DEFAULT_CHAR_BUDGET, ScreenState, _ax, _clean, _frame, _title, capture
 
 PANEL_TITLE = "Qualm"  # the intervention panel's window title
 SETUP_TITLE = "Set up Qualm"  # the first-run window (onboard.py)
@@ -383,14 +384,48 @@ def leave(tab, url: str, fine: Callable[[str], bool] = lambda u: False, poll: fl
     return "left"
 
 
-def go_back(bundle_id: str, url: str = "", fine: Callable[[str], bool] = lambda u: False) -> None:
-    """Leave the page: in a browser, back off the site (see leave()); any other app is hidden."""
+def judged_window(windows: list[tuple[str, list[float]]], title: str, frame: list[float]) -> int | None:
+    """Which of an app's open windows (title, frame) the pop-up was about, if
+    it's one of several: WeChat's photo viewer over the chats. None when it's
+    the only one, or can't be told apart; then the app is hidden instead."""
+    if len(windows) < 2:
+        return None
+
+    def near(f):
+        return bool(frame) and len(f) == 4 and all(abs(a - b) <= 2 for a, b in zip(f, frame))
+
+    for match in (lambda t, f: t == title and near(f), lambda t, f: near(f), lambda t, f: t == title):
+        hits = [i for i, (t, f) in enumerate(windows) if match(t, f)]
+        if len(hits) == 1:
+            return hits[0]
+    return None
+
+
+def close_window(pid: int, app_name: str, title: str, frame: list[float]) -> bool:
+    """Close the window the pop-up was about, if the app has others open
+    (its close button, through Accessibility). True if it's gone."""
+    root = AXUIElementCreateApplication(pid)
+    windows = [w for w in (_ax(root, "AXWindows") or []) if not _ax(w, "AXMinimized")]
+    i = judged_window([(_title(_clean(_ax(w, "AXTitle")), app_name), _frame(w)) for w in windows], title, frame)
+    button = _ax(windows[i], "AXCloseButton") if i is not None else None
+    if button is None or AXUIElementPerformAction(button, "AXPress") != 0:
+        return False
+    time.sleep(0.3)
+    return len([w for w in (_ax(root, "AXWindows") or []) if not _ax(w, "AXMinimized")]) < len(windows)
+
+
+def go_back(screen: ScreenState, fine: Callable[[str], bool] = lambda u: False) -> None:
+    """Leave the page: in a browser, back off the site (see leave()). In any
+    other app, close the window if it's one of several (a photo opened from a
+    chat), else hide the app."""
+    bundle_id, url = screen.bundle_id, screen.url
     apps = NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle_id)
     if not apps:
         return
     app = apps[0]
     if bundle_id not in BROWSERS:
-        app.hide()
+        if not close_window(app.processIdentifier(), screen.app, screen.window_title, screen.frame):
+            app.hide()
         return
     if bundle_id in CHROMIUM or bundle_id == "com.apple.Safari":
         if leave(Tab(bundle_id), url, fine) != "no tab":

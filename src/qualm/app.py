@@ -507,7 +507,7 @@ class Controller(NSObject):
         self.policy.log_response(d.id, "back", d.rule)
         self._nudged.pop((d.rule, host_of(ev.screen.url) or ev.screen.bundle_id), None)
         if not self.demo:
-            threading.Thread(target=go_back, args=(ev.screen.bundle_id, ev.screen.url, self.policy.page_fine),
+            threading.Thread(target=go_back, args=(ev.screen, self.policy.page_fine),
                              daemon=True).start()
 
     def nudgeLater_(self, sender):
@@ -819,7 +819,7 @@ class Controller(NSObject):
             self.policy.log_response(d.id, "back", d.rule)
         self.policy.rejudge_in(RECHECK_S)  # still here then (no Back in that app): step in again
         if not self.demo:
-            threading.Thread(target=go_back, args=(ev.screen.bundle_id, ev.screen.url, self.policy.page_fine),
+            threading.Thread(target=go_back, args=(ev.screen, self.policy.page_fine),
                              daemon=True).start()
 
     def need_(self, sender):

@@ -220,6 +220,13 @@ daily budgets"): it reads as an allowance, puts no friction on the first
   left without a panel, so a bug can't leave the screen unclickable.
   Also: the feeds pattern `xiaohongshu\.com/explore` matched every note
   (`/explore/<id>`); now only the explore page itself.
+- **Take me back closes the window, not the app** (reported by the user:
+  a photo opened from a WeChat chat, a separate "Photos and Videos" window,
+  stayed open and the chats came to the front). Outside browsers,
+  `watcher.close_window()` presses the close button of the window the
+  pop-up was about (matched by title and frame) when the app has others
+  open; with one window, the app is hidden as before. Verified live on two
+  Finder windows; not yet on WeChat's viewer itself.
 
 Verified: 75 tests (the session life cycle, the wait, the migration, and a
 watcher test where only the re-check can say time's up; it caught a bug
