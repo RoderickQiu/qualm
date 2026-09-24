@@ -64,7 +64,7 @@ def fake_ax(monkeypatch):
     monkeypatch.setattr(st, "_ax", lambda n, attr: n.get(attr) if isinstance(n, dict) else None)
 
 
-AUTOFILL = node("AXPopover", [text("Apple Account"), text("Continue with Touch ID"), text("Tianrun Qiu")])
+AUTOFILL = node("AXPopover", [text("Apple Account"), text("Continue with Touch ID"), text("Jane Appleseed")])
 
 
 def test_safari_autofill_left_open_is_not_the_page(fake_ax):

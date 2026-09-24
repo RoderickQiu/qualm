@@ -24,7 +24,7 @@ from typesafe_sdk import Choice, Noul
 
 # "deny": step in at once. "check_in": ask what for and for how long when
 # you arrive, stay out of the way until then, step in when the time is up
-# (seenot-variant's TIME_CAP, without a daily budget). NO_MONITOR is
+# (SeeNot's TIME_CAP, without a daily budget). NO_MONITOR is
 # [settings] no_monitor: those apps are never read.
 Kind = Literal["deny", "check_in"]
 # "content": judge the opened item; a feed of candidates never hits.

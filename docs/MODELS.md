@@ -85,13 +85,13 @@ So the starters list no home page that is a login form when logged out
 
 From Qualm's own log (data/judgements.jsonl), the two days it ran:
 
-| Day | Active | Judgements | Model calls | Cached | Without the model |
-|---|---|---|---|---|---|
-| 2026-09-22 | ~7.8 h | 1,193 | 877 | 137 | 179 |
-| 2026-09-23 | ~6.8 h | 686 | 339 | 230 | 117 |
+| Day | Judgements | Model calls | Cached | Without the model |
+|---|---|---|---|---|
+| 2026-09-22 | 1,193 | 877 | 137 | 179 |
+| 2026-09-23 | 686 | 339 | 230 | 117 |
 
 The first day ran mostly before the answer cache was in place, so the second
-day is the better guide: **about 340 calls in a workday, ~50 an hour**. The
+day is the better guide: **about 340 calls in a workday**. The
 busiest hour had 152.
 
 ### Tokens per call
@@ -163,8 +163,8 @@ running, not its total RAM. Setup and `qualm doctor` count what apps hold
 now, in RAM or swapped out, and recommend the local model only if 7.1 GB plus
 2 GB of headroom is free.
 
-On 2026-09-23 this Mac had 24 GB and about 37 GB in use (22 GB of it swapped
-out), so the answer was "not enough: it would swap". The running server showed
+On a 24 GB Mac with more than that in use (much of it swapped out), the
+answer is "not enough: it would swap". A server running there anyway showed
 why that matters:
 
 - It held 6.0 GB, but only 20 MB of it was in RAM; the rest was swapped out.
@@ -172,7 +172,7 @@ why that matters:
 - Readings took 3–20 s, against ~1 s with memory to spare, and one timed out
   at 30 s.
 - On the first day of real use it was the same: p50 1.8 s and p95 8.5 s,
-  rising to 11.5 s around midnight.
+  rising to 11.5 s in the slowest hour.
 
 ### Starting it
 

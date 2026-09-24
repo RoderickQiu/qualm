@@ -212,9 +212,9 @@ daily budgets"): it reads as an allowance, puts no friction on the first
   "Checked in" as a pop-up outcome, and "what you said, and what you did".
 - The model's question for these rules is word for word the old
   time-cap question, so thresholds and trial numbers still hold.
-- **Take me back leaves the site** (reported by the user on Chrome: one
-  Cmd-[ on 小红书 went from a note to the feed, which popped up again; and
-  the dimmer doesn't take clicks, so they had browsed on meanwhile and the
+- **Take me back leaves the site** (found in real use on Chrome: one
+  Cmd-[ on a Xiaohongshu note went to the feed, which popped up again; and
+  the dimmer didn't take clicks, so browsing had gone on meanwhile and the
   keystroke hit another page). `watcher.leave()` goes back until the tab is
   off the pop-up's host or on a page judged fine (`Policy.page_fine`), else
   a new-tab page; Chromium through AppleScript (`go back`, `URL of active
@@ -225,21 +225,21 @@ daily budgets"): it reads as an allowance, puts no friction on the first
   left without a panel, so a bug can't leave the screen unclickable.
   Also: the feeds pattern `xiaohongshu\.com/explore` matched every note
   (`/explore/<id>`); now only the explore page itself.
-- **Take me back closes the window, not the app** (reported by the user:
-  a photo opened from a WeChat chat, a separate "Photos and Videos" window,
+- **Take me back closes the window, not the app** (found in real use: a
+  photo opened from a chat, in the chat app's separate viewer window,
   stayed open and the chats came to the front). Outside browsers,
   `watcher.close_window()` presses the close button of the window the
   pop-up was about (matched by title and frame) when the app has others
   open; with one window, the app is hidden as before. Verified live on two
-  Finder windows; not yet on WeChat's viewer itself.
-- **Chats aren't social media; rules change through an agent** (user,
-  same night: WeChat chats kept checking in as social, four "Not this one"
-  didn't stop it, and "hand-written rules backfire a lot"). Measured on
-  their 760 screens: WeChat chats scored 0.15-0.41 on social (threshold
+  Finder windows; not yet on the chat app's viewer itself.
+- **Chats aren't social media; rules change through an agent** (from real
+  use: WeChat chats kept checking in as social, four "Not this one" didn't
+  stop it, and hand-written rules backfired). Measured on 760 real
+  screens: WeChat chats scored 0.15-0.41 on social (threshold
   0.30). An exception in words ("chatting in WeChat, WhatsApp or iMessage
   is fine") pushed WhatsApp from ~0.17 to ~0.50; an allow class `chat`
   scored chats 0.56-0.81 and social pages 0.16 or less, so it's a starter
-  now (live on their Mac). Three changes follow from it:
+  now. Three changes follow from it:
   (1) "Not this one" in a window with no address saves a score bar for
   (rule, app, title) at its score + 0.1 (`FINE_MARGIN`) instead of the
   title as words, which the model couldn't use ("Weixin");
@@ -276,18 +276,18 @@ capture (state.py, ocr.py) and housekeeping (retention.py, uninstall,
 keychain); the rest in the main thread.
 
 - **Feeds, precision first**: in real use every feeds pop-up that fired on
-  the score alone (0.35-0.40: Slack's activity inbox, a claude.ai artifact,
+  the score alone (0.35-0.40: a work chat's activity inbox, an AI chat's page,
   Qualm's old page) was wrong, and every right one came from a site pattern
   or feed_hit. Threshold 0.3 -> 0.5, plus weibo.com/ and m.weibo.cn/ as
   sites. Replaying the real log: 10 pop-ups on 9 pages -> 5 on 4, all
-  Xiaohongshu feeds. Trials: precision 1.00 for Kev and Jev, recall Kev
+  genuine feeds. Trials: precision 1.00 for Kev and Jev, recall Kev
   0.60 -> 0.67, Jev 0.67. Applied to the user's rules.toml too.
 - **"Sensitive" audited**: 125 skipped of 1,933 judgements: 51 lock screen,
   4 Touch ID, 69 Chrome, 1 other. The Chrome ones had no content logged; by
-  the pages before and after: checkouts, CMU/Duo sign-in, a password
+  the pages before and after: checkouts, a single sign-on page, a password
   manager, mail, ad consoles; none entertainment. Private pages now keep
   their site (host only) and score, never title, text or screenshot.
-- **The shift on real screens**: 250 of the user's own screens (messaging
+- **The shift on real screens**: 250 real screens (messaging
   and mail left out) re-asked to Jev: the same decision as Kev on all 250;
   none taken for private; page kind agrees 86%, purpose 78%; 0.19 s p50.
 - **Capture** (fork): Safari's AutoFill popover no longer leaks into later
@@ -316,8 +316,7 @@ keychain); the rest in the main thread.
   here to: ...", Take me back / Not now), no dim, keyboard not taken, and the
   full panel if still there 20 s later; the headline rotates between three
   wordings per kind (a tooltip says so); focus words never rotate.
-- **The 8-bit copy published** (the user's Hugging Face account, uploaded by
-  the user: the permission classifier blocked me): RoderickQiu/kev-4b-mlx-8bit
+- **The 8-bit copy published** on Hugging Face: RoderickQiu/kev-4b-mlx-8bit
   with head.pt, tokenizer, provenance.json (revisions, method, SHA-256),
   LICENSE, a model card (credits, changes, quality). kevserve fetches it when
   the provenance and hash match (QUALM_PREBUILT; localmodel.PREBUILT). A real
@@ -361,12 +360,12 @@ terminals, everything relative to the checkout, "16 GB" as the bar.
   |dp| 0 on 15 pages x 11 questions), from both the dev Kev env and the
   installed runtime. Found and fixed: Kev sizes the pointer head from the
   embedding's width, which is packed on quantized weights (1024 -> 256).
-  Kev-4B's cache is built on its next start (not done here: the Mac had
-  22 GB in swap and the live server running).
+  Kev-4B's cache is built on its next start (not done here: the live
+  server was running).
 - **Memory in numbers, not "16 GB"**: the server holds 6.1-7.1 GB
   (measured); setup compares that with what's free now, counting swapped-out
-  pages as in use. This Mac: 24 GB, ~33 GB in use (22 GB swapped out) ->
-  "not enough: it would swap", hosted recommended.
+  pages as in use. On a 24 GB Mac already deep in swap: "not enough: it
+  would swap", hosted recommended.
 - **`qualm setup`** (and flags for scripts: `--backend`, `--key`, `--rules`,
   `--login/--no-login`, `--permission`), and the **setup window**
   (`onboard.py`), both through `setup.apply`: where the model runs (cards
@@ -406,8 +405,8 @@ terminals, everything relative to the checkout, "16 GB" as the bar.
   through (hosted, a rule off, back, on).
 - **Jev's cost, from real use** ($0.042 per million input tokens, output
   free; early-access pricing): a call is ~1,500 input tokens (5 rules, 2
-  allow classes); the two logged days made 339 and 877 model calls over
-  ~7-8 active hours: ~$0.02-0.06 a day, ~$0.50-1.25 a month. Each rule adds
+  allow classes); the two logged days made 339 and 877 model calls:
+  ~$0.02-0.06 a day, ~$0.50-1.25 a month. Each rule adds
   ~127 Jev tokens (measured). All of it, with Kev's memory, in docs/MODELS.md.
 
 93 tests.
@@ -1149,7 +1148,7 @@ while it runs).
 Never flagged: `[[allow]]` classes in rules.toml are kinds of page described
 in words (shipped: shopping, "an online store: a product page, listing, cart
 or checkout"); if the model says a page is one, no rule fires there except a
-URL pattern. On the trial pages plus real CMU store pages, stores scored
+URL pattern. On the trial pages plus real store pages, stores scored
 0.42-0.92 and every other page 0.18 or less, hence threshold 0.35. Music
 ships as a second class (a player scored 0.96-0.97; every trial page,
 YouTube and Douyin included, 0.16 or less), with known music sites and apps
@@ -1177,7 +1176,7 @@ rules ask on arrival (above, and docs/POLICY.md).
    budget runs out. `label` stores the *full* capture, so `eval --budget N`
    can re-cut it to test different sizes.
 3. **The prose prompt becomes typed questions.** The Android prompt
-   (`seenot-variant/app/src/main/java/com/seenot/app/ai/screen/ScreenAnalyzer.kt`,
+   (SeeNot's `app/src/main/java/com/seenot/app/ai/screen/ScreenAnalyzer.kt`,
    around lines 1408–1516) does everything in one prompt. Here it is split:
    - `sensitive`: a yes/no question.
    - `page_kind`: feed / single_item / search / work / other.
@@ -1202,8 +1201,8 @@ rules ask on arrival (above, and docs/POLICY.md).
 ### Trial data (read this before trusting any number below)
 
 `data/auto_labels.jsonl`, 119 records, made by `experiments/collect.py`:
-pages loaded one by one in a background Safari window (Chrome's Focus Shield
-extension blocks YouTube Shorts) and captured through the same Accessibility
+pages loaded one by one in a background Safari window (a blocker extension
+in Chrome hid YouTube Shorts) and captured through the same Accessibility
 walk as `capture()`, plus one Cursor window. Labels come from what the page
 is, decided by the script author, not by you:
 
@@ -1338,15 +1337,14 @@ that picks which rules to ask; either would let the limit rise.
 ### Real use, first day (2026-09-22, 1,242 judgements)
 
 - Latency, bf16 Kev-4B, 5 rules + 2 allow classes: p50 1.8 s, p95 8.5 s,
-  and p50 11.5 s around midnight. The trials measured 0.85 s. The
-  difference was swap: 14.7 of 15.4 GB in use, the server's resident set
-  down to 57 MB (its weights paged out).
-- 20 pop-ups. True: Xiaohongshu explore (back), a Reddit thread (back
-  twice). False, since fixed: WeChat and WhatsApp windows showing only a
-  name (now "too little on screen"), a Chrome address-bar dropdown, Qualm's
-  own review page, music.youtube.com (now an allow class), an Apple Ads
-  page (feed_hit, now needs P(entertain) >= 0.6). Your call: claude.ai and
-  linkedin.com ("Never here").
+  and p50 11.5 s in the slowest hour. The trials measured 0.85 s. The
+  difference was swap: the server's resident set down to 57 MB (its
+  weights paged out).
+- 20 pop-ups. True: a feed and a forum thread (went back). False, since
+  fixed: chat windows showing only a name (now "too little on screen"), a
+  Chrome address-bar dropdown, Qualm's own review page, music.youtube.com
+  (now an allow class), an ads console page (feed_hit, now needs
+  P(entertain) >= 0.6).
 - 104 judgements skipped as sensitive: 60 Chrome pages, 40 the lock screen.
   Not audited: a false "sensitive" hides a page from every rule.
 
@@ -1443,9 +1441,8 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 ## Next steps, in order
 
 0. **Switch to the audited code, in this order.** The audit is merged
-   into main (the checkout was updated at 07:1x on 2026-09-24), but the
-   app that was running then (`qualm app` from the checkout, started with
-   nohup at 21:12) is still the old code in memory. Until it's restarted,
+   into main (2026-09-24), but an app started before that (`qualm app`
+   from the checkout) is still the old code in memory. Until it's restarted,
    actions that load a module for the first time (the dashboard's data,
    some menu items) may fail; the watching loop itself is safe (its one
    late import, ocr.py, is compatible). `dist/Qualm.app` was rebuilt from
@@ -1461,7 +1458,7 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    2. `uv sync` in the checkout. The three rounds are one commit on main;
       their 25 separate commits (one per area and round, with what each
       fixed and why) are kept on the branch `fresh-user-audit-history`.
-   3. Start `uv run qualm app` (the same nohup command as before). `uv run
+   3. Start `uv run qualm app` again. `uv run
       qualm status` should say "app: running", not "an older copy". Its
       start records your rules.toml as the version Qualm last saved (your
       home has no backups/ yet), so a later hand edit can be undone on its
@@ -1484,9 +1481,7 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    someone sent is fine; on the rule's own sites it now pops up): to take
    the new starter wording, `rules test videos --what "…"` on your screens,
    then `rules set videos what="…"` (the same for social and livestream),
-   or leave it. Earlier, on 2026-09-23: data copied home by `qualm setup`,
-   the app run from the checkout (nohup, log in ~/Library/Logs/Qualm/app.log)
-   against the existing 8-bit server; readings 3-20 s from swap.
+   or leave it.
 1. **Use the app for a few days, and review.** Browse normally, then go
    through the dashboard's Review tab: "Was Qualm right?" per card; for
    wrong ones, "Is this X?" per rule. Use the menu's "This should have been
@@ -1496,9 +1491,9 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    the wording of a rule is the problem: `rules set ID what="..."`, then
    `rules test ID` and `rules tune`. Not run yet: the CLI loop on a rule
    someone new writes from scratch, with real answers.
-3. **Tell Jared about the 8-bit copy** (published 2026-09-23 as
+3. **Offer the 8-bit copy to Kev upstream** (published 2026-09-23 as
    RoderickQiu/kev-4b-mlx-8bit, Apache-2.0, credited, marked unofficial):
-   he might host it officially; and ask whether PyTorch can be optional for
+   Kev might host it officially; and ask whether PyTorch can be optional for
    MLX serving (most of the 1 GB runtime). Kev-4B, its base and the copy are
    pinned (`localmodel.MODEL`, `BASE`, `PREBUILT`), so upstream commits
    change nothing until the pins move; to take a new checkpoint, publish a
@@ -1518,10 +1513,9 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    `--base` is required with `--init_from`; the default base is Qwen3-0.6B.
 6. **Ship it:** Qualm.app exists (ad-hoc signed; opens and names itself "Qualm", verified); left: a Developer ID and
    notarization if it's to be shared widely (then right-click > Open or Open
-   Anyway isn't needed), a published DMG (the README says to build one for
-   now), a license (none chosen yet), a public repository (the README is
-   written for one), a universal build if Intel Macs matter (hosted works
-   there), and a translated interface.
+   Anyway isn't needed), the first DMG on GitHub Releases (the README
+   points there), a universal build if Intel Macs matter (hosted works
+   there), and a translated interface. Licensed GPL-3.0-or-later (LICENSE).
 
 ## Known problems and gotchas
 
@@ -1572,11 +1566,10 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
   which is always rendered.
 - **Chrome's address-bar dropdown is a web area too.** `capture()` used to
   take it for the page (URL `chrome://omnibox-popup...`), so the model saw a
-  title and nothing else; that's how a CMU store page scored 0.15 for stocks.
+  title and nothing else; that's how a store page scored 0.15 for stocks.
   Chrome's internal URLs are now skipped.
-- **The Kev server of 2026-09-22 was started from
-  ~/Documents/seenot-desktop/experiments/serve_capped.py**, a path gone since
-  the rename (the script is `src/qualm/kevserve.py` now, and the server on
+- **The Kev server of 2026-09-22 was started from the old checkout's
+  experiments/serve_capped.py**, gone since the rename (the script is `src/qualm/kevserve.py` now, and the server on
   8009 on 2026-09-24 runs it). Start one with `qualm serve`, or let the app
   run its own.
 - **Headless Chrome screenshots of the dashboard don't exit** (the page
@@ -1587,7 +1580,7 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
 
 ## Background and sources
 
-- SeeNot Android source: `~/Documents/seenot-variant`. See `ConstraintEnums.kt`
+- SeeNot Android source: a variant of [seenot-app](https://github.com/RoderickQiu/seenot-app). See `ConstraintEnums.kt`
   (DENY / TIME_CAP / NO_MONITOR) and `ScreenAnalyzer.kt`.
 - Offline eval from the SUSTech thesis: WeChat precision went from 79.3% to
   93.0% after 17 repair rules; Taobao from 75.9% to 98.4%. That dataset is

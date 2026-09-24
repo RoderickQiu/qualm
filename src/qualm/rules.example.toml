@@ -78,7 +78,7 @@ apps = ["com.netease.163music", "com.spotify.client", "com.apple.Music", "com.te
 id = "chat"
 description = "a chat conversation in a messaging app: messages between people, in a private or group chat"
 threshold = 0.5
-note = "On a real user's history: WeChat chat windows 0.56-0.81, WhatsApp median 0.81, Slack 0.56; social media pages (Xiaohongshu, Reddit, LinkedIn) 0.16 or less. Without it, WeChat chats scored 0.15-0.41 on social. Moments or Channels inside WeChat: not measured."
+note = "On 760 real screens: WeChat chat windows 0.56-0.81, WhatsApp median 0.81, Slack 0.56; social media pages (Xiaohongshu, Reddit, LinkedIn) 0.16 or less. Without it, WeChat chats scored 0.15-0.41 on social. Moments or Channels inside WeChat: not measured."
 
 [[rules]]
 id = "shortvideo"
@@ -124,7 +124,7 @@ patterns = [
     "^https?://(www\\.)?xiaohongshu\\.com/explore/?([?#]|$)",
 ]
 feed_hit = true
-note = "Any page the model reads as an entertainment feed counts, on any site. The sites are home pages that are feeds whatever the model says, so they also step in while it's down. Facebook's and Instagram's home pages are left to the model: logged out, they're the login form. Threshold 0.5, not 0.3: in real use every hit between 0.3 and 0.5 was wrong (Slack, a claude.ai artifact, an ads console); trials still 1.00 precision, recall 0.67 with feed_hit and sites."
+note = "Any page the model reads as an entertainment feed counts, on any site. The sites are home pages that are feeds whatever the model says, so they also step in while it's down. Facebook's and Instagram's home pages are left to the model: logged out, they're the login form. Threshold 0.5, not 0.3: in real use every hit between 0.3 and 0.5 was wrong (a work chat, an AI chat's page, an ads console); trials still 1.00 precision, recall 0.67 with feed_hit and sites."
 
 [[rules]]
 id = "livestream"

@@ -1,7 +1,7 @@
 """How many tokens the state alone costs, at several --budget values.
 
 Step 1 (this env):  uv run python experiments/state_tokens.py dump data/auto_labels.jsonl > /tmp/states.json
-Step 2 (Kev env):   cd ~/Documents/kev && uv run python ~/Documents/qualm/experiments/state_tokens.py count /tmp/states.json
+Step 2 (Kev env):   cd <your Kev checkout> && uv run python <this repo>/experiments/state_tokens.py count /tmp/states.json
 """
 import json, sys
 

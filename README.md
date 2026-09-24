@@ -83,3 +83,5 @@ it works.
 Qualm is an early prototype, used by its author since September 2026: Apple silicon only, English
 interface, rules in any language. It's a desktop take on
 [SeeNot](https://github.com/RoderickQiu/seenot-app), an Android research app from SUSTech.
+
+Qualm is free software under the [GNU GPL v3](LICENSE) or any later version.
