@@ -1,6 +1,6 @@
 [project]
 name = "qualm-desktop"
-version = "0.1.0b1"
+version = "0.1.0b2"
 description = "Qualm: intent-aware screen intervention on macOS (after SeeNot), decided by a Jev-style typed decision model (local Kev or hosted Jev)"
 readme = "README.md"
 license = "GPL-3.0-or-later"
