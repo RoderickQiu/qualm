@@ -7,6 +7,7 @@ The same steps back `qualm setup` in a terminal and the app's setup window
     ~/Library/Application Support/Qualm/.setup-done  setup ran (the app's setup window looks for it)
     the login keychain                               the TypeSafe key, for the hosted model
     ~/Library/LaunchAgents/com.qualm.app.plist       start at login, if you asked
+    ~/.claude/skills/qualm/SKILL.md                  Claude Code's skill for Qualm, if Claude Code is here and you asked
 
 A checkout that kept rules.toml and data/ in its own folder is copied over
 first (`migrate`), so nothing you taught Qualm is lost. Nothing is deleted.
@@ -65,6 +66,7 @@ class Choices:
     login: bool | None = True  # None: leave start at login as it is
     key: str | None = None  # a new TypeSafe key, for "jev"
     shim: bool = True  # from Qualm.app: a `qualm` command for the terminal
+    skill: bool = False  # Claude Code's skill (agent.py), if Claude Code has run here: the first setup asks for it
     done: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)  # what was left alone, and what to do next
     started: bool = False  # the login item was loaded just now, so the app is starting
@@ -164,7 +166,7 @@ def apply(c: Choices, say=print) -> list[str]:
     """Everything chosen, in one go. Returns what was done, in words; c.notes
     says what was left alone and why. Everything is checked before anything
     is written."""
-    from .agent import command, start_hint
+    from .agent import claude_code, command, install_skill, skill_file, start_hint
 
     starter_rules = [id for id, (table, _) in starter_blocks().items() if table == "rules"]
     if c.backend not in ("kev", "jev"):
@@ -229,5 +231,14 @@ def apply(c: Choices, say=print) -> list[str]:
         if not autostart.on_path(made.parent):
             c.notes.append(f"{made.parent} isn't on your PATH, so a new terminal won't find `qualm` yet. Add it with\n"
                            f"    {autostart.path_line(made.parent)}\n  and open a new terminal; until then, run {made}")
+    if c.skill and not custom and claude_code():
+        try:
+            if made := install_skill():
+                c.done.append(f"Claude Code knows Qualm: its skill is in {made.parent}")
+            else:
+                c.notes.append(f"{skill_file()} is a skill Qualm didn't write: left alone")
+        except OSError as e:
+            c.notes.append(f"couldn't give Claude Code Qualm's skill ({e.strerror or e}): `{command()} skill install` "
+                           "tries again")
     (paths.home() / DONE).write_text(datetime.now().isoformat(timespec="seconds") + "\n", encoding="utf-8")
     return c.done

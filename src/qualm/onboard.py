@@ -61,7 +61,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import autostart, keychain, localmodel, paths
+from . import agent, autostart, keychain, localmodel, paths
 from . import setup as s
 from .watcher import SETUP_TITLE
 
@@ -458,6 +458,13 @@ class Onboarding(NSObject):
             self.shim = NSButton.checkboxWithTitle_target_action_("Add the qualm command to Terminal", None, None)
             self.shim.setState_(1)
             opts.append(self.shim)
+        self.skill = None  # where Claude Code has run: its skill for Qualm (agent.py)
+        if agent.claude_code() and not paths.custom_home() and agent.skill_state() != "other":
+            self.skill = NSButton.checkboxWithTitle_target_action_("Add Qualm's skill to Claude Code", None, None)
+            self.skill.setState_(1)
+            self.skill.setToolTip_("Claude Code then knows Qualm in every session: ask it to change your rules, "
+                                   "or why Qualm popped up.")
+            opts.append(self.skill)
         box = _fill_box(_fixed(_box(radius=12, fill=NSColor.controlBackgroundColor(), border=NSColor.separatorColor()),
                                width=TEXT_W), self.summary, inset=18)
         self.status = _text("", 12, 0.0, NSColor.secondaryLabelColor(), width=TEXT_W)
@@ -624,7 +631,8 @@ class Onboarding(NSObject):
         # The key only goes with the hosted model: it was checked on the model page then.
         choices = s.Choices(self.backend, [rid for rid, sw in self.rule_switches if sw.state()],
                             bool(self.login.state()), self._key() if self.backend == "jev" else None,
-                            bool(self.shim.state()) if self.shim else False)
+                            bool(self.shim.state()) if self.shim else False,
+                            skill=bool(self.skill.state()) if self.skill else False)
         self._busy("Setting up…")
         threading.Thread(target=self._apply, args=(choices,), daemon=True).start()
 

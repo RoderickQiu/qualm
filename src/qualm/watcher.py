@@ -73,6 +73,40 @@ def bound_log(limit: int = LOG_MAX) -> None:
         pass
 
 
+def log_to_file(path: Path) -> bool:
+    """Qualm.app opened from Finder (or `open`) has its output thrown away:
+    macOS connects it to /dev/null. Sent to `path` instead, the login item's
+    log, so there's one place to look whichever way it started. Output
+    going anywhere else (the login item's log, a terminal, a pipe) is left
+    alone. True if anything was redirected."""
+    null = os.stat(os.devnull)
+    moved = False
+    for fd, stream in ((1, sys.stdout), (2, sys.stderr)):
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            st = None
+        if st is not None and (st.st_dev, st.st_ino) != (null.st_dev, null.st_ino):
+            continue
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if stream is not None:
+                stream.flush()
+            log = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        except OSError:
+            return moved
+        os.dup2(log, fd)
+        os.close(log)
+        moved = True
+    if moved:
+        for fd, name in ((1, "stdout"), (2, "stderr")):
+            if getattr(sys, name) is None:  # started with that descriptor closed
+                setattr(sys, name, open(fd, "w", buffering=1, closefd=False))
+            elif hasattr(getattr(sys, name), "reconfigure"):
+                getattr(sys, name).reconfigure(line_buffering=True)  # a line at a time, as the login item's
+    return moved
+
+
 @dataclass
 class Event:
     screen: ScreenState

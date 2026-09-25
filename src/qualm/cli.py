@@ -91,7 +91,10 @@ def cmd_app(args) -> None:
     from . import setup as s
     from .app import run_app
     from .policy import Policy
+    from .watcher import log_to_file
 
+    if paths.bundle():
+        log_to_file(paths.LOGS / APP_LOG)  # opened from Finder: its output would go nowhere
     if not args.demo and Path(args.rules) == paths.rules_file() and s.needed():
         run_app(None, args.rules, args.budget, data_dir=args.data)  # a first run: the setup window, then watching
         return
@@ -537,6 +540,70 @@ def cmd_version(args) -> None:
     print(json.dumps(out, ensure_ascii=False, indent=2) if args.json else text)
 
 
+APP_LOG = "com.qualm.app.log"  # Qualm.app's output, from login or opened (autostart._plist, watcher.log_to_file)
+
+
+def cmd_logs(args) -> None:
+    """Where Qualm's logs are, and the last lines of the app's (or with --model, the local model server's)."""
+    from . import paths
+    from .localmodel import log_file
+    from .personalize import CliError, _out
+
+    folder = paths.LOGS
+    files = sorted((f for f in folder.glob("*.log*") if f.is_file()), key=lambda f: -f.stat().st_mtime) \
+        if folder.is_dir() else []
+    listed = [{"name": f.name, "path": str(f), "bytes": f.stat().st_size,
+               "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")} for f in files]
+    if args.model:
+        shown = log_file()
+    else:  # the app's log written last: Qualm.app's, or where a checkout's went (`qualm app >> app.log`)
+        shown = next((f for f in files if f.suffix == ".log" and f.name != log_file().name), folder / APP_LOG)
+    if not shown.exists():
+        raise CliError(f"no log at {shown} yet: "
+                       + ("the app writes it when it starts the local model" if args.model else
+                          "Qualm.app writes it when it runs; a copy started with `qualm app` in a terminal writes "
+                          "to that terminal"), "not_found")
+    with shown.open("rb") as f:  # the end of a log that may be megabytes long
+        f.seek(max(0, shown.stat().st_size - 256 * 1024))
+        tail = f.read().decode("utf-8", "replace").splitlines()
+    lines = tail[-args.lines:] if args.lines > 0 else []
+    text = "\n".join([f"{folder}/"] + [f"  {x['name']:<22} {x['bytes'] / 1024:>7.0f} KB  {x['modified']}" for x in listed]
+                     + ([f"\nThe last {len(lines)} lines of {shown.name}:", *lines] if lines else []))
+    _out(args, {"folder": str(folder), "files": listed, "shown": str(shown), "lines": lines}, text)
+
+
+def cmd_skill(args) -> None:
+    """Claude Code's skill for Qualm (agent.py): where it is and whether it's current; install or remove it."""
+    from . import agent, paths
+    from .personalize import CliError, _out
+
+    path = agent.skill_file()
+    if paths.custom_home() and args.action:
+        raise CliError("QUALM_HOME is set: Claude Code's skill is the main install's (like the `qualm` command). "
+                       "Unset QUALM_HOME to add or remove it.")
+    if args.action == "install":
+        if agent.install_skill() is None:
+            raise CliError(f"{path} is a skill Qualm didn't write: left alone. Move it elsewhere first.")
+        text = f"Claude Code knows Qualm now: {path}. New sessions pick it up; `{agent.command()} skill remove` " \
+               "takes it away."
+    elif args.action == "remove":
+        gone = agent.remove_skill()
+        text = f"removed {path}" if gone else f"no skill of Qualm's at {path}: nothing to remove"
+    else:
+        text = ""
+    state = agent.skill_state()
+    out = {"path": str(path), "installed": state in ("current", "old"), "current": state == "current",
+           "someone_elses": state == "other", "claude_code": agent.claude_code()}
+    if not text:
+        text = {"none": f"not installed ({path}). `{agent.command()} skill install` adds it"
+                        + ("" if out["claude_code"] else f"; Claude Code hasn't run for this user yet ({agent.claude_dir()})"),
+                "current": f"installed and current: {path}",
+                "old": f"installed, from another version of Qualm: {path}. `{agent.command()} skill install` "
+                       "brings it up to date (the app does when it starts)",
+                "other": f"{path} is a skill Qualm didn't write: left alone"}[state]
+    _out(args, out, text)
+
+
 def cmd_install(args) -> None:
     from . import autostart, paths
     from .personalize import CliError
@@ -683,7 +750,7 @@ def cmd_setup(args) -> None:
 
     from . import autostart, keychain, localmodel, paths, review
     from . import setup as s
-    from .agent import command, start_hint
+    from .agent import claude_code, command, skill_state, start_hint
     from .personalize import CliError, _out
     from .rules import load_config
 
@@ -774,14 +841,17 @@ def cmd_setup(args) -> None:
     else:
         login = None  # as it is
 
+    # Claude Code's skill: the first time, if Claude Code is here (`qualm skill` later).
+    skill = fresh and claude_code() and not paths.custom_home() and skill_state() != "other"
     if args.dry_run:
         plan = {"dry_run": True, "backend": backend, "rules": picked, "login": login,
-                "key": "new" if key else "keychain" if backend == "jev" else None, "notes": notes}
+                "key": "new" if key else "keychain" if backend == "jev" else None, "skill": skill, "notes": notes}
         _out(args, plan, f"Would set up: the model {'hosted by TypeSafe (Jev)' if backend == 'jev' else 'on this Mac'}; "
                          f"rules on: {', '.join(picked) or 'none'}; start at login: "
-                         f"{'on' if login else 'off' if login is False else 'as it is'}.\n(dry run: nothing changed)")
+                         f"{'on' if login else 'off' if login is False else 'as it is'}"
+                         + ("; Qualm's skill for Claude Code" if skill else "") + ".\n(dry run: nothing changed)")
         return
-    choices = s.Choices(backend, picked, login, key)
+    choices = s.Choices(backend, picked, login, key, skill=skill)
     done = s.apply(choices, say=say)
     notes += choices.notes
     app = review.app_running(paths.data_dir(), _quiet_settings())
@@ -950,11 +1020,19 @@ def main(argv: list[str] | None = None) -> None:
                     help="8 (default): half the memory, the same answers on the trials; 16: bf16 as trained")
     sp = add("version", cmd_version, "this copy's version; --check: is a newer one out? (asks GitHub)", model=False)
     sp.add_argument("--check", action="store_true", help="read the update feed and say whether a newer version is out")
+    sp = add("logs", cmd_logs, "where Qualm's logs are, and the last lines of the app's (--model: the local model's)",
+             model=False)
+    sp.add_argument("--model", action="store_true", help="the local model server's log (kev.log) instead")
+    sp.add_argument("--lines", type=int, default=40, help="how many of its last lines (default 40; 0: only the list)")
+    sp = add("skill", cmd_skill, "Qualm's skill for Claude Code: is it there? install or remove it", model=False)
+    sp.add_argument("action", nargs="?", choices=("install", "remove"),
+                    help="install: write it (or bring it up to date) in ~/.claude/skills/qualm; remove: take it away")
 
     add("install", cmd_install, "start the app at every login", model=False)
     sp = add("uninstall", cmd_uninstall, "stop starting at login; --all removes everything of Qualm's", model=False)
     sp.add_argument("--all", action="store_true",
-                    help="also remove your rules and data, the model runtime, the logs, the key and the `qualm` command")
+                    help="also remove your rules and data, the model runtime, the logs, the key, the `qualm` command "
+                         "and Qualm's skill for Claude Code")
     sp.add_argument("--yes", action="store_true", help="don't ask first")
     sp.add_argument("--dry-run", action="store_true", help="only list what would be removed")
 

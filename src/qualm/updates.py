@@ -53,6 +53,14 @@ def version() -> str:
         return "0"
 
 
+def pretty(v: str) -> str:
+    """0.1.0b1 -> 0.1.0 beta 1: the version as the release and the About window name it."""
+    m = re.fullmatch(r"(\d+(?:\.\d+)*)(?:(a|b|rc)(\d+))?", v)
+    if not m or not m.group(2):
+        return v
+    return f"{m.group(1)} {dict(a='alpha', b='beta', rc='release candidate')[m.group(2)]} {m.group(3)}"
+
+
 def build() -> int | None:
     """Qualm.app's build number (CFBundleVersion: the commit count it was built
     from), which Sparkle compares; None outside the app."""

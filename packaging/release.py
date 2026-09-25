@@ -29,7 +29,7 @@ from xml.sax.saxutils import escape, quoteattr
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_app  # noqa: E402
 
-from qualm.updates import REPO, SPARKLE  # noqa: E402
+from qualm.updates import REPO, SPARKLE, pretty  # noqa: E402
 
 ROOT = build_app.REPO
 DIST = build_app.DIST
@@ -38,14 +38,6 @@ CHANGELOG = ROOT / "docs" / "CHANGELOG.md"
 
 def version() -> str:
     return tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
-
-
-def pretty(v: str) -> str:
-    """0.1.0b1 -> 0.1.0 beta 1, for titles."""
-    m = re.fullmatch(r"(\d+(?:\.\d+)*)(?:(a|b|rc)(\d+))?", v)
-    if not m or not m.group(2):
-        return v
-    return f"{m.group(1)} {dict(a='alpha', b='beta', rc='release candidate')[m.group(2)]} {m.group(3)}"
 
 
 def notes(v: str, changelog: Path = CHANGELOG) -> str:

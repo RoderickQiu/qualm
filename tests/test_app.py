@@ -7,9 +7,9 @@ import sys
 import types
 
 import pytest
-from AppKit import NSApplication, NSEvent
+from AppKit import NSApplication, NSButton, NSEvent, NSTextField
 
-from qualm import app, autostart, keychain, localmodel, onboard, paths, ui, updates
+from qualm import about, app, autostart, keychain, localmodel, onboard, paths, ui, updates
 from qualm import setup as s
 from qualm.decide import Reading, RuleVerdict
 from qualm.explain import cut, headline, reason
@@ -35,6 +35,16 @@ class OffscreenPanel(ui.QualmPanel):
 
     def isVisible(self):
         return getattr(self, "_shown", False)
+
+
+class OffscreenAbout(about.AboutPanel):
+    """The About window, never on screen."""
+
+    def makeKeyAndOrderFront_(self, sender):
+        self._shown = getattr(self, "_shown", 0) + 1
+
+    def isVisible(self):
+        return bool(getattr(self, "_shown", 0))
 
 
 def offscreen_hud(width, height, title, hud=ui.hud):
@@ -934,3 +944,58 @@ def test_after_an_update_the_app_says_how_to_give_accessibility_again(world, mon
     assert menu_titles(ctrl.status_item.menu)[0] == "Qualm 0.3.0 is available: install…"
     item(ctrl.status_item.menu, "Qualm 0.3.0").target().installUpdate_(None)
     assert world.asked[-1] == "sparkle"  # Sparkle's own window, with Install Update
+
+
+def test_the_menu_says_who_made_qualm_and_links_to_its_website(world, monkeypatch):
+    monkeypatch.setattr(about, "AboutPanel", OffscreenAbout)
+    monkeypatch.setattr(about, "NSApp", types.SimpleNamespace(activateIgnoringOtherApps_=lambda on: None))
+    monkeypatch.setattr(about, "subprocess", types.SimpleNamespace(run=lambda argv, **kw: world.opened.append(argv)))
+    ctrl = controller()
+    titles = menu_titles(ctrl.status_item.menu)
+    assert titles[-3:] == ["About Qualm", "Check for Updates…", "Quit Qualm"]  # the website is in About
+    item(ctrl.status_item.menu, "About Qualm").target().openAbout_(None)
+    window = ctrl.about.window
+    assert window._shown == 1 and str(window.title()) == "About Qualm"
+    words = []
+
+    def collect(view):
+        for v in view.subviews():
+            if isinstance(v, NSButton):
+                words.append(str(v.title()))
+            elif isinstance(v, NSTextField):
+                words.append(str(v.stringValue()))
+            collect(v)
+
+    collect(window.contentView())
+    assert "Made by" in words and "Tianrun Qiu" in words and "Visit qualm.r-q.name" in words
+    assert any(w.startswith("Version ") for w in words)
+    ctrl.about.website.target().openLink_(ctrl.about.website)
+    assert world.opened[-1] == ["open", "https://qualm.r-q.name"]
+    maker = next(v for v in window.contentView().subviews()[0].views()[4].views()
+                 if isinstance(v, NSButton) and str(v.title()) == "Tianrun Qiu")
+    maker.target().openLink_(maker)
+    assert world.opened[-1] == ["open", "https://r-q.name"]
+    ctrl.openAbout_(None)
+    assert ctrl.about.window is window and window._shown == 2  # the same window, shown again
+
+
+def test_claude_codes_skill_is_a_switch_in_the_menu(world, monkeypatch, claude_config_dir):
+    from qualm import agent
+
+    ctrl = controller()
+    menu = ctrl.status_item.menu
+    ctrl.menuWillOpen_(menu)
+    assert "Qualm skill for Claude Code" not in menu_titles(menu)  # another Qualm folder: the main install's
+    monkeypatch.setattr(paths, "custom_home", lambda: False)
+    ctrl.menuWillOpen_(menu)
+    switch = item(menu, "Qualm skill for Claude Code")
+    assert not switch.isHidden() and switch.state() == 0
+    switch.target().toggleSkill_(switch)
+    assert switch.state() == 1 and agent.skill_state() == "current"
+    switch.target().toggleSkill_(switch)
+    assert switch.state() == 0 and not agent.skill_file().exists()
+    import shutil
+
+    shutil.rmtree(claude_config_dir)  # no Claude Code on this Mac: nothing to switch
+    ctrl.menuWillOpen_(menu)
+    assert switch.isHidden()

@@ -50,7 +50,7 @@ never a fallback: if the local model is down, Qualm doesn't quietly switch to th
 - **Focus sessions** that remind you of your own words.
 - **A dashboard with no score and no streak.** Your answers tune the thresholds.
 - **Rule changes through your AI agent** (Claude Code, Codex, Cursor), which can test each change
-  on your own recent screens first.
+  on your own recent screens first. Setup gives Claude Code Qualm's skill, so any session knows it.
 
 <p align="center">
 <img src="docs/assets/panel-checkin.png" height="190" alt="Check in: what are you here for, and for how long?">
@@ -96,4 +96,5 @@ Qualm is an early prototype, used by its author since September 2026: Apple sili
 interface, rules in any language. It's a desktop take on
 [SeeNot](https://github.com/RoderickQiu/seenot-app), an Android research app from SUSTech.
 
-Qualm is free software under the [GNU GPL v3](LICENSE) or any later version.
+Made by [Tianrun Qiu](https://r-q.name) with Claude Code. Qualm is free software under the
+[GNU GPL v3](LICENSE) or any later version.

@@ -215,7 +215,7 @@ def info_plist(version: str, build: int) -> dict:
         "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True,
         "NSAppleEventsUsageDescription": "Qualm asks your browser to go back and reads the address of the front tab.",
-        "NSHumanReadableCopyright": "Free software under the GNU GPL v3 or later",
+        "NSHumanReadableCopyright": "© 2026 Tianrun Qiu. Free software under the GNU GPL v3 or later.",
         # Sparkle (updates.py): a daily check, disclosed in the README; installing always asks (an ad-hoc signed
         # app needs Accessibility again after each update, so never silently); the feed and each update must be
         # signed with the key above, and an update is checked before it's unpacked.

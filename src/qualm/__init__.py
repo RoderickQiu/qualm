@@ -10,6 +10,8 @@ Jev-style typed decision model (local Kev, or hosted Jev).
     qualm review             every judgement it made; --fix the wrong ones; --web opens the dashboard
     qualm week               how this week went: the dashboard's Insights numbers (--json for agents)
     qualm guide              how an AI agent should change your rules (Claude Code, Codex, ...)
+    qualm skill [install]    the same guide as a Claude Code skill, so Claude Code knows Qualm anywhere
+    qualm logs               where the logs are, and the app's last lines (--model: the local model's)
     qualm install            start the app at every login (uninstall: stop; uninstall --all: remove everything)
     qualm version            this copy's version; --check says whether a newer one is out
     qualm serve              the local model server (Kev-4B, 8-bit), in this terminal; the app starts its own

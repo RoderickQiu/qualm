@@ -328,12 +328,36 @@ def test_setup_json_for_scripts(mac, capsys):
 
     code, out = setup_cli(capsys, "--backend", "kev", "--rules", "social", "--login", "--dry-run", "--json")
     assert code == 0 and json.loads(out) == {"dry_run": True, "backend": "kev", "rules": ["social"], "login": True,
-                                             "key": None, "notes": []}
+                                             "key": None, "skill": True, "notes": []}
     assert not paths.home().exists() and mac.calls == []  # nothing changed
     code, out = setup_cli(capsys, "--backend", "kev", "--rules", "social", "--json")
     d = json.loads(out)
     assert code == 0 and d["backend"] == "kev" and d["rules"] == ["social"] and d["login"] is None
     assert "rules on: social" in d["done"] and d["next"].startswith("Done.")
+
+
+def test_the_first_setup_gives_claude_code_the_skill_and_a_rerun_leaves_it_be(mac, capsys, claude_config_dir):
+    import json
+
+    from qualm import agent
+
+    code, out = setup_cli(capsys, "--backend", "kev", "--rules", "social")
+    assert code == 0 and f"✓ Claude Code knows Qualm: its skill is in {claude_config_dir / 'skills' / 'qualm'}" in out
+    assert agent.skill_state() == "current"
+    agent.remove_skill()  # you took it away: setup run again doesn't bring it back
+    code, out = setup_cli(capsys, "--backend", "kev", "--rules", "social", "--dry-run", "--json")
+    assert json.loads(out)["skill"] is False
+    assert setup_cli(capsys, "--backend", "kev", "--rules", "social")[0] == 0 and not agent.skill_file().exists()
+
+
+def test_no_claude_code_no_skill(home, claude_config_dir):
+    from qualm import agent
+
+    claude_config_dir.rmdir()
+    c = s.Choices("kev", ["social"], login=False, skill=True)
+    s.apply(c)
+    assert not claude_config_dir.exists() and not any("Claude Code" in line for line in c.done)
+    assert agent.skill_state() == "none"
 
 
 def test_setup_asks_again_after_a_wrong_answer(mac, capsys, monkeypatch):

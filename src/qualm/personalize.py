@@ -1396,7 +1396,7 @@ def _model_status(name: str) -> dict:
 
 def status(args) -> None:
     """Is the app up, is the model it uses up, does the config load, how full is it."""
-    from . import review
+    from . import paths, review
     from .agent import command, start_hint
     from .decide import backend
 
@@ -1410,7 +1410,9 @@ def status(args) -> None:
     name = backend(settings)
     app = review.app_running(data, settings)
     out: dict = {"app_running": bool(app), "review_page": review.dashboard_url(data, settings), "backend": name,
-                 "model": _model_status(name), "config": config}
+                 "model": _model_status(name), "config": config,
+                 "paths": {"rules": str(Path(args.rules).resolve()), "data": str(data.resolve()),
+                           "logs": str(paths.LOGS)}}
     if app and app.get("older"):  # it can't load keys newer commands write (apps, overrides_allow)
         out["app_older"] = True
     if j := _last_judgement(data):

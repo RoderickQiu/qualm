@@ -171,6 +171,7 @@ def uninstall(quiet: bool = False) -> None:
 
 
 SHIM = Path.home() / ".local" / "bin" / "qualm"
+SKILL = "Qualm's skill for Claude Code"  # agent.py: ~/.claude/skills/qualm
 HF_HUB = Path.home() / ".cache" / "huggingface" / "hub"
 HF_REPOS = {"models--jaredpalmer--kev-4b": "model/jaredpalmer/kev-4b",
             "models--Qwen--Qwen3.5-4B-Base": "model/Qwen/Qwen3.5-4B-Base"}
@@ -196,6 +197,8 @@ def everything() -> list[tuple[str, Path | None]]:
     """What `uninstall --all` removes: (what, where), where there's a path.
     For a QUALM_HOME, only that folder (and a login item asked for there):
     the rest belongs to the main install."""
+    from .agent import skill_file, skill_state
+
     items: list[tuple[str, Path | None]] = []
     custom = paths.custom_home()
     for label in (APP_LABEL, *OLD_LABELS):
@@ -205,6 +208,8 @@ def everything() -> list[tuple[str, Path | None]]:
         items.append(("the TypeSafe API key in your keychain", None))
     if not custom and _ours(SHIM):
         items.append(("the `qualm` command", SHIM))
+    if not custom and skill_state() in ("current", "old"):
+        items.append((SKILL, skill_file()))
     if paths.home().exists():
         items.append(("your rules and data, the local model's runtime and its 8-bit weights", paths.home()))
     if not custom and paths.LOGS.exists():
@@ -226,14 +231,18 @@ def uninstall_all() -> list[str]:
     """Everything `everything()` lists, removed. Returns what was done, in words."""
     import shutil
 
+    from .agent import remove_skill
+
     done = []
     for what, where in everything():
-        if what == "the login item":
+        if what == SKILL:
+            remove_skill()  # and its folder, unless something of yours is in it
+        elif what == "the login item":
             if "removed the login item" not in done:
                 uninstall(quiet=True)  # every Qualm agent, old ones too
                 done.append("removed the login item")
             continue
-        if where is None:
+        elif where is None:
             keychain.forget()
         elif where.is_dir():
             shutil.rmtree(where)

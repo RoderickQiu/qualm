@@ -116,7 +116,11 @@ flowchart LR
   command that can be scored on your own recent screens first (`rules test`, `allow test`), and an
   agent that runs commands (Claude Code, Codex, Cursor) does that for you. In the menu bar,
   *Change rules with your AI agent…* copies a prompt for it, with the pop-ups you recently said were
-  wrong; the agent runs `qualm guide` and takes it from there. Say "WeChat chats aren't social
+  wrong; the agent runs `qualm guide` and takes it from there. Claude Code needs no prompt: setup
+  gives it Qualm's skill (`~/.claude/skills/qualm`), so any session knows how to change your rules,
+  why Qualm popped up, and where its logs are when it misbehaves. *Qualm skill for Claude Code* in
+  the menu, or `qualm skill install|remove`, adds or removes it later, and Qualm rewrites it when it
+  updates; a skill of that name Qualm didn't write is left alone. Say "WeChat chats aren't social
   media" and it measures an allow class for chats before saving it. On the first day there's
   nothing to measure on yet: it saves the rule with a first guess, says so, and checks it once
   you've used the Mac for a day. [PERSONALIZE.md](PERSONALIZE.md) covers the commands.
@@ -145,7 +149,8 @@ Privacy & Security and click *Open Anyway* (since macOS 15, right-click > Open n
    it, Qualm can read windows that draw their text as pixels (the picture is read on the Mac and not
    kept) and the dashboard shows screenshots.
 3. **What to watch for**: the starter rules, each on or off.
-4. **Open at login.**
+4. **Open at login.** Also ticked here: the `qualm` command for Terminal, and, if Claude Code is on
+   your Mac, Qualm's skill for it (below, "Change rules with your AI agent").
 
 Later, macOS may ask once more: the first *Take me back* in Chrome, Brave, Edge, Arc or another
 Chromium browser asks to let Qualm control that browser; in Safari, to control Safari (to read the
@@ -203,7 +208,11 @@ skip `qualm app`. To type plain `qualm` anywhere, `uv tool install --editable .`
 `uv run --project /path/to/qualm qualm`. Qualm.app adds `~/.local/bin/qualm`; if that folder isn't
 on your PATH, setup prints the line to add.
 
-`qualm doctor` says what's missing and how to fix it. `qualm app --demo` shows the pop-up without
+`qualm doctor` says what's missing and how to fix it. The logs are in `~/Library/Logs/Qualm`:
+`com.qualm.app.log` from Qualm.app (started at login or opened) and `kev.log` from the local model;
+`qualm logs` lists them and prints the app's last lines (`--model` the model's). They have a line for
+each screen Qualm judged, with its title and address, so read them before you share them.
+`qualm app --demo` shows the pop-up without
 watching anything (also: feed, checkin, timesup, focus, prompt). A checkout from before September 23
 kept `rules.toml` and `data/` in its own folder: `qualm setup` copies them to Application Support.
 
@@ -217,6 +226,7 @@ kept `rules.toml` and `data/` in its own folder: `qualm setup` copies them to Ap
 | `qualm week` | how this week went |
 | `qualm review --web` | the dashboard, if the app isn't running |
 | `qualm version --check` | which version this is, and whether a newer one is out |
+| `qualm logs` | where the logs are, and the app's last lines |
 
 ## How well it works
 
@@ -288,6 +298,10 @@ this wording: the same pages pop up, on all 119 hosted and on those nearest a th
 - Password managers (Apple Passwords, 1Password, Bitwarden, KeePassXC and others) are never read
   at all, whatever the settings say, and you can add any app to that list (`no_monitor`).
 - The dashboard listens on 127.0.0.1 only, and only the page itself can change settings.
+- Qualm's skill for Claude Code is the agent guide and the path of the `qualm` command, nothing
+  about you or your screen. What Claude Code then reads through `qualm` (screen titles and addresses
+  in `rules test`, `review` or the logs) goes to its provider; the guide asks it to read no more
+  than the job needs.
 - Once a day Qualm asks GitHub whether a new version is out (the list of releases, `appcast.xml`).
   The request carries no identifier and nothing about your screen; GitHub sees your IP address, as
   with any download. *Check for updates automatically* in the menu turns it off.

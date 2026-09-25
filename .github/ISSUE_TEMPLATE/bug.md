@@ -16,6 +16,9 @@ qualm version
 qualm doctor
 ```
 
+**Qualm stopped working, or quit?** `qualm logs` prints the last lines of its log. The log has a
+line for each screen Qualm judged (its title and address), so paste only the lines about the problem.
+
 **A wrong or missed pop-up?** `qualm review --last 5` or the dashboard's Review tab shows what the model read
 and how sure it was. Paste only what you're happy to share: titles and addresses from your own
 screen are yours.

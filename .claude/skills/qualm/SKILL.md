@@ -1,16 +1,17 @@
 ---
 name: qualm
-description: Set up, change or check Qualm's rules for the user - what it blocks or time-limits, when, exceptions, apps and sites it leaves alone, settings. Use when the user asks to block, limit, allow, pause (now, by schedule or for a weekend) or stop flagging something, asks why Qualm popped up or missed something, how their week went, or what their rules are. Drives the `qualm` CLI; never edits rules.toml by hand.
+description: Qualm is the menu bar app on this Mac that steps in when the user drifts into feeds, short videos and the like. Use this skill to set up, change or check its rules - what it blocks or time-limits, when, exceptions, apps and sites it leaves alone, settings. Use it when the user asks to block, limit, allow, pause (now, by schedule or for a weekend) or stop flagging something, asks why Qualm popped up or missed something, how their week went or what their rules are, or says Qualm isn't working (`qualm doctor`, its logs). Drives the `qualm` CLI; never edits rules.toml by hand.
 ---
 
 # Driving Qualm for the user
 
-Run `qualm` the way the prompt that sent you here says: `qualm` if it's on
-PATH, else `~/.local/bin/qualm` (the command Qualm.app added),
+Run `qualm` the way the prompt or skill that sent you here says: `qualm` if
+it's on PATH, else `~/.local/bin/qualm` (the command Qualm.app added),
 `"/Applications/Qualm.app/Contents/MacOS/Qualm" -m qualm`, or
 `uv run --project <repo> qualm` from a checkout of the repo. `qualm guide`
 prints this. The rules and data live in `~/Library/Application Support/Qualm`,
-whichever folder you run it from. For another Qualm folder the prompt's
+whichever folder you run it from, and the logs in `~/Library/Logs/Qualm`
+(below, "When Qualm itself misbehaves"). For another Qualm folder the prompt's
 command starts with `QUALM_HOME=…`, and so does every command Qualm's own
 messages suggest: keep it, since a plain `qualm` there changes the main one.
 
@@ -67,7 +68,8 @@ answer, `model.why` says why: `remote` (`KEV_URL` on another machine),
 `starting` (the app's server is downloading or loading it), `taken`
 (another app holds the port) or `none`, with `model.error` in words.
 `qualm doctor --json` checks everything, with the fix for each; its
-"Setup" check fails until setup ran.
+"Setup" check fails until setup ran. `paths` says where rules.toml, the
+data folder and the logs are.
 
 If `status` has `app_older: true`, the app running now is an older copy of
 Qualm: ask the user to quit it from its menu bar icon and open it again
@@ -395,6 +397,23 @@ before Qualm recorded wording and model count as the current wording and
 the home's model, unless the rule was reworded since. After changing what
 a rule means, label again (explicit answers are kept) and `rules test` the
 new wording, so tune has scores for it.
+
+## When Qualm itself misbehaves
+
+"Qualm does nothing", "it quit", "the model won't start": `qualm doctor
+--json` first, which checks everything and names the fix for each. Then the
+logs: `qualm logs --json` lists the files in `~/Library/Logs/Qualm` and
+returns the last lines of the app's (`--lines N` for more or fewer);
+`--model` returns the local model server's instead (`kev.log`: its
+download, loading, and what it said when it failed). Qualm.app writes its
+log whether it started at login or was opened; a copy started with
+`qualm app` in a terminal writes to that terminal.
+
+The app's log has a line for each screen it judged (the app, the window's
+title, the address): like `rules test`, those reach you and your provider,
+so ask for no more lines than the job needs. For why a pop-up came or
+didn't, `review --json` (above) is better than the log: it has the scores,
+the thresholds and the user's answers.
 
 ## Don't
 

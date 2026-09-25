@@ -6,8 +6,9 @@ dashboard, 8-bit model, `serve` / `doctor`), on the day of 2026-09-23
 (check-ins replace daily budgets; then setup, Qualm.app and hosted Jev), and
 late on the night of 2026-09-23 after an audit for a fresh user, early on
 2026-09-24 after its verification round, and later that morning after the
-third and last round (see "A fresh user's audit"), and that night for releases and
-updates (see "Releases and updates"). This is the working
+third and last round (see "A fresh user's audit"), that night for releases and
+updates (see "Releases and updates"), and late that night for About Qualm and what another
+person's agent finds (see "About, the skill and the logs"). This is the working
 document: update the Status and Measured sections as you go. README.md is
 the public face and stays short: built on Kev and Jev, local-ready, what it
 does, getting started. docs/MANUAL.md is the long version.
@@ -1049,6 +1050,54 @@ everyone else. Opening the beta means one of: making the repository public (the 
 built), or a public place for releases only (a releases-only repository, or the feed on
 qualm.r-q.name), which needs a new build: `SUFeedURL` is inside the app (`updates.FEED`).
 
+### About, the skill and the logs (late on 2026-09-24)
+
+Asked: there was no About window, so nothing in the app said who made it, and the menu had no link
+to the website; and could another person's Claude Code find Qualm's logs and its skill? It
+couldn't: the skill was only in this repo (`.claude/skills/qualm`, a project skill), and the guide
+never said where the logs were.
+
+- **About Qualm** (`about.py`): a small window in the setup window's style (system colors, light
+  and dark): the icon, the version (`Version 0.1.0 beta 1 (52)` from Qualm.app, `…, from source`
+  from a checkout), the tagline, *Made by Tianrun Qiu* linking to r-q.name, Kev and Jev, the GPL,
+  and *Visit qualm.r-q.name*. Esc or Cmd-W closes it. The menu's last group is now *About Qualm*,
+  *Check for Updates…*, *Quit Qualm*: a separate *Qualm website* item was merged into About (the
+  user: fewer entries is better). Info.plist's copyright names the author
+  (Finder's Get Info; it takes a rebuild). README ends with "Made by Tianrun Qiu".
+- **The skill for Claude Code** (`agent.py`): `~/.claude/skills/qualm/SKILL.md`
+  (`CLAUDE_CONFIG_DIR` moves it), the guide with the repo skill's description and a line saying
+  how to run `qualm` here, by full path (Claude Code's shell may not have ~/.local/bin). The
+  description now also triggers on "Qualm isn't working". Added by the first setup when Claude
+  Code has run here (a ticked box on the setup window's last page; `qualm setup` in a terminal the
+  first time), by *Qualm skill for Claude Code* in the menu (shown where Claude Code has run), and
+  by `qualm skill install`; `qualm skill remove` and `uninstall --all` take it away. The app
+  rewrites a skill of Qualm's when it starts on another version, and never adds one: a skill you
+  removed stays removed, and a re-run of setup doesn't bring it back. A SKILL.md there without
+  the "Written by Qualm" line is someone else's and is never touched. Not for a QUALM_HOME, like
+  the `qualm` command. The repo's SKILL.md is the same description and guide (a test holds them
+  together).
+- **Logs**: `qualm logs [--model] [--lines N] [--json]` lists `~/Library/Logs/Qualm` and prints
+  the end of the app's log written last (`com.qualm.app.log` from Qualm.app, or where a checkout's
+  output went, `qualm app >> app.log`) or `kev.log`; `status --json` has `paths` (rules, data, logs);
+  the guide has "When Qualm itself misbehaves" (doctor first, then logs, and a line per screen in
+  the log reaches the agent's provider). Qualm.app opened from Finder or `open` had its output
+  sent to /dev/null by macOS, so only a login-item start ever wrote a log: now it goes to
+  `com.qualm.app.log` too, a line at a time (`watcher.log_to_file`), and rolls over as the login
+  item's does.
+
+Verified: the tests (the skill written, kept current, removed, someone else's left alone,
+QUALM_HOME refused; setup the first time only; uninstall; `qualm logs` on a pretend log folder;
+the menu's About (and its website button) and skill switch, off-screen; a child process with /dev/null for output
+writing its log). `conftest.py` points `CLAUDE_CONFIG_DIR` at a temporary folder for every test,
+since the setup and uninstall fixtures pretend to be the main install. `qualm skill install|remove`
+and `qualm logs` run for real from the checkout (skill into a temporary Claude folder). The About
+window and the setup window's last page (three boxes, Qualm.app) rendered off-screen, light and
+dark. Claude Code reloaded the repo's skill with the new description mid-session, so the
+frontmatter parses. Not verified: the About window on screen, and Qualm.app opened from Finder
+writing its log (no app was opened: the user was at the Mac). Your ~/.claude has no Qualm skill
+yet: the running app is from before this, so tick it in the menu after a restart, or run
+`uv run qualm skill install` (inside this repo the project skill is there already).
+
 ### MVP (built after the trials)
 
 `qualm app` is a menu bar app (Python + PyObjC) that watches the
@@ -1103,13 +1152,16 @@ uv run qualm week               # this week's numbers, as the dashboard's Insigh
 uv run qualm eval --reviews --suggest      # re-ask the model on everything you reviewed
 uv run qualm export --lang en   # labels -> Kev training JSONL
 uv run qualm version --check    # this copy's version; is a newer one out? (the feed on GitHub)
+uv run qualm logs               # where the logs are, and the app's last lines; --model: kev.log
+uv run qualm skill install      # Claude Code's skill for Qualm in ~/.claude/skills/qualm (remove: take it away)
 uv run python packaging/release.py   # dist/Qualm.dmg + signed dist/appcast.xml; --publish for a pushed tag (packaging/README, "Releases")
 QUALM_HOME=$(mktemp -d) uv run pytest -q -p no:cacheprovider   # the tests, from the checkout; no model, no screen
                                 # from another folder: uv run --project <repo> pytest -q <repo>/tests
 ```
 
 Everything reads and writes `~/Library/Application Support/Qualm` (rules.toml,
-data/, kev-env/, models/); logs in `~/Library/Logs/Qualm`. The setup window
+data/, kev-env/, models/); logs in `~/Library/Logs/Qualm` (`com.qualm.app.log` from Qualm.app,
+`kev.log` from the model server; `qualm logs`). The setup window
 shows until setup has left `.setup-done` there (or `data/judgements.jsonl`
 exists, a model was chosen, or a `rules.toml.bak` with no `backups/` shows
 an earlier version saved the rules). Only one app runs per Qualm folder
@@ -1159,7 +1211,8 @@ for System Events alone in Firefox and the other browsers driven by keys.
 | `src/qualm/rules.py` | Rules from `rules.toml` (checked on load: fields, types, sites, `when`, regexes); builds the typed questions |
 | `src/qualm/config.py` | Edits rules.toml one key at a time, comments kept; each change under a lock (`rules.toml.lock`), saved whole, the last 20 versions in `backups/` for `config undo`, and the file as Qualm last wrote it (`backups/rules.toml.saved`; an older Qualm's file as first seen), so undo after a hand edit goes back to it first; what an undo replaces or passes over is kept (`.replaced`, `.aside`); `undo_to`, undo's dry run, for the advice every load error gives; refuses a file that wouldn't load |
 | `src/qualm/jsonl.py` | Reads the data logs, skipping a line cut short (with one note on stderr), and appends to them (`jsonl.appending`: a torn last line gets a newline before the next record) |
-| `src/qualm/agent.py` | The menu's prompt for an AI agent, and the `qualm` command a stock shell can run |
+| `src/qualm/agent.py` | The menu's prompt for an AI agent, the `qualm` command a stock shell can run, and Claude Code's skill for Qualm (`~/.claude/skills/qualm`: written, kept current, removed) |
+| `src/qualm/about.py` | About Qualm: the version, the maker, the website |
 | `src/qualm/personalize.py` | The `rules` / `allow` / `except` / `never` / `settings` commands |
 | `src/qualm/trial.py` | `rules test` / `label` / `tune`: a rule on your recent screens, and its threshold from your answers |
 | `src/qualm/decide.py` | TypeSafe SDK client (Kev or Jev, from `[settings] backend`), the score shift, `ask()` |
@@ -1186,10 +1239,10 @@ for System Events alone in Firefox and the other browsers driven by keys.
 | `src/qualm/rules.example.toml` | The starter rules and allow classes, in English, with measured thresholds and why in `note` |
 | `docs/MANUAL.md` | The long README: every feature, setup in full (permissions, mirrors, from source), commands, the numbers, privacy |
 | `docs/PERSONALIZE.md` | Every personalization command, the question limit, and the test-then-tune loop for a new rule |
-| `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user |
+| `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user: the guide with the skill's description (agent.py installs the same for Qualm.app users) |
 | `docs/MODELS.md` | On this Mac vs hosted: speed, memory, disk, Jev's usage and cost, from measurements |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
-| `tests/` | 425 tests, no model and no screen: the policy with made-up readings (`test_policy.py`), the menu bar and setup window built off-screen (`test_app.py`), the CLI's JSON contract and the guide's commands (`test_cli.py`), and the rest by module |
+| `tests/` | 441 tests, no model and no screen: the policy with made-up readings (`test_policy.py`), the menu bar and setup window built off-screen (`test_app.py`), the CLI's JSON contract and the guide's commands (`test_cli.py`), and the rest by module |
 | `experiments/` | `demo_data.py` (made-up weeks for screenshots, with the exceptions their answers make); trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `relabel.py`, `simulate.py` and `scenario.py` (see Measured) |
 
 `rules.toml` and `data/` are git-ignored: they contain what you read on screen.

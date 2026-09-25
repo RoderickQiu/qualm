@@ -35,6 +35,10 @@ look for an older copy that takes no lock.
 A newer version (updates.py): Qualm.app asks Sparkle, once a day, and says so
 in a menu line and one corner notice; installing waits for you. A checkout
 reads the same feed and links to the release.
+
+The menu also has About Qualm (about.py: the version, the maker, the
+website) and, where Claude Code has run, a switch for Qualm's skill there
+(agent.py), which the app rewrites when it starts on a new version.
 """
 
 from __future__ import annotations
@@ -274,6 +278,10 @@ class Controller(NSObject):
         from . import paths
 
         self.login_item = self._item("Open at login", "toggleLogin:") if paths.bundle() else None
+        # Claude Code's skill for Qualm (agent.py), shown where Claude Code has run.
+        self.skill_item = self._item("Qualm skill for Claude Code", "toggleSkill:")
+        self.skill_item.setToolTip_("Claude Code knows Qualm in every session: ask it to change your rules, why "
+                                    "Qualm popped up, or what's wrong when it isn't working.")
         menu.setDelegate_(self)
         for item in (self.update_line, self.access_line, self.model_line, self.rules_line, self.problem_sep,
                      self.status_line,
@@ -282,12 +290,12 @@ class Controller(NSObject):
                      self.focus_line, self.focus_item, self.end_focus_item, self.pause_item, self.resume_item,
                      self.planned_item, NSMenuItem.separatorItem(),
                      self.model_item, self.rules_item, self.block_item, *([self.login_item] if self.login_item else []),
-                     self.auto_item, NSMenuItem.separatorItem(),
+                     self.skill_item, self.auto_item, NSMenuItem.separatorItem(),
                      self._item("This should have been blocked", "flagMiss:"),
                      self._item("Open dashboard", "openReview:", "d"),
                      self._item("Change rules with your AI agent…", "openAgent:"),
                      self._item("Edit rules file…", "openRules:"), NSMenuItem.separatorItem(),
-                     self.check_item, self._item("Quit Qualm", "quit:", "q")):
+                     self._item("About Qualm", "openAbout:"), self.check_item, self._item("Quit Qualm", "quit:", "q")):
             menu.addItem_(item)
         self.status_item.setMenu_(menu)
 
@@ -416,6 +424,11 @@ class Controller(NSObject):
         if self.login_item:
             self.login_item.setState_(1 if autostart.installed() else 0)
         self.auto_item.setState_(1 if self._auto_updates() else 0)
+        from . import agent, paths
+
+        skill = agent.skill_state()
+        self.skill_item.setHidden_(paths.custom_home() or not agent.claude_code() or skill == "other")
+        self.skill_item.setState_(1 if skill in ("current", "old") else 0)
 
     @objc.python_method
     def _saved(self, change) -> bool:
@@ -498,6 +511,28 @@ class Controller(NSObject):
         except Exception as e:
             self.set_status(f"couldn't change it: {e}")
         self._refresh_menus()
+
+    def toggleSkill_(self, sender):
+        from . import agent
+
+        try:
+            if agent.skill_state() in ("current", "old"):
+                agent.remove_skill()
+                self.set_status("Claude Code's skill for Qualm: removed")
+            elif agent.install_skill():
+                self.set_status("Claude Code knows Qualm now, from its next session")
+            else:
+                self.set_status(f"{agent.skill_file()} is a skill Qualm didn't write: left alone")
+        except OSError as e:
+            self.set_status(f"couldn't change it: {e.strerror or e}")
+        self._refresh_menus()
+
+    def openAbout_(self, sender):
+        from .about import About
+
+        if getattr(self, "about", None) is None:
+            self.about = About.alloc().init().setup()
+        self.about.show()
 
     @objc.python_method
     def ensure_server(self):
@@ -954,6 +989,9 @@ class Controller(NSObject):
         self._checking = False
         if self.demo:
             return
+        from . import agent
+
+        agent.refresh_skill()  # Claude Code's skill, if it has Qualm's, rewritten for this version
         self.sparkle = updates.start_sparkle(lambda v: self._update_found(v), self._update_seen)
         data = self.policy.data_dir
         state = updates.load_state(data)
