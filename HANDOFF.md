@@ -7,8 +7,9 @@ dashboard, 8-bit model, `serve` / `doctor`), on the day of 2026-09-23
 late on the night of 2026-09-23 after an audit for a fresh user, early on
 2026-09-24 after its verification round, and later that morning after the
 third and last round (see "A fresh user's audit"), that night for releases and
-updates (see "Releases and updates"), and late that night for About Qualm and what another
-person's agent finds (see "About, the skill and the logs"). This is the working
+updates (see "Releases and updates"), late that night for About Qualm and what another
+person's agent finds (see "About, the skill and the logs"), and just after midnight for
+0.1.0b2, the first release the workflow published. This is the working
 document: update the Status and Measured sections as you go. README.md is
 the public face and stays short: built on Kev and Jev, local-ready, what it
 does, getting started. docs/MANUAL.md is the long version.
@@ -1041,6 +1042,22 @@ asset), the DMG's and the feed's EdDSA signatures check out against the key, and
 50 updated itself to this build 52 through Sparkle (served from this Mac). The test copies, their
 Sparkle settings (`com.qualm.app` defaults, which didn't exist before) and LaunchServices records
 were removed afterwards.
+
+**Qualm 0.1.0b2 is released** (build 57, 2026-09-25 just after midnight, tag `v0.1.0b2` on af70c62):
+https://github.com/RoderickQiu/qualm/releases/tag/v0.1.0b2, "Qualm 0.1.0 beta 2", marked latest, with
+About Qualm, Open at login from a checkout and its fix, the Claude Code skill and `qualm logs` ("About,
+the skill and the logs", above). This time `main` was pushed first (a3938f4..af70c62, at the user's
+word; Vercel deployed it to production, and the website itself hadn't changed), so the tag push ran the
+Release workflow: tests, build, sign and publish in 2 minutes, green. Checked on the published files:
+the feed says build 57 and 0.1.0b2; the DMG's and the feed's EdDSA signatures verify against
+`SPARKLE_PUBLIC_KEY`; the app in the DMG passes `codesign --verify --deep --strict`, has the new
+copyright and about.py, and `qualm version` says 0.1.0b2 (build 57). Before tagging, the same build
+made here was tried from the bundle: `qualm skill`, `qualm logs`, About rendered off-screen ("Version
+0.1.0 beta 2 (57)"), and a launch as Finder does it (no arguments, output on /dev/null) that found the
+running Qualm and wrote so to `com.qualm.app.log`, exit 0. A date-dependent test (the demo weeks) failed
+after midnight and would have failed the workflow; it runs at a fixed moment now
+(95fea05). The next release: bump pyproject.toml (and `uv lock`), name a CHANGELOG section after the
+version, commit, push `main` and the tag `v<version>`.
 
 **The repository stays private** (the user's decision, 2026-09-24). While it is, the release, the
 feed and the DMG need a GitHub sign-in, so no copy of the app can check for or download updates:
