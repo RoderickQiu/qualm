@@ -249,7 +249,10 @@ this wording: the same pages pop up, on all 119 hosted and on those nearest a th
   as the default and a wait before *I need it*.
 - **Time2Stop** ([CHI 2024](https://arxiv.org/abs/2403.05584)): saying *why* an intervention fired
   raised its accuracy and how well people took it. Hence the reason line, and the check of which
-  part of the screen carried the signal.
+  part of the screen carried the signal. The reason is the decision replayed, not generated: what
+  fired (the model's answer against your rule's line, the rule's own list), how sure the model was,
+  and the one thing that came closest to letting the page through. People take explanations best
+  when they're contrastive and short ([Miller, 2019](https://arxiv.org/abs/1706.07269)).
 - **Goal reminders and implementation intentions**
   ([Lyngs et al., CHI 2020](https://arxiv.org/abs/2001.04180);
   [Gollwitzer & Sheeran](https://psycnet.apa.org/record/2007-19538-002)): hence focus sessions

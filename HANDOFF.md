@@ -58,11 +58,22 @@ research on digital self-control tools:
   text at most every 30 s; nothing changed, no call.
 - **4 s before a pop-up**: pages passed through, or still loading, don't pop up.
 - **Reasons in words** (`explain.py`): Kev returns probabilities only, so the
-  reason is built from the signal that fired, the margin over the threshold,
-  and the page type and purpose; plus which part of the screen carried it
-  (asked again with only the title, and with only the page text). Time2Stop
-  (CHI 2024) found explanations raised the accuracy and receptivity of
-  interventions.
+  reason replays the decision itself (since 2026-09-25): `policy.decide`
+  puts its facts on each pop-up (`Decision.facts`: the list entry that
+  matched, the feed signal, the page before, opened on purpose), and
+  `explain.reason` says what fired, model first ("Kev is 95% sure, and
+  youtube.com/shorts is on your list too"; "A close call: Kev gives it 34%,
+  just over your line of 30%"), then one contrast: the model's own doubt
+  ("It also read the page as getting something done"), how you got there
+  ("from another page on youtube.com, not from a search") or "not a lecture
+  or a tutorial". No model call; every clause only when its fact is true.
+  Before, a site-list hit said only "This address is on your list" even at
+  95%, and three rounds of blind viewers of the video read that as a plain
+  blocklist. Of this Mac's 41 pop-ups since setup, 33 fired on the model
+  alone, 4 on the feed signal, 4 on the list (the model agreeing each time).
+  Plus which part of the screen carried it (asked again with only the
+  title, and with only the page text). Time2Stop (CHI 2024) found
+  explanations raised the accuracy and receptivity of interventions.
 - **Friction on "I need it"**: unlocks after 5 s, doubling with each snooze in
   the last hour (to 60 s), and asks what for. In the one sec study (PNAS
   2023), the option to back out and a short wait reduced use; the message

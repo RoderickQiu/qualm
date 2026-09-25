@@ -1256,7 +1256,9 @@ class Controller(NSObject):
         where = ev.screen.window_title or ev.screen.app.strip("‎")
         host = host_of(ev.screen.url)
         self._set_place(where, host if host and host not in where.lower() else "")
-        self.body.setStringValue_(reason(d, ev.reading, rule, lang))
+        from .decide import backend
+
+        self.body.setStringValue_(reason(d, ev.reading, rule, lang, "Jev" if backend(self.policy.settings) == "jev" else "Kev"))
         self.headline.setToolTip_("The wording changes now and then, so it doesn't turn into wallpaper.")
         self.context_text = context(shown, self.policy.last_snooze(d.rule))
         self.hint_text = ""

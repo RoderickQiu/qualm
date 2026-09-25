@@ -432,16 +432,37 @@ def test_an_allow_class_stops_every_rule_but_not_a_url_pattern(tmp_path):
 
 
 def test_explanations_in_words(policy):
-    from qualm.explain import headline, label, reason
+    from qualm.explain import headline, label, pct, reason
     from qualm.policy import Decision
 
-    rule = RULES[0]  # shortvideo, threshold 0.15
+    rule = RULES[0]  # shortvideo, threshold 0.15, may be opened on purpose
     r = reading(shortvideo=0.9)
-    # Rules by the name the menu uses, never the raw id.
-    assert reason(Decision("intervene", "shortvideo", "p_hit 0.90 >= 0.15"), r, rule, "en").startswith("A clear match for your “Short videos” rule.")
-    assert "A close call" in reason(Decision("intervene", "shortvideo", "x"), reading(shortvideo=0.16), rule, "en")
-    assert reason(Decision("intervene", "shortvideo", "matches URL pattern"), r, rule, "en").startswith("This address is on your “Short videos” list.")
-    assert "for entertainment" in reason(Decision("intervene", "shortvideo", "x"), r, rule, "en")
+    said = lambda d, rd=r, rl=rule, model="Kev": reason(d, rd, rl, "en", model)  # noqa: E731
+    model_only = Decision("intervene", "shortvideo", "p_hit 0.90 >= 0.15", facts={"listed": ""})
+    listed = Decision("intervene", "shortvideo", "matches URL pattern", facts={"listed": "youtube.com/shorts"})
+    # The model first when it fired, the list as well when both did; each number the model's own.
+    assert said(model_only) == "Kev is 90% sure, from the page alone."
+    assert said(model_only, model="Jev") == "Jev is 90% sure, from the page alone."
+    assert said(listed) == "Kev is 90% sure, and youtube.com/shorts is on your list too."
+    assert said(listed, reading(shortvideo=0.05)) == "It's on your “Short videos” list (youtube.com/shorts); on its own, Kev gave it 5%."
+    assert said(model_only, reading(shortvideo=0.7)) == "Kev thinks so (70%), from the page alone."
+    # Near the rule's own line, however high that is: a close call.
+    assert said(model_only, reading(shortvideo=0.16)) == "A close call: Kev gives it 16%, just over your line of 15%."
+    assert said(model_only, reading(shortvideo=0.4)) == "Kev gives it 40%, over your line of 15%."
+    feeds = RULES[1]  # line 0.5
+    assert said(Decision("intervene", "feeds", "x", facts={"listed": ""}), reading(feeds=0.65), feeds).startswith("A close call: Kev gives it 65%")
+    # The one contrast: the model's own doubt first, then the exemption that came closest.
+    assert said(model_only, reading(purpose="task", shortvideo=0.9)) == (
+        "Kev is 90% sure, from the page alone. It also read the page as getting something done (90%), which usually doesn't count.")
+    live = RULES[2]  # allows learning
+    assert said(Decision("intervene", "livestream", "x", facts={"listed": ""}), reading(livestream=0.95), live) == (
+        "Kev is 95% sure, from the page alone. It isn't a lecture or a tutorial: learning 1%.")
+    feed = Decision("intervene", "feeds", "an entertainment feed", facts={"listed": "", "feed": True})
+    assert said(feed, reading(page="feed", feeds=0.1), feeds) == (
+        "Kev read the page as a feed (90%), for entertainment (90%): nothing on it was your pick yet.")
+    assert pct(0.998) == "99%" and pct(0.0004) == "1%"
+    # A decision made without facts (the demo) still reads right.
+    assert said(Decision("intervene", "shortvideo", "matches URL pattern")) == "Kev is 90% sure, and this address is on your list too."
     long = Rule("shortvideo", "deny", "short videos made for endless swiping, such as Douyin, TikTok")
     assert label(long) == "short videos made for endless swiping"
     assert headline(Decision("intervene", "shortvideo", "x"), long, "en") == ("Short videos", "This looks like short videos made for endless swiping.")
@@ -453,6 +474,36 @@ def test_explanations_in_words(policy):
     assert reason(Decision("intervene", "online_shopping", "x"), None, shopping, "en") == "It matches your “Online shopping” rule."
     focus = {"intent": "write the report", "until": time.time() + 20 * 60 + 5}
     assert headline(Decision("intervene", "videos", "x"), videos, "en", focus) == ("Focus · 20 min left", "You're here to: write the report.")
+
+
+def test_the_reason_replays_the_decision_it_explains(policy):
+    """End to end: the facts come from Policy.decide, so the words follow what it did."""
+    from qualm.explain import reason
+
+    safari = {"app": "Safari"}
+    policy.decide({"url": "https://www.youtube.com/shorts/a", **safari}, reading(shortvideo=0.95), "com.apple.Safari")
+    got = policy.decide({"url": "https://www.youtube.com/shorts/b", **safari}, reading(shortvideo=0.95), "com.apple.Safari")
+    d = next(x for x in got if x.action == "intervene")
+    assert d.facts["listed"] == "youtube.com" and not d.facts["on_purpose"]  # a pattern: the page's host
+    assert reason(d, reading(shortvideo=0.95), RULES[0], "en") == (
+        "Kev is 95% sure, and youtube.com is on your list too. You got here from another page on youtube.com, not from a search.")
+    # Opened from a search: on purpose, and a page on the rule's list still counts.
+    policy.decide({"url": "https://www.google.com/search?q=x", **safari}, reading(page="search", purpose="task"), "com.apple.Safari")
+    got = policy.decide({"url": "https://www.youtube.com/shorts/c", **safari}, reading(shortvideo=0.95), "com.apple.Safari")
+    d = next(x for x in got if x.action == "intervene")
+    assert d.facts["on_purpose"]
+    assert reason(d, reading(shortvideo=0.95), RULES[0], "en").endswith("You opened it on purpose, but a page on the rule's list still counts.")
+
+
+def test_a_rules_list_entry_as_a_pop_up_names_it():
+    r = Rule("shortvideo", "deny", "x", sites=("youtube.com/shorts", "www.tiktok.com", "youtube.com/"),
+             patterns=(r"kick\.com/\w+",), apps=("com.example.Games",))
+    assert r.listed_as("https://www.youtube.com/shorts/x") == "youtube.com/shorts"
+    assert r.listed_as("https://www.tiktok.com/@a") == "tiktok.com"
+    assert r.listed_as("https://www.youtube.com/") == "the youtube.com home page"
+    assert r.listed_as("https://kick.com/someone") == "kick.com"
+    assert r.listed_as("", "com.example.Games", "Games") == "Games"
+    assert r.listed_as("https://example.org/") == ""
 
 
 def test_the_context_line_is_neutral_and_echoes_what_you_asked_for(policy):

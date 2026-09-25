@@ -226,6 +226,21 @@ class Rule:
     def matches_app(self, bundle_id: str, app: str = "") -> bool:
         return app_listed(self.apps, bundle_id, app)
 
+    def listed_as(self, url: str, bundle_id: str = "", app: str = "") -> str:
+        """The entry on this rule's own lists that the page matches, as a pop-up
+        names it: the site as written ("youtube.com/shorts"; "youtube.com/" is
+        "the youtube.com home page"), the page's host for a pattern, the app's
+        name; "" when none does."""
+        if url:
+            for site in self.sites:
+                if re.search(site_pattern(site), url):
+                    s = re.sub(r"^[a-z]+://", "", site.strip(), flags=re.I).removeprefix("www.")
+                    host, _, path = s.partition("/")
+                    return f"the {host} home page" if s.endswith("/") and not path.strip("/") else s.rstrip("/")
+            if any(re.search(p, url) for p in self.patterns):
+                return re.sub(r"^[a-z]+://", "", url).split("/")[0].split("?")[0].removeprefix("www.")
+        return (app or bundle_id) if self.matches_app(bundle_id, app) else ""
+
     def active(self, now: datetime | None = None) -> bool:
         return self.enabled and in_window(self.when, now or datetime.now())
 

@@ -305,6 +305,11 @@ class Decision:
     # Interventions: on one of the rule's own sites, patterns or apps, where
     # the pop-up's quiet links wait with "I need it".
     own: bool = False
+    # Interventions: what the pop-up's reason is built from (explain.reason):
+    # "listed" (the list entry that matched, or ""), "feed" (the feed signal
+    # fired), "from" (the page before this one: key, page_kind, purpose, app),
+    # "on_purpose", "here" (this page's host or app). Not logged.
+    facts: dict | None = None
 
 
 @dataclass
@@ -584,6 +589,14 @@ class Policy:
                 if d.action == "intervene":
                     r = self.rule(d.rule)
                     d.own = r.matches_url(url) or r.matches_app(bundle_id, state.get("app", ""))
+                    d.facts = {
+                        "listed": r.listed_as(url, bundle_id, state.get("app", "")),
+                        "feed": bool(r.feed_hit and reading.page_kind == "feed"
+                                     and reading.purpose_probs.get("entertain", 0) >= ENTERTAIN_MIN),
+                        "from": dict(self._cur["from"]) if self._cur.get("from") else None,
+                        "on_purpose": bool(self._cur["intentional"]),
+                        "here": key,
+                    }
             self.counting = counted
             if url:
                 self._remember(url, not any(d.action == "intervene" or d.reason.startswith(("your ", "snoozed")) for d in out))

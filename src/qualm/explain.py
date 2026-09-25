@@ -1,13 +1,19 @@
 """Why Qualm stepped in, in words.
 
-Kev answers with probabilities only; it can't say why. So the explanation
-is built from what Qualm does know: which signal fired (a URL pattern,
-the score, an entertainment feed), how far past the threshold
-the score was, what the model took the page to be, and, asked once per
-pop-up, which part of the screen carried the signal: the model is asked
-again with only the title and address, and with only the page text. In
-the spirit of Time2Stop's feature attributions (CHI 2024), where
-explanations raised acceptance of interventions.
+Kev answers with probabilities only; it can't say why, and nothing here
+writes text. But the decision to step in is plain code (policy.gate), and
+code can replay its own decision exactly. So the reason is that decision,
+said in sentences written here once: which of its checks fired (the
+model's answer against the rule's line, the rule's own list, the feed
+signal), how sure the model was, and the one thing that came closest to
+letting the page through (the page read as for work or learning, or how
+you got there), each clause only when its fact is true, each number the
+model's own. People take an explanation best when it is contrastive and
+short, one or two causes (Miller, "Explanation in artificial intelligence",
+2019). Asked once per pop-up, which part of the screen carried the signal:
+the model is asked again with only the title and address, and with only
+the page text. In the spirit of Time2Stop's feature attributions (CHI
+2024), where explanations raised acceptance of interventions.
 
 The words follow what the research on these pop-ups found: say what the
 page looks like and why, plainly; the option to back out does the work,
@@ -120,29 +126,69 @@ def headline(d: Decision, rule: Rule, lang: str, focus: dict | None = None, n: i
     return called, looks_like(rule, lang, n)
 
 
-def reason(d: Decision, reading: Reading | None, rule: Rule, lang: str) -> str:
-    """One or two sentences on why, without another model call."""
+SURE = 0.85  # "Kev is 91% sure"
+LIKELY = 0.6  # "Kev thinks so (72%)"
+CLOSE = 1.5  # under this many times the rule's line: "a close call"
+
+
+def pct(p: float) -> str:
+    """A probability as people say it, 1% to 99%: 0.998 isn't "100% sure"."""
+    return f"{min(99, max(1, round(p * 100)))}%"
+
+
+def _host(key: str) -> str:
+    return re.sub(r"^[a-z]+://", "", key or "").split("/")[0].split("?")[0].removeprefix("www.") if "://" in (key or "") else ""
+
+
+def reason(d: Decision, reading: Reading | None, rule: Rule, lang: str, model: str = "Kev") -> str:
+    """One or two sentences on why, replayed from the decision (d.facts,
+    policy.decide) and the model's own numbers; no model call. `model` names
+    the model ("Kev", or "Jev" when hosted: its numbers are on Kev's scale,
+    the scale the rule's line is on)."""
     if d.panel == "times_up":
         return "Done takes you back."
     if d.panel == "check_in":
         return f"{looks_like(rule, lang)} Say what for and how long, and Qualm stays out of the way until then."
-    if d.reason == "matches URL pattern":
-        head = f"This address is on your “{name(rule)}” list."
-    elif d.reason == "the app is on this rule's list":
-        head = f"This app is on your “{name(rule)}” list."
-    elif d.reason == "an entertainment feed":
-        head = "Nothing on it was your choice yet: it's a feed of recommendations, for entertainment."
-        return head
-    elif reading is not None and (v := reading.verdict(rule.id)) is not None:
-        ratio = v.p_hit / rule.threshold if rule.threshold else 1.0
-        sure = "A clear match" if ratio >= 3 else "A likely match" if ratio >= 1.5 else "A close call"
-        head = f"{sure} for your “{name(rule)}” rule."
+    facts = d.facts or {}
+    listed = facts.get("listed") or ""
+    if not facts:  # a decision made without facts (the demo): what its reason says
+        listed = {"matches URL pattern": "this address", "the app is on this rule's list": "this app"}.get(d.reason, "")
+    v = reading.verdict(rule.id) if reading is not None else None
+    if v is None:
+        return f"It's on your “{name(rule)}” list ({listed})." if listed else f"It matches your “{name(rule)}” rule."
+    p, line = v.p_hit, rule.threshold
+    # What fired. The model first when it did: the page was read, not only looked up.
+    if p >= line:
+        if p >= SURE or (p >= LIKELY and p >= line * CLOSE):
+            head = f"{model} is {pct(p)} sure" if p >= SURE else f"{model} thinks so ({pct(p)})"
+            first = f"{head}, and {listed} is on your list too." if listed else f"{head}, from the page alone."
+        else:  # near the rule's own line, however high that is
+            head = (f"A close call: {model} gives it {pct(p)}, just over your line of {pct(line)}" if p < line * CLOSE
+                    else f"{model} gives it {pct(p)}, over your line of {pct(line)}")
+            first = f"{head}, and {listed} is on your list too." if listed else f"{head}."
+    elif listed:
+        first = f"It's on your “{name(rule)}” list ({listed}); on its own, {model} gave it {pct(p)}."
+    elif facts.get("feed", d.reason == "an entertainment feed"):
+        first = (f"{model} read the page as a feed ({pct(reading.page_probs.get('feed', 0))}), for entertainment "
+                 f"({pct(reading.purpose_probs.get('entertain', 0))}): nothing on it was your pick yet.")
     else:
-        head = f"It matches your “{name(rule)}” rule."
-    if reading is None:
-        return head
-    seen = f"Qualm read the screen as {PAGE_WORDS.get(reading.page_kind, 'a page')}, for {PURPOSE_WORDS.get(reading.purpose, 'something')}."
-    return f"{head} {seen}"
+        first = f"It matches your “{name(rule)}” rule."
+    # One contrast, the closest the page came to being left alone.
+    second = ""
+    doubt = reading.purpose if reading.purpose in ("learn", "task") else ""
+    src = facts.get("from")
+    if doubt and starter(rule) and reading.purpose_probs.get(doubt, 0) >= 0.5:
+        second = (f"It also read the page as {PURPOSE_WORDS[doubt]} ({pct(reading.purpose_probs[doubt])}), "
+                  "which usually doesn't count.")
+    elif rule.allow_intentional and facts.get("on_purpose") and listed:
+        second = "You opened it on purpose, but a page on the rule's list still counts."
+    elif rule.allow_intentional and src and src.get("page_kind") in ("feed", "single_item") \
+            and _host(src.get("key", "")) and _host(src.get("key", "")) == _host(facts.get("here", "")):
+        second = (f"You got here from a feed on {_host(src['key'])}, not from a search." if src["page_kind"] == "feed"
+                  else f"You got here from another page on {_host(src['key'])}, not from a search.")
+    elif rule.allow_learning and reading.page_kind != "feed":
+        second = f"It isn't a lecture or a tutorial: learning {pct(reading.purpose_probs.get('learn', 0))}."
+    return f"{first} {second}".strip()
 
 
 def context(shown_today: list[str], snooze: tuple[float, float, str] | None = None) -> str:
