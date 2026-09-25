@@ -35,7 +35,7 @@ nobody listed.
 |---|---|---|
 | Model | [Kev-4B, 8-bit for MLX](https://huggingface.co/RoderickQiu/kev-4b-mlx-8bit), Apache-2.0 | [Jev 1.13](https://typesafe.ai/blog/introducing-system-one-models-and-jev), TypeSafe's API |
 | Each check | about 1 s | about 0.2 s |
-| What leaves the Mac | nothing | the text of each new screen, to TypeSafe |
+| What leaves the Mac | nothing but a daily check for a new version | the text of each new screen, to TypeSafe |
 | Needs | M1 or later, macOS 14, 6–7 GB of memory free | a TypeSafe API key, about $1 a month |
 
 With Kev, the app does the rest: it downloads the model and its runtime once (about 6 GB), starts
@@ -63,6 +63,10 @@ Download `Qualm.dmg` from [Releases](https://github.com/RoderickQiu/qualm/releas
 Applications and open it. It isn't notarized yet, so macOS blocks the first open: click *Open
 Anyway* in System Settings > Privacy & Security. Setup asks four things: where the model runs,
 Accessibility, which rules to start with, and whether to open at login.
+
+Qualm checks GitHub for a new version once a day and says so in the menu bar; it installs only when
+you say so. The check sends nothing about you or your screen, and *Check for updates automatically*
+in the menu turns it off.
 
 From source, with [uv](https://docs.astral.sh/uv/):
 

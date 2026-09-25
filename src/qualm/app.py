@@ -31,6 +31,10 @@ broken file lists in no_monitor, and sends nothing to a hosted model until
 the file loads (it can't tell what else was meant). One copy runs at a time: a
 lock in the Qualm folder, dropped by the system when the copy ends, and a
 look for an older copy that takes no lock.
+
+A newer version (updates.py): Qualm.app asks Sparkle, once a day, and says so
+in a menu line and one corner notice; installing waits for you. A checkout
+reads the same feed and links to the release.
 """
 
 from __future__ import annotations
@@ -71,7 +75,7 @@ from AppKit import (
     NSTimer,
     NSVariableStatusItemLength,
 )
-from Foundation import NSObject
+from Foundation import NSNotificationCenter, NSObject
 from PyObjCTools import AppHelper
 
 from . import ui
@@ -99,6 +103,10 @@ KEY_GUARD_S = 0.6  # the pop-up ignores keys this long after it takes the keyboa
 NOTICE_W, NOTICE_S = 400.0, 30.0  # the corner notice: width, and how long it stays
 MODEL_ERRORS = 3  # hosted failures in a row (not a turned-down key) before it's called down
 LOCK = "app.lock"  # in the Qualm folder: held by the copy that's running
+UPDATE_FIRST_S = 60  # a checkout's first look at the update feed, after the app has settled
+AFTER_UPDATE = ("macOS treats each version of this beta as a new app (it isn't signed with a Developer ID yet), "
+                "so Accessibility has to be allowed again: in System Settings > Privacy & Security > "
+                "Accessibility, remove Qualm with the minus button, then allow it again.")
 ACTION_WORDS = {"intervene": "stepped in", "allow": "let through", "skip": "skipped"}  # the menu's status line
 # CJK scripts say "what for" in one or two characters: 学, 工作.
 CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]")
@@ -185,9 +193,13 @@ class Controller(NSObject):
         self._build_notice()
         self._nudged: dict[tuple[str, str], float] = {}  # (rule, site or app) -> when nudged
         self._check_access()
+        self._start_updates()
         self._refresh()
         self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             5.0, self, "tick:", None, True)
+        # Quit from anywhere but the menu (Sparkle installing an update, logging out): today's minutes kept.
+        NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+            self, "willTerminate:", "NSApplicationWillTerminateNotification", None)
         return self
 
     # -- menu bar ------------------------------------------------------------
@@ -231,6 +243,11 @@ class Controller(NSObject):
         self.resume_item = self._item("Resume", "resume:")
         self.planned_item = self._item("", "cancelPlanned:")  # a pause planned for later: `qualm pause --from`
         self.block_item = self._item("Pop-ups block clicks behind them", "toggleBlock:")
+        # A newer Qualm, found by a daily check and not yet looked at (updates.py): shown first, like a problem.
+        self.update_line = self._item("", "installUpdate:")
+        self.update_line.setHidden_(True)
+        self.check_item = self._item("Check for Updates…", "checkUpdates:")
+        self.auto_item = self._item("Check for updates automatically", "toggleAutoUpdates:")
 
         # Where the model runs: both choices, the one in use ticked; switching
         # is one click once both are set up (a key for hosted).
@@ -258,18 +275,19 @@ class Controller(NSObject):
 
         self.login_item = self._item("Open at login", "toggleLogin:") if paths.bundle() else None
         menu.setDelegate_(self)
-        for item in (self.access_line, self.model_line, self.rules_line, self.problem_sep, self.status_line,
+        for item in (self.update_line, self.access_line, self.model_line, self.rules_line, self.problem_sep,
+                     self.status_line,
                      self.usage_line,
                      NSMenuItem.separatorItem(),
                      self.focus_line, self.focus_item, self.end_focus_item, self.pause_item, self.resume_item,
                      self.planned_item, NSMenuItem.separatorItem(),
                      self.model_item, self.rules_item, self.block_item, *([self.login_item] if self.login_item else []),
-                     NSMenuItem.separatorItem(),
+                     self.auto_item, NSMenuItem.separatorItem(),
                      self._item("This should have been blocked", "flagMiss:"),
                      self._item("Open dashboard", "openReview:", "d"),
                      self._item("Change rules with your AI agent…", "openAgent:"),
                      self._item("Edit rules file…", "openRules:"), NSMenuItem.separatorItem(),
-                     self._item("Quit Qualm", "quit:", "q")):
+                     self.check_item, self._item("Quit Qualm", "quit:", "q")):
             menu.addItem_(item)
         self.status_item.setMenu_(menu)
 
@@ -281,7 +299,7 @@ class Controller(NSObject):
         problem = self.problems.get("access") or self.problems.get("model") or self.problems.get("rules")
         for item, kind in ((self.access_line, "access"), (self.model_line, "model"), (self.rules_line, "rules")):
             item.setHidden_(kind not in self.problems)
-        self.problem_sep.setHidden_(not self.problems)
+        self.problem_sep.setHidden_(not self.problems and self.update_line.isHidden())
         # SF Symbols, so menu bar managers (Thaw, Bartender) can show the item;
         # they list it as "python3" because it isn't an app bundle.
         # The local model not up yet: an arrow while it downloads (the first time), an hourglass while it loads.
@@ -397,6 +415,7 @@ class Controller(NSObject):
             self.rules_menu.addItem_(item)
         if self.login_item:
             self.login_item.setState_(1 if autostart.installed() else 0)
+        self.auto_item.setState_(1 if self._auto_updates() else 0)
 
     @objc.python_method
     def _saved(self, change) -> bool:
@@ -529,6 +548,7 @@ class Controller(NSObject):
         if not self.demo and getattr(self, "_pruned_on", None) not in (None, datetime.now().date()):
             self.prune()
         self.ensure_server()  # also after [settings] backend changes to kev
+        self._check_updates_due()
         self._check_access()  # granted (or taken away) in System Settings: no restart needed
         self._refresh()
         if self.dimmer.windows and not self.panel.isVisible():
@@ -816,10 +836,12 @@ class Controller(NSObject):
         subprocess.run(["open", "-t", str(log_file())], check=False)
 
     def quit_(self, sender):
+        NSApp.terminate_(self)  # willTerminate_ saves and stops
+
+    def willTerminate_(self, note):
         self.policy.usage.save()
         if self.server:
             self.server.stop()
-        NSApp.terminate_(self)
 
     # -- events from the watcher (main thread) --------------------------------
 
@@ -917,6 +939,149 @@ class Controller(NSObject):
             self.policy.log_response(d.id, "not now", d.rule)
             self._hide_nudge()
 
+    # -- updates (updates.py) ------------------------------------------------
+
+    @objc.python_method
+    def _start_updates(self):
+        """Sparkle in Qualm.app; the checkout's own daily check otherwise. After
+        an update, Accessibility has to be given again (an ad-hoc signed app is
+        a new app to macOS each version): a notice says how."""
+        from . import updates
+
+        self.sparkle = None
+        self._update = None  # a newer version found and not looked at yet: "0.1.1"
+        self._next_update_check = time.time() + UPDATE_FIRST_S
+        self._checking = False
+        if self.demo:
+            return
+        self.sparkle = updates.start_sparkle(lambda v: self._update_found(v), self._update_seen)
+        data = self.policy.data_dir
+        state = updates.load_state(data)
+        current = str(updates.build() or updates.version())
+        before = updates.updated_since(state, current)
+        updates.save_state(data, ran=current)
+        if before and self.sparkle is not None and "access" in self.problems:
+            self._notice(f"Qualm is now {updates.version()}", AFTER_UPDATE, "Open Accessibility…",
+                         lambda: self.grantAccess_(None), kind="update")
+
+    @objc.python_method
+    def _auto_updates(self) -> bool:
+        from . import updates
+
+        if self.sparkle is not None:
+            return bool(self.sparkle.updater().automaticallyChecksForUpdates())
+        return updates.load_state(self.policy.data_dir).get("auto", True) is not False
+
+    def toggleAutoUpdates_(self, sender):
+        from . import updates
+
+        on = not self._auto_updates()
+        if self.sparkle is not None:
+            self.sparkle.updater().setAutomaticallyChecksForUpdates_(on)
+        else:
+            updates.save_state(self.policy.data_dir, auto=on)
+            self._next_update_check = time.time() + UPDATE_FIRST_S
+        self.auto_item.setState_(1 if on else 0)
+
+    def checkUpdates_(self, sender):
+        if self.sparkle is not None:
+            self.sparkle.checkForUpdates_(sender)  # Sparkle's window: what's new, or "you're up to date"
+            return
+        self._check_feed(told=True)
+
+    def installUpdate_(self, sender):
+        from . import updates
+
+        if self.sparkle is not None:
+            self.sparkle.checkForUpdates_(sender)  # its window, with Install Update
+        else:
+            latest = updates.load_state(self.policy.data_dir).get("latest") or {}
+            subprocess.run(["open", latest.get("page") or updates.RELEASES], check=False)
+            self._update_seen()
+
+    @objc.python_method
+    def _check_updates_due(self):
+        """A checkout's daily look at the feed (Qualm.app's is Sparkle's)."""
+        if self.demo or self.sparkle is not None or self._checking or time.time() < self._next_update_check:
+            return
+        from . import updates
+
+        self._next_update_check = time.time() + 3600  # looked at the state: not again for an hour
+        state = updates.load_state(self.policy.data_dir)
+        if updates.due(state):
+            self._check_feed(told=False)
+        elif state.get("auto", True) is not False:
+            self._next_update_check = float(state.get("checked") or 0) + updates.CHECK_EVERY_S
+
+    @objc.python_method
+    def _check_feed(self, told: bool):
+        """Read the feed on a thread; `told`: you asked, so the answer is shown
+        either way (a daily check says only that there's something new)."""
+        from . import updates
+
+        if self._checking:
+            return
+        self._checking = True
+        data = self.policy.data_dir
+
+        def run():
+            try:
+                result, error = updates.check(), None
+                updates.save_state(data, checked=time.time(), latest=result["latest"])
+            except Exception as e:  # the network, a feed that isn't there yet
+                result, error = None, e
+                updates.save_state(data, checked=time.time())
+                print(f"  [update check failed: {e}]", flush=True)
+            AppHelper.callAfter(self._feed_checked, result, error, told)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    @objc.python_method
+    def _feed_checked(self, result: dict | None, error: Exception | None, told: bool):
+        from . import updates
+
+        self._checking = False
+        self._next_update_check = time.time() + updates.CHECK_EVERY_S
+        if result and result["update"]:
+            self._update_found(result["latest"]["version"], again=told)
+        elif told and error is not None:
+            self._notice("Couldn't check for updates", f"{error}. The feed: {updates.feed_url()}")
+        elif told:
+            self._notice("Qualm is up to date", f"You have Qualm {result['version']}, the newest version.",
+                         kind="update")
+
+    @objc.python_method
+    def _update_found(self, version: str, again: bool = False):
+        """A newer version: a menu line until you look, and one notice per version
+        (`again`: you asked, so it shows even if told before)."""
+        from . import updates
+
+        self._update = version
+        print(f"  [update: Qualm {version} is available]", flush=True)
+        app = self.sparkle is not None
+        self.update_line.setTitle_(f"Qualm {version} is available: install…" if app
+                                   else f"Qualm {version} is out: see what's new…")
+        self.update_line.setHidden_(False)
+        self._refresh()
+        state = updates.load_state(self.policy.data_dir)
+        if not again and state.get("told") == version:
+            return
+        updates.save_state(self.policy.data_dir, told=version)
+        if app:
+            text = ("See what's new and install it when it suits you; Qualm quits, updates and opens again. "
+                    "macOS then asks for Accessibility once more.")
+        else:
+            text = ("This copy runs from source: update it with `git pull` and `uv sync` in the checkout, "
+                    "then quit Qualm and start it again.")
+        self._notice(f"Qualm {version} is available", text, "What's new…" if not app else "Install…",
+                     lambda: self.installUpdate_(None), kind="update")
+
+    @objc.python_method
+    def _update_seen(self):
+        self._update = None
+        self.update_line.setHidden_(True)
+        self._refresh()
+
     # -- the notice ----------------------------------------------------------
 
     @objc.python_method
@@ -936,9 +1101,12 @@ class Controller(NSObject):
         self._notice_do, self._notices = None, 0
 
     @objc.python_method
-    def _notice(self, title: str, text: str, fix: str | None = None, do=None):
-        """Show a notice; `fix` titles a button that calls `do`. It goes by itself after NOTICE_S."""
+    def _notice(self, title: str, text: str, fix: str | None = None, do=None, kind: str = "warn"):
+        """Show a notice; `fix` titles a button that calls `do`. It goes by itself after NOTICE_S.
+        `kind`: its badge (ui.ACCENTS): "warn" for trouble, "update" for a new version."""
         tx, tw = 16 + 34 + 12, NOTICE_W - (16 + 34 + 12) - 18
+        self.notice_box.setFillColor_(ui.rgb(*ui.ACCENTS[kind], 0.18))
+        ui.set_symbol(self.notice_icon, kind, 34)
         self.notice_title.setStringValue_(cut(title, 60))
         th = ui.fit(self.notice_text, text, tw)
         h = 14 + 17 + 4 + th + 12 + 32 + 12

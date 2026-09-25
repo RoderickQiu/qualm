@@ -6,7 +6,8 @@ dashboard, 8-bit model, `serve` / `doctor`), on the day of 2026-09-23
 (check-ins replace daily budgets; then setup, Qualm.app and hosted Jev), and
 late on the night of 2026-09-23 after an audit for a fresh user, early on
 2026-09-24 after its verification round, and later that morning after the
-third and last round (see "A fresh user's audit"). This is the working
+third and last round (see "A fresh user's audit"), and that night for releases and
+updates (see "Releases and updates"). This is the working
 document: update the Status and Measured sections as you go. README.md is
 the public face and stays short: built on Kev and Jev, local-ready, what it
 does, getting started. docs/MANUAL.md is the long version.
@@ -988,6 +989,44 @@ has the details):
   rule in other letters goes by its description's words); Qualm.app is
   arm64 only (no universal build for Intel Macs) and ad-hoc signed.
 
+### Releases and updates (night of 2026-09-24)
+
+Asked for a beta the tech audience can download: a workflow that builds and uploads releases, an
+update check done the way Mac apps do it, and one test release published.
+
+- **Sparkle 2.10.0 in Qualm.app** (`updates.py`, `build_app.py`): pinned by version and SHA-256,
+  signed ad-hoc from the inside out (a `--deep` signature would have given its helpers Qualm's
+  identifier). Info.plist: the feed (`appcast.xml` on the latest GitHub release), the public EdDSA
+  key, a daily check, `SURequireSignedFeed`, `SUVerifyUpdateBeforeExtraction`, and
+  `SUAllowsAutomaticUpdates` off: an ad-hoc signed update is a new app to macOS, so Accessibility
+  must be given again, and a silent install would quietly stop Qualm. Sparkle's "gentle reminders":
+  a daily check never opens Sparkle's window (not even at launch, which it calls immediate focus:
+  for a login item, the moment you log in); a menu line and one corner notice per version say so,
+  and *Install…* opens Sparkle's window with the notes. After an update, a notice says how to give
+  Accessibility again. Menu: *Check for Updates…*, *Check for updates automatically*.
+- **A checkout** reads the same feed daily (`data/updates.json`), says when a newer version is out
+  and links to it; `qualm version [--check] [--json]` for terminals and agents.
+- **Releases** (`packaging/release.py`, `.github/workflows/release.yml`, packaging/README.md,
+  "Releases"): a pushed tag `v<version>` runs the tests on an Apple silicon runner, builds, signs
+  the DMG and the feed, and publishes the GitHub release with `Qualm.dmg` and `appcast.xml`; the
+  notes are the version's section of docs/CHANGELOG.md. The build number is the commit count. Every
+  release is marked latest, betas too (a pre-release never reaches the feed). Version 0.1.0b1.
+- **The key**: made with Sparkle's `generate_keys` on this Mac, in the login keychain (*Private key
+  for signing Sparkle updates*) and the repository secret `SPARKLE_ED_PRIVATE_KEY`. Lose it and no
+  copy out there takes another update.
+- Also: Qualm saves today's minutes and stops its model server on any quit (Sparkle's, logging
+  out), not only the menu's; the Info.plist copyright said Apache-2.0 (the app is GPL-3.0-or-later).
+
+Verified: 425 tests. End to end with the real app bundle, in a throwaway home, paused: a copy
+made build 50 read a local signed feed for build 51, downloaded the DMG, checked its signature
+before unpacking and replaced itself, and the result passes `codesign --verify --deep --strict`
+(the silent-install path, turned on in that copy only, to test without clicking); with installs
+left to you, the same check logged the update, showed the menu line and the notice, and changed
+nothing. The first try at that showed Sparkle's own window at launch (see above: fixed). The four
+notices rendered, light and dark. Not verified: clicking *Install and Relaunch* in Sparkle's window
+(Sparkle's own code path; the installer it runs is the one tested), and an update of the published
+app from GitHub (needs a second release).
+
 ### MVP (built after the trials)
 
 `qualm app` is a menu bar app (Python + PyObjC) that watches the
@@ -1041,6 +1080,8 @@ uv run qualm review             # the same judgements in the terminal; --json, -
 uv run qualm week               # this week's numbers, as the dashboard's Insights
 uv run qualm eval --reviews --suggest      # re-ask the model on everything you reviewed
 uv run qualm export --lang en   # labels -> Kev training JSONL
+uv run qualm version --check    # this copy's version; is a newer one out? (the feed on GitHub)
+uv run python packaging/release.py   # dist/Qualm.dmg + signed dist/appcast.xml; --publish for a pushed tag (packaging/README, "Releases")
 QUALM_HOME=$(mktemp -d) uv run pytest -q -p no:cacheprovider   # the tests, from the checkout; no model, no screen
                                 # from another folder: uv run --project <repo> pytest -q <repo>/tests
 ```
@@ -1106,7 +1147,10 @@ for System Events alone in Firefox and the other browsers driven by keys.
 | `src/qualm/kevserve.py` | Kev's server as Qualm runs it (inside the runtime): MLX cache cap, 8-bit, weights saved once |
 | `src/qualm/setup.py` | First run, shared by `qualm setup` and the window: migrate, recommend, apply |
 | `src/qualm/onboard.py` | The setup window: a 5-page assistant (Auto Layout) |
-| `packaging/` | `build_app.py` + `launcher.c`: Qualm.app and the DMG; README on signing |
+| `packaging/` | `build_app.py` + `launcher.c`: Qualm.app (Sparkle inside) and the DMG; `release.py`: the signed DMG, the signed feed, the GitHub release; README on signing and releases |
+| `src/qualm/updates.py` | Is there a newer version: the feed (appcast.xml on the latest release), versions compared, the checkout's daily check, Sparkle started in Qualm.app |
+| `.github/workflows/release.yml` | A pushed tag `v<version>`: tests, build, sign, publish |
+| `docs/CHANGELOG.md` | Each version's release notes |
 | `src/qualm/policy.py` | Reading -> skip / allow / intervene: thresholds, URL patterns, exemptions, "opened on purpose", check-in sessions and their waits, snoozes, re-judging, user exceptions, the decision log |
 | `src/qualm/watcher.py` | The loop shared by `watch` and `app`; "take me back" |
 | `src/qualm/app.py` | Menu bar item (focus, pause, the problems line and icon, the key window), the intervention panel, the corner notice and the focus prompt (PyObjC); the one-copy lock and the older-copy check; the rules it starts on when rules.toml doesn't load (`fallback_config`); serves the dashboard |
@@ -1123,7 +1167,7 @@ for System Events alone in Firefox and the other browsers driven by keys.
 | `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user |
 | `docs/MODELS.md` | On this Mac vs hosted: speed, memory, disk, Jev's usage and cost, from measurements |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
-| `tests/` | 411 tests, no model and no screen: the policy with made-up readings (`test_policy.py`), the menu bar and setup window built off-screen (`test_app.py`), the CLI's JSON contract and the guide's commands (`test_cli.py`), and the rest by module |
+| `tests/` | 425 tests, no model and no screen: the policy with made-up readings (`test_policy.py`), the menu bar and setup window built off-screen (`test_app.py`), the CLI's JSON contract and the guide's commands (`test_cli.py`), and the rest by module |
 | `experiments/` | `demo_data.py` (made-up weeks for screenshots, with the exceptions their answers make); trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `relabel.py`, `simulate.py` and `scenario.py` (see Measured) |
 
 `rules.toml` and `data/` are git-ignored: they contain what you read on screen.
@@ -1522,11 +1566,12 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    `qualm export --lang en --labels data/labels.jsonl --out train.jsonl`, then
    `uv run python -m kev.train --data train.jsonl --init_from jaredpalmer/kev-4b --base Qwen/Qwen3.5-4B-Base --epochs 2 --lr 2e-5 --batch 1 --accum 8 --dtype bf16 --device cuda`.
    `--base` is required with `--init_from`; the default base is Qwen3-0.6B.
-6. **Ship it:** Qualm.app exists (ad-hoc signed; opens and names itself "Qualm", verified); left: a Developer ID and
-   notarization if it's to be shared widely (then right-click > Open or Open
-   Anyway isn't needed), the first DMG on GitHub Releases (the README
-   points there), a universal build if Intel Macs matter (hosted works
-   there), and a translated interface. Licensed GPL-3.0-or-later (LICENSE).
+6. **Ship it:** releases are a tag away (packaging/README.md, "Releases"), and Qualm.app updates
+   itself through Sparkle. Left: a Developer ID and notarization (then no Open Anyway, and
+   Accessibility survives updates; the workflow would sign and notarize), a universal build if
+   Intel Macs matter (hosted works there), and a translated interface. The website's Download
+   button could point straight at `releases/latest/download/Qualm.dmg`. Licensed
+   GPL-3.0-or-later (LICENSE).
 
 ## Known problems and gotchas
 

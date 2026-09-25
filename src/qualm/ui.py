@@ -60,9 +60,11 @@ ACCENTS = {
     "agent": (0.62, 0.72, 1.0),  # periwinkle: hand it to your AI agent
     "warn": (1.0, 0.72, 0.30),  # amber: something stops Qualm from working
     "key": (0.38, 0.78, 0.98),  # the hosted model's key: the menu bar's blue
+    "update": (0.45, 0.85, 0.55),  # green: a new version, nothing wrong
 }
 SYMBOLS = {"deny": "hand.raised.fill", "checkin": "timer", "timesup": "hourglass", "focus": "scope", "done": "checkmark",
-           "watch": "eye", "agent": "sparkles", "warn": "exclamationmark.triangle.fill", "key": "key.fill"}
+           "watch": "eye", "agent": "sparkles", "warn": "exclamationmark.triangle.fill", "key": "key.fill",
+           "update": "arrow.down.circle.fill"}
 
 
 def rgb(r: float, g: float, b: float, a: float = 1.0) -> NSColor:

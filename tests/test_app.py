@@ -9,7 +9,7 @@ import types
 import pytest
 from AppKit import NSApplication, NSEvent
 
-from qualm import app, autostart, keychain, localmodel, onboard, paths, ui
+from qualm import app, autostart, keychain, localmodel, onboard, paths, ui, updates
 from qualm import setup as s
 from qualm.decide import Reading, RuleVerdict
 from qualm.explain import cut, headline, reason
@@ -101,6 +101,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(s, "ask_accessibility", lambda: w.asked.append("accessibility"))
     monkeypatch.setattr(s, "check_key", lambda key: w.check)
     monkeypatch.setattr(autostart, "installed", lambda: False)
+    monkeypatch.setenv("QUALM_UPDATE_FEED", "http://127.0.0.1:9/appcast.xml")  # never GitHub from a test
     s.apply(s.Choices("kev", ["shortvideo", "feeds", "livestream", "videos", "social"], login=False, shim=False))
     return w
 
@@ -863,3 +864,73 @@ def test_not_this_one_says_it_lets_this_page_through(world):
     pop_up(ctrl, "shortvideo", "https://example.com/clip/1")  # the model's hit, off the rule's own sites
     ctrl.fine_(ctrl.fine)
     assert str(ctrl.headline.stringValue()) == "Got it: this page won't pop up again."
+
+
+# -- updates -------------------------------------------------------------------
+
+
+LATEST = {"version": "0.2.0", "build": 70, "page": "https://github.com/RoderickQiu/qualm/releases/tag/v0.2.0",
+          "download": "", "notes": "", "published": ""}
+
+
+def test_a_checkout_says_once_that_a_newer_version_is_out(world):
+    ctrl = controller()
+    menu = ctrl.status_item.menu
+    assert ctrl.sparkle is None and "Check for Updates…" in menu_titles(menu)
+    assert not item(menu, "Qualm 0.2.0").isHidden() if item(menu, "Qualm 0.2.0") else True
+    ctrl._feed_checked({"update": True, "latest": LATEST, "version": "0.1.0b1"}, None, told=False)
+    assert menu_titles(menu)[0] == "Qualm 0.2.0 is out: see what's new…"
+    assert ctrl.notice.isVisible() and "Qualm 0.2.0 is available" in str(ctrl.notice_title.stringValue())
+    assert "git pull" in str(ctrl.notice_text.stringValue())
+    ctrl._hide_notice()
+    ctrl.notice.orderOut_(None)
+    ctrl._feed_checked({"update": True, "latest": LATEST, "version": "0.1.0b1"}, None, told=False)
+    assert not ctrl.notice.isVisible()  # told once per version; the menu line stays
+    updates.save_state(ctrl.policy.data_dir, latest=LATEST)
+    item(menu, "Qualm 0.2.0").target().installUpdate_(None)
+    assert world.opened[-1] == ["open", LATEST["page"]]
+    assert menu_titles(menu)[0] != "Qualm 0.2.0 is out: see what's new…"  # looked at: gone
+
+
+def test_asking_says_up_to_date_or_why_it_couldnt_check(world):
+    ctrl = controller()
+    ctrl._feed_checked({"update": False, "latest": LATEST, "version": "0.2.0"}, None, told=True)
+    assert str(ctrl.notice_title.stringValue()) == "Qualm is up to date"
+    ctrl._feed_checked(None, OSError("HTTP Error 404: Not Found"), told=True)
+    assert str(ctrl.notice_title.stringValue()) == "Couldn't check for updates"
+    assert "404" in str(ctrl.notice_text.stringValue())
+
+
+def test_the_daily_check_can_be_turned_off_from_the_menu(world):
+    ctrl = controller()
+    ctrl.menuWillOpen_(ctrl.status_item.menu)
+    toggle = item(ctrl.status_item.menu, "Check for updates automatically")
+    assert toggle.state() == 1
+    toggle.target().toggleAutoUpdates_(toggle)
+    assert toggle.state() == 0 and updates.load_state(ctrl.policy.data_dir)["auto"] is False
+    ctrl._next_update_check = 0
+    ctrl._check_updates_due()
+    assert not ctrl._checking  # off: no check
+
+
+def test_after_an_update_the_app_says_how_to_give_accessibility_again(world, monkeypatch):
+    class Updater:
+        def automaticallyChecksForUpdates(self):
+            return True
+
+    fake = types.SimpleNamespace(updater=lambda: Updater(), checkForUpdates_=lambda sender: world.asked.append("sparkle"))
+    monkeypatch.setattr(updates, "start_sparkle", lambda available, attended: fake)
+    monkeypatch.setattr(updates, "build", lambda: 60)
+    data = paths.data_dir()
+    updates.save_state(data, ran="51")
+    world.access = False  # macOS: a new ad-hoc signature is a new app
+    ctrl = controller()
+    assert "Qualm is now" in str(ctrl.notice_title.stringValue()) and ctrl.notice.isVisible()
+    assert "remove Qualm" in str(ctrl.notice_text.stringValue())
+    assert updates.load_state(data)["ran"] == "60"
+    ctrl.notice.orderOut_(None)
+    controller()  # the next start: nothing new to say
+    ctrl._update_found("0.3.0")  # Sparkle's gentle reminder
+    assert menu_titles(ctrl.status_item.menu)[0] == "Qualm 0.3.0 is available: install…"
+    item(ctrl.status_item.menu, "Qualm 0.3.0").target().installUpdate_(None)
+    assert world.asked[-1] == "sparkle"  # Sparkle's own window, with Install Update

@@ -1,0 +1,67 @@
+# A pushed tag v<version> becomes a release: the tests, Qualm.app built and signed for Sparkle,
+# the signed update feed, and the GitHub release with Qualm.dmg, appcast.xml and the notes from
+# docs/CHANGELOG.md (packaging/release.py does all of it; packaging/README.md, "Releases").
+# Run by hand (Actions > Release > Run workflow), it builds and signs without publishing and keeps
+# the files as the run's artifact. Actions are pinned to commits: this job holds the signing key.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15  # Apple silicon: the app is arm64 only
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # the build number is the commit count
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+
+      - name: "Python 3.12 (uv-managed: the app bundles it)"
+        run: uv python install 3.12
+
+      - name: Tests
+        run: |
+          uv sync --locked
+          cd "$RUNNER_TEMP"
+          QUALM_HOME="$(mktemp -d)" uv run --project "$GITHUB_WORKSPACE" pytest -q -p no:cacheprovider "$GITHUB_WORKSPACE/tests"
+
+      - name: Sparkle, cached
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: dist/.cache
+          key: sparkle-${{ hashFiles('packaging/build_app.py') }}
+
+      - name: Build, sign and publish
+        if: github.event_name == 'push'
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python packaging/release.py --publish
+
+      - name: Build and sign (no release)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: uv run python packaging/release.py
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: qualm-${{ github.ref_name }}
+          path: |
+            dist/Qualm.dmg
+            dist/appcast.xml
+            dist/release-notes.md
+          if-no-files-found: ignore

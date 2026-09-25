@@ -512,6 +512,31 @@ def cmd_export(args) -> None:
     _out(args, {"records": n, "skipped": skipped, "out": args.out}, f"{n} record{'s' * (n != 1)} -> {args.out}{skip}")
 
 
+def cmd_version(args) -> None:
+    """This copy's version, and with --check whether a newer one is out (updates.py)."""
+    from . import paths, updates
+    from .personalize import CliError
+
+    v, number = updates.version(), updates.build()
+    where = "Qualm.app" if paths.bundle() else "source"
+    out: dict = {"version": v, "build": number, "running_from": where}
+    text = f"Qualm {v}" + (f" (build {number}, Qualm.app)" if number else f" ({where})")
+    if args.check:
+        try:
+            result = updates.check()
+        except (OSError, ValueError) as e:
+            raise CliError(f"couldn't read the update feed ({e}): {updates.feed_url()}", "unreachable") from None
+        latest = result["latest"]
+        out |= {"latest": latest, "update": result["update"], "feed": result["feed"]}
+        if result["update"]:
+            how = ("Qualm.app installs it from its menu: Check for Updates…" if where == "Qualm.app" else
+                   "In the checkout: `git pull` and `uv sync`, then quit Qualm and start it again")
+            text += f"\nQualm {latest['version']} is out: {latest['page']}\n{how}."
+        else:
+            text += " is the newest version." if latest else "\nThe update feed lists no release yet."
+    print(json.dumps(out, ensure_ascii=False, indent=2) if args.json else text)
+
+
 def cmd_install(args) -> None:
     from . import autostart, paths
     from .personalize import CliError
@@ -923,6 +948,9 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--port", type=int, default=8009)
     sp.add_argument("--bits", type=int, choices=(8, 16), default=8,
                     help="8 (default): half the memory, the same answers on the trials; 16: bf16 as trained")
+    sp = add("version", cmd_version, "this copy's version; --check: is a newer one out? (asks GitHub)", model=False)
+    sp.add_argument("--check", action="store_true", help="read the update feed and say whether a newer version is out")
+
     add("install", cmd_install, "start the app at every login", model=False)
     sp = add("uninstall", cmd_uninstall, "stop starting at login; --all removes everything of Qualm's", model=False)
     sp.add_argument("--all", action="store_true",

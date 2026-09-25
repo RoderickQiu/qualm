@@ -4,13 +4,18 @@
 
 The app carries its own Python (the uv-managed CPython 3.12, pruned), Qualm and
 its own dependencies installed into it, uv (to install the local model's
-runtime on demand, into ~/Library/Application Support/Qualm), and a small
-launcher (launcher.c) that embeds that Python, so the running process is
-Qualm.app itself. The local model (Kev, PyTorch, MLX) is not in the bundle.
+runtime on demand, into ~/Library/Application Support/Qualm), Sparkle (the
+updater: src/qualm/updates.py), and a small launcher (launcher.c) that embeds
+that Python, so the running process is Qualm.app itself. The local model (Kev,
+PyTorch, MLX) is not in the bundle.
+
+The version is pyproject.toml's; the build number (CFBundleVersion, which
+Sparkle compares) is the commit count, or QUALM_BUILD_NUMBER.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import plistlib
 import shutil
@@ -18,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -28,6 +34,15 @@ BUNDLE_ID = "com.qualm.app"
 # Pruned from the bundled Python: tests, the IDE and Tk (nothing in Qualm uses them).
 PRUNE_DIRS = {"test", "tests", "idlelib", "tkinter", "turtledemo", "ensurepip"}
 PRUNE_LIB = ("tcl9", "tcl9.0", "tk9.0", "itcl4.3.5", "thread3.0.4", "libtcl9.0.dylib", "libtcl9tk9.0.dylib")
+# Sparkle, pinned: the updater Qualm.app embeds, and the tools a release signs with (packaging/release.py).
+SPARKLE_VERSION = "2.10.0"
+SPARKLE_SHA256 = "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c"
+SPARKLE_URL = (f"https://github.com/sparkle-project/Sparkle/releases/download/{SPARKLE_VERSION}/"
+               f"Sparkle-{SPARKLE_VERSION}.tar.xz")
+# The public half of the EdDSA key every update and feed is signed with. The private half is in the
+# maintainer's login keychain and in the repository's SPARKLE_ED_PRIVATE_KEY secret (packaging/README.md).
+SPARKLE_PUBLIC_KEY = "PqdDdEg6RuD/orHWVaBILqn1BdIS/Q0RbUz/KgzfSWY="
+CACHE = DIST / ".cache"
 
 
 def run(*cmd, **kw) -> subprocess.CompletedProcess:
@@ -59,6 +74,54 @@ def copy_python(src: Path, dst: Path) -> None:
     # Tk's extension module would fail to load without its libraries.
     for so in (dst / "lib" / f"python{PY_VERSION}" / "lib-dynload").glob("_tkinter*"):
         so.unlink()
+
+
+def sparkle() -> Path:
+    """Sparkle's release, unpacked in dist/.cache: Sparkle.framework and bin/ (sign_update). Checked against
+    its pinned SHA-256 before it's used."""
+    dest = CACHE / f"Sparkle-{SPARKLE_VERSION}"
+    if (dest / "Sparkle.framework").exists() and (dest / "bin" / "sign_update").exists():
+        return dest
+    archive = CACHE / f"Sparkle-{SPARKLE_VERSION}.tar.xz"
+    CACHE.mkdir(parents=True, exist_ok=True)
+    if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest() != SPARKLE_SHA256:
+        print(f"+ download {SPARKLE_URL}", flush=True)
+        with urllib.request.urlopen(SPARKLE_URL, timeout=300) as r:
+            archive.write_bytes(r.read())
+    got = hashlib.sha256(archive.read_bytes()).hexdigest()
+    if got != SPARKLE_SHA256:
+        sys.exit(f"{archive}: SHA-256 {got}, expected {SPARKLE_SHA256}")
+    tmp = CACHE / f".unpack-{os.getpid()}"
+    tmp.mkdir()
+    run("tar", "-xf", archive, "-C", tmp)
+    tmp.rename(dest)
+    return dest
+
+
+def add_sparkle(frameworks: Path) -> None:
+    """Sparkle.framework into Contents/Frameworks, ad-hoc signed from the inside out with its own
+    identifiers (a --deep signature of the app would give its helpers Qualm's)."""
+    fw = frameworks / "Sparkle.framework"
+    frameworks.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(sparkle() / "Sparkle.framework", fw, symlinks=True)
+    b = fw / "Versions" / "B"
+    for part in (b / "XPCServices" / "Installer.xpc", b / "XPCServices" / "Downloader.xpc", b / "Autoupdate",
+                 b / "Updater.app", fw):
+        extra = ["--preserve-metadata=entitlements"] if part.name == "Downloader.xpc" else []
+        run("codesign", "--force", "--sign", "-", *extra, part)
+
+
+def build_number() -> int:
+    """CFBundleVersion: QUALM_BUILD_NUMBER, else the number of commits (a full clone: CI fetches all history)."""
+    if n := os.environ.get("QUALM_BUILD_NUMBER"):
+        return int(n)
+    out = subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=REPO, capture_output=True, text=True)
+    if out.returncode != 0 or not out.stdout.strip().isdigit():
+        sys.exit("no build number: not a git checkout? set QUALM_BUILD_NUMBER")
+    if subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=REPO, capture_output=True,
+                      text=True).stdout.strip() == "true":
+        sys.exit("a shallow clone counts too few commits: fetch the whole history, or set QUALM_BUILD_NUMBER")
+    return int(out.stdout.strip())
 
 
 def install_qualm(python: Path) -> None:
@@ -135,7 +198,9 @@ def build_icon(out: Path) -> None:
         run("iconutil", "-c", "icns", iconset, "-o", out)
 
 
-def info_plist(version: str) -> dict:
+def info_plist(version: str, build: int) -> dict:
+    from qualm.updates import CHECK_EVERY_S, FEED
+
     return {
         "CFBundleName": "Qualm",
         "CFBundleDisplayName": "Qualm",
@@ -143,14 +208,24 @@ def info_plist(version: str) -> dict:
         "CFBundleExecutable": "Qualm",
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": version,
-        "CFBundleVersion": version,
+        "CFBundleVersion": str(build),
         "CFBundleIconFile": "Qualm",
         "CFBundleInfoDictionaryVersion": "6.0",
         "LSUIElement": True,  # a menu bar app: no Dock icon
         "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True,
         "NSAppleEventsUsageDescription": "Qualm asks your browser to go back and reads the address of the front tab.",
-        "NSHumanReadableCopyright": "Apache-2.0",
+        "NSHumanReadableCopyright": "Free software under the GNU GPL v3 or later",
+        # Sparkle (updates.py): a daily check, disclosed in the README; installing always asks (an ad-hoc signed
+        # app needs Accessibility again after each update, so never silently); the feed and each update must be
+        # signed with the key above, and an update is checked before it's unpacked.
+        "SUFeedURL": FEED,
+        "SUPublicEDKey": SPARKLE_PUBLIC_KEY,
+        "SUEnableAutomaticChecks": True,
+        "SUScheduledCheckInterval": CHECK_EVERY_S,
+        "SUAllowsAutomaticUpdates": False,
+        "SURequireSignedFeed": True,
+        "SUVerifyUpdateBeforeExtraction": True,
     }
 
 
@@ -167,6 +242,7 @@ def build_dmg() -> Path:
 
 def main() -> None:
     version = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["version"]
+    build = build_number()
     py_root = python_root()
     DIST.mkdir(exist_ok=True)
     if APP.exists():
@@ -187,7 +263,7 @@ def main() -> None:
     build_launcher(py_root, contents / "MacOS" / "Qualm")
     build_icon(contents / "Resources" / "Qualm.icns")
     with (contents / "Info.plist").open("wb") as f:
-        plistlib.dump(info_plist(version), f)
+        plistlib.dump(info_plist(version, build), f)
     (contents / "PkgInfo").write_text("APPL????")
 
     # Every .pyc written now, before signing: the launcher never writes bytecode,
@@ -195,10 +271,11 @@ def main() -> None:
     python = contents / "Resources" / "python" / "bin" / f"python{PY_VERSION}"
     run(python, "-m", "compileall", "-q", "-j", "0", contents / "Resources" / "python" / "lib" / f"python{PY_VERSION}",
         stdout=subprocess.DEVNULL)
-    run("codesign", "--force", "--deep", "--sign", "-", "--identifier", BUNDLE_ID, APP)
+    add_sparkle(contents / "Frameworks")
+    run("codesign", "--force", "--sign", "-", "--identifier", BUNDLE_ID, APP)
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", APP)
     dmg = build_dmg()
-    print(f"\nbuilt {APP}\n      {dmg}\nAd-hoc signed, not notarized: see packaging/README.md.")
+    print(f"\nbuilt {APP} {version} (build {build})\n      {dmg}\nAd-hoc signed, not notarized: see packaging/README.md.")
 
 
 if __name__ == "__main__":

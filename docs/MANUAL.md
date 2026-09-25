@@ -27,7 +27,8 @@ search is on purpose. The fifth thread opened from a feed is drift.
   headings, some visible text. For an app that draws its text as pixels (a video player, a
   canvas), or a browser that shows Accessibility no page (Firefox with its accessibility off), it
   reads a picture of the window with macOS's own text recognition instead (this needs Screen
-  Recording), never for windows where you type. With the local model, nothing leaves the Mac.
+  Recording), never for windows where you type. With the local model, nothing about your screen
+  leaves the Mac.
 - **Asks a local model typed questions** ([Kev](https://github.com/jaredpalmer/kev), an open
   "System One" model on Qwen3.5-4B, running on Apple silicon with MLX). What kind of page is
   this? Is it for learning, a task, or entertainment? Is it private? Does it break each of your
@@ -161,8 +162,20 @@ last saved (else an earlier saved version, else the starter rules), until the fi
 AI agent, or `qualm config undo` when there's a version to go back to). Until then it never reads
 the apps that file lists as not to be read, and on the hosted model it sends nothing to TypeSafe:
 only a rule's own sites and apps step in. Only one Qualm runs at a time: a second copy, or one
-started while an older Qualm runs, says so and quits. To update, quit Qualm from its menu first,
-then update, then open it again.
+started while an older Qualm runs, says so and quits.
+
+**Updates.** Qualm.app looks for a new version once a day, through
+[Sparkle](https://sparkle-project.org), the updater most Mac apps outside the App Store use. When
+there is one, the menu's first line and a note in the corner say so; *Install…* shows what's new,
+and Qualm quits, updates and opens again only when you click it. *Check for Updates…* in the menu
+looks now. Each update, and the list of versions it comes from, must be signed with the key the app
+was built with, or Sparkle refuses it. After an update macOS asks for Accessibility again (Qualm
+isn't signed with a Developer ID yet, so each version is a new app to macOS): in System Settings >
+Privacy & Security > Accessibility, remove Qualm with the minus button and allow it again; Qualm
+says so when it opens. Run from source, Qualm says when a new version is out and links to it;
+update the checkout with `git pull` and `uv sync`, then quit Qualm and start it again.
+`qualm version --check` asks from a terminal. The check is one request to GitHub for
+`appcast.xml` on the latest release; *Check for updates automatically* in the menu turns it off.
 [MODELS.md](MODELS.md) compares the two models: speed, memory, disk, cost and what leaves
 the Mac.
 
@@ -203,6 +216,7 @@ kept `rules.toml` and `data/` in its own folder: `qualm setup` copies them to Ap
 | `qualm status` | is it running, which model, what did it judge last |
 | `qualm week` | how this week went |
 | `qualm review --web` | the dashboard, if the app isn't running |
+| `qualm version --check` | which version this is, and whether a newer one is out |
 
 ## How well it works
 
@@ -274,6 +288,9 @@ this wording: the same pages pop up, on all 119 hosted and on those nearest a th
 - Password managers (Apple Passwords, 1Password, Bitwarden, KeePassXC and others) are never read
   at all, whatever the settings say, and you can add any app to that list (`no_monitor`).
 - The dashboard listens on 127.0.0.1 only, and only the page itself can change settings.
+- Once a day Qualm asks GitHub whether a new version is out (the list of releases, `appcast.xml`).
+  The request carries no identifier and nothing about your screen; GitHub sees your IP address, as
+  with any download. *Check for updates automatically* in the menu turns it off.
 - The hosted option, TypeSafe's Jev, is yours to choose in setup, never a fallback: if the local model
   is down, Qualm doesn't quietly switch to it. With it, the text of each new screen goes to TypeSafe
   (the dashboard says so); the log stays on your Mac. While `rules.toml` has a mistake, nothing
@@ -282,7 +299,7 @@ this wording: the same pages pop up, on all 119 hosted and on those nearest a th
 ## Status
 
 This is an early, working prototype: a Python + PyObjC menu bar app, used by its author since September 2026. The
-`.app` is ad-hoc signed, not notarized, and each rebuild asks for Accessibility again. It runs on
+`.app` is ad-hoc signed, not notarized, and each new version asks for Accessibility again. It runs on
 Apple silicon only, and its interface is in English only. [HANDOFF.md](../HANDOFF.md) has the full
 state, the design decisions and the next steps.
 
