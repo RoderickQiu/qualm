@@ -1024,8 +1024,30 @@ before unpacking and replaced itself, and the result passes `codesign --verify -
 left to you, the same check logged the update, showed the menu line and the notice, and changed
 nothing. The first try at that showed Sparkle's own window at launch (see above: fixed). The four
 notices rendered, light and dark. Not verified: clicking *Install and Relaunch* in Sparkle's window
-(Sparkle's own code path; the installer it runs is the one tested), and an update of the published
-app from GitHub (needs a second release).
+(Sparkle's own code path; the installer it runs is the one tested), and an update fetched from
+GitHub itself (the repository is private: below).
+
+**Qualm 0.1.0b1 is released** (build 52, 2026-09-24 late evening, tag `v0.1.0b1` on 9957e54):
+https://github.com/RoderickQiu/qualm/releases/tag/v0.1.0b1, marked latest, with `Qualm.dmg` and
+the signed `appcast.xml`. Only the tag was pushed, not `main`: Vercel deploys the website to
+production on every push to `main`, and that push needs its own yes. GitHub didn't run the
+workflow for the tag (no run at all, twice, the second time with a token that has the `workflow`
+scope): a workflow file that exists only on a tag isn't picked up. So the release was built and
+published on this Mac with the same script (`release.py --publish`). The workflow takes over once
+`main` with it is pushed; then Actions > Release > Run workflow builds and signs without
+publishing, to try it. Verified on the published files: they equal dist/ (GitHub's SHA-256 of each
+asset), the DMG's and the feed's EdDSA signatures check out against the key, and a copy made build
+50 updated itself to this build 52 through Sparkle (served from this Mac). The test copies, their
+Sparkle settings (`com.qualm.app` defaults, which didn't exist before) and LaunchServices records
+were removed afterwards.
+
+**The repository stays private** (the user's decision, 2026-09-24). While it is, the release, the
+feed and the DMG need a GitHub sign-in, so no copy of the app can check for or download updates:
+Sparkle's daily check fails quietly, *Check for Updates…* says it couldn't, and `qualm version
+--check` exits 5 (unreachable). The website's and README's download links lead to a 404 for
+everyone else. Opening the beta means one of: making the repository public (the feed works as
+built), or a public place for releases only (a releases-only repository, or the feed on
+qualm.r-q.name), which needs a new build: `SUFeedURL` is inside the app (`updates.FEED`).
 
 ### MVP (built after the trials)
 
@@ -1567,7 +1589,10 @@ Budgets above 700 barely change anything: `HEADING_LIMIT=8` and
    `uv run python -m kev.train --data train.jsonl --init_from jaredpalmer/kev-4b --base Qwen/Qwen3.5-4B-Base --epochs 2 --lr 2e-5 --batch 1 --accum 8 --dtype bf16 --device cuda`.
    `--base` is required with `--init_from`; the default base is Qwen3-0.6B.
 6. **Ship it:** releases are a tag away (packaging/README.md, "Releases"), and Qualm.app updates
-   itself through Sparkle. Left: a Developer ID and notarization (then no Open Anyway, and
+   itself through Sparkle; 0.1.0b1 is released on the private repository. To open the beta: decide
+   where releases are public (above: the repository, or a releases-only place with a new
+   `SUFeedURL`), and push `main` so the workflow runs for the next tag (that push also redeploys
+   the website). Left after that: a Developer ID and notarization (then no Open Anyway, and
    Accessibility survives updates; the workflow would sign and notarize), a universal build if
    Intel Macs matter (hosted works there), and a translated interface. The website's Download
    button could point straight at `releases/latest/download/Qualm.dmg`. Licensed
