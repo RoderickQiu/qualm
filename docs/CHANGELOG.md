@@ -8,6 +8,9 @@ the version, on GitHub and in the app's update window.
 Rename this heading to the next version when it's released.
 
 - **About Qualm** in the menu bar: the version, who made Qualm, and a button to the website.
+- **Open at login, fixed.** Unticking it in a Qualm that had started at login quit Qualm and left
+  the login item in place; now it just stops Qualm opening at the next login. When it can't be
+  changed, a notice says why in full. Run from source, the menu has *Open at login* too.
 - **Claude Code knows Qualm.** Setup gives Claude Code Qualm's skill (`~/.claude/skills/qualm`),
   so any session can change your rules, say why Qualm popped up, or find out why it isn't
   working, without a prompt pasted first. *Qualm skill for Claude Code* in the menu, or

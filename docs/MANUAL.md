@@ -159,7 +159,8 @@ Events (**Automation**). Allow it, or *Take me back* can't go back there.
 
 Your rules and data live in `~/Library/Application Support/Qualm`. The app starts the local model itself
 and stops it when you quit. From the menu bar you can switch the model (*Model*; picking hosted asks
-for a key), turn each rule on or off, pause, and start a focus session. A badge on the eye and a first
+for a key), turn each rule on or off, pause, start a focus session, and choose whether Qualm opens at
+login. A badge on the eye and a first
 menu line mean something stops Qualm working, such as a missing permission or a hosted key that was
 turned down; click the line for the fix. A mistake in `rules.toml` shows the same way, and Qualm
 keeps watching meanwhile: with the rules it last loaded, or, when it starts, with the version it
@@ -204,7 +205,7 @@ uv run python packaging/build_app.py   # or build dist/Qualm.app and dist/Qualm.
 Run from a checkout, Qualm reads windows as your terminal app, so macOS asks for Accessibility (and
 Screen Recording) for the terminal. Setup's *start at login* defaults to no here, since the login item
 needs the same permissions for its own Python; if you turn it on, setup starts Qualm at once and you
-skip `qualm app`. To type plain `qualm` anywhere, `uv tool install --editable .`, or alias it to
+skip `qualm app`. The menu's *Open at login* works from a checkout too, and says the same. To type plain `qualm` anywhere, `uv tool install --editable .`, or alias it to
 `uv run --project /path/to/qualm qualm`. Qualm.app adds `~/.local/bin/qualm`; if that folder isn't
 on your PATH, setup prints the line to add.
 

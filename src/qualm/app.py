@@ -37,8 +37,9 @@ in a menu line and one corner notice; installing waits for you. A checkout
 reads the same feed and links to the release.
 
 The menu also has About Qualm (about.py: the version, the maker, the
-website) and, where Claude Code has run, a switch for Qualm's skill there
-(agent.py), which the app rewrites when it starts on a new version.
+website), Open at login (from a checkout too), and, where Claude Code has
+run, a switch for Qualm's skill there (agent.py), which the app rewrites
+when it starts on a new version.
 """
 
 from __future__ import annotations
@@ -111,6 +112,9 @@ UPDATE_FIRST_S = 60  # a checkout's first look at the update feed, after the app
 AFTER_UPDATE = ("macOS treats each version of this beta as a new app (it isn't signed with a Developer ID yet), "
                 "so Accessibility has to be allowed again: in System Settings > Privacy & Security > "
                 "Accessibility, remove Qualm with the minus button, then allow it again.")
+# Started at login, a checkout's Qualm is its Python (autostart.app_command), not the terminal it has its permission from.
+LOGIN_FROM_CHECKOUT = ("At login it starts as {python}, not from your terminal, so macOS asks once for Accessibility "
+                       "for it: if the menu bar then says Qualm can't read windows, click that line to allow it.")
 ACTION_WORDS = {"intervene": "stepped in", "allow": "let through", "skip": "skipped"}  # the menu's status line
 # CJK scripts say "what for" in one or two characters: 学, 工作.
 CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]")
@@ -274,10 +278,8 @@ class Controller(NSObject):
         self.rules_item = self._item("Watch for")
         self.rules_item.setEnabled_(True)
         self.rules_item.setSubmenu_(self.rules_menu)
-        # From Qualm.app only: a checkout's login item would start without Accessibility.
-        from . import paths
-
-        self.login_item = self._item("Open at login", "toggleLogin:") if paths.bundle() else None
+        # From a checkout too: its login item runs the checkout's Python, which macOS asks Accessibility for.
+        self.login_item = self._item("Open at login", "toggleLogin:")
         # Claude Code's skill for Qualm (agent.py), shown where Claude Code has run.
         self.skill_item = self._item("Qualm skill for Claude Code", "toggleSkill:")
         self.skill_item.setToolTip_("Claude Code knows Qualm in every session: ask it to change your rules, why "
@@ -289,7 +291,7 @@ class Controller(NSObject):
                      NSMenuItem.separatorItem(),
                      self.focus_line, self.focus_item, self.end_focus_item, self.pause_item, self.resume_item,
                      self.planned_item, NSMenuItem.separatorItem(),
-                     self.model_item, self.rules_item, self.block_item, *([self.login_item] if self.login_item else []),
+                     self.model_item, self.rules_item, self.block_item, self.login_item,
                      self.skill_item, self.auto_item, NSMenuItem.separatorItem(),
                      self._item("This should have been blocked", "flagMiss:"),
                      self._item("Open dashboard", "openReview:", "d"),
@@ -421,8 +423,7 @@ class Controller(NSObject):
             item.setEnabled_(broken is None)
             item.setToolTip_(r.description_en or r.description)
             self.rules_menu.addItem_(item)
-        if self.login_item:
-            self.login_item.setState_(1 if autostart.installed() else 0)
+        self.login_item.setState_(1 if autostart.installed() else 0)
         self.auto_item.setState_(1 if self._auto_updates() else 0)
         from . import agent, paths
 
@@ -504,12 +505,18 @@ class Controller(NSObject):
         self._refresh_menus()
 
     def toggleLogin_(self, sender):
-        from . import autostart
+        from . import autostart, paths
 
+        on = not autostart.installed()
         try:
-            autostart.uninstall(quiet=True) if autostart.installed() else autostart.install(quiet=True)
-        except Exception as e:
-            self.set_status(f"couldn't change it: {e}")
+            autostart.install(quiet=True) if on else autostart.uninstall(quiet=True)
+        except (Exception, SystemExit) as e:  # install's own refusals exit: never out of a menu action
+            self._notice("Couldn't change Open at login", str(e.code if isinstance(e, SystemExit) else e))
+        else:
+            self.set_status("opens at login" if on else "won't open at login")
+            if on and not paths.bundle():
+                python = Path(sys.executable).resolve().name
+                self._notice("Qualm opens at login", LOGIN_FROM_CHECKOUT.format(python=python), kind="done")
         self._refresh_menus()
 
     def toggleSkill_(self, sender):

@@ -130,3 +130,40 @@ def test_migrate_env_key(monkeypatch):
     monkeypatch.delenv("TYPESAFE_API_KEY")
     monkeypatch.setattr(keychain, "stored", lambda: None)
     assert not keychain.migrate_env_key()
+
+
+def test_a_checkouts_login_item_runs_its_own_python(mac, monkeypatch):
+    """Not through uv: macOS gives Accessibility to the process launchd starts, the Python `install` names."""
+    import sys
+    from pathlib import Path
+
+    monkeypatch.setattr(paths, "bundle", lambda: None)
+    monkeypatch.setattr(paths, "uv", lambda: "/opt/tools/uv")
+    argv, cwd = autostart.app_command()
+    assert argv == [sys.executable, "-m", "qualm", "app"] and cwd == paths.home()
+    path = autostart._plist(argv, cwd)["EnvironmentVariables"]["PATH"].split(":")
+    assert path[-2:] == [str(Path(sys.executable).parent), "/opt/tools"]  # uv, for the local model's runtime
+    monkeypatch.setattr(paths, "bundle", lambda: Path("/Applications/Qualm.app"))
+    plist = autostart._plist(*autostart.app_command())  # Qualm.app's: as before, so an installed one stays current
+    assert plist["ProgramArguments"] == ["/Applications/Qualm.app/Contents/MacOS/Qualm"]
+    assert plist["EnvironmentVariables"]["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Qualm.app/Contents/MacOS"
+
+
+def test_the_copy_the_login_item_started_never_unloads_itself(mac, monkeypatch):
+    """Unloading the job stops the process it started: from that copy's own menu, the file alone changes."""
+    calls = []
+    monkeypatch.setattr(autostart, "_bootout", lambda path: calls.append(("bootout", path.name)))
+    monkeypatch.setattr(autostart.subprocess, "run", lambda argv, **kw: calls.append(tuple(argv[:2])) or
+                        types.SimpleNamespace(returncode=0, stderr=""))
+    monkeypatch.setattr(paths, "bundle", lambda: None)
+    plist = mac.agents / "com.qualm.app.plist"
+    monkeypatch.setenv("XPC_SERVICE_NAME", "com.qualm.app")
+    autostart.uninstall(quiet=True)
+    assert not plist.exists() and calls == []
+    autostart.install(quiet=True)
+    assert plist.exists() and calls == [] and autostart.up_to_date()
+    monkeypatch.setenv("XPC_SERVICE_NAME", "application.com.apple.Terminal.12345")  # a terminal's copy
+    autostart.uninstall(quiet=True)
+    autostart.install(quiet=True)
+    assert calls == [("bootout", "com.qualm.app.plist"), ("bootout", "com.qualm.app.plist"),
+                     ("launchctl", "bootstrap")]

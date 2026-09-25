@@ -450,7 +450,7 @@ class Onboarding(NSObject):
         self.summary = _stack([], spacing=10)
         self.login = NSButton.checkboxWithTitle_target_action_("Open Qualm when I log in", None, None)
         # From a checkout it starts unticked, as `qualm setup` asks it: a login item there runs Python,
-        # which has no Accessibility of its own (the menu offers "Open at login" from Qualm.app only).
+        # which has no Accessibility of its own (the menu's "Open at login" says so when it's ticked).
         self.login.setState_(1 if paths.bundle() else 0)
         opts = [self.login]
         self.shim = None

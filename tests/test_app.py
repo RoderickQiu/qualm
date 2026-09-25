@@ -999,3 +999,39 @@ def test_claude_codes_skill_is_a_switch_in_the_menu(world, monkeypatch, claude_c
     shutil.rmtree(claude_config_dir)  # no Claude Code on this Mac: nothing to switch
     ctrl.menuWillOpen_(menu)
     assert switch.isHidden()
+
+
+def test_open_at_login_is_in_the_menu_from_a_checkout_too(world, monkeypatch):
+    import sys
+    from pathlib import Path
+
+    login = {"on": False}
+    monkeypatch.setattr(autostart, "installed", lambda: login["on"])
+    monkeypatch.setattr(autostart, "install", lambda quiet=False: login.update(on=True))
+    monkeypatch.setattr(autostart, "uninstall", lambda quiet=False: login.update(on=False))
+    ctrl = controller()
+    menu = ctrl.status_item.menu
+    ctrl.menuWillOpen_(menu)
+    switch = item(menu, "Open at login")
+    assert not switch.isHidden() and switch.state() == 0
+    switch.target().toggleLogin_(switch)
+    assert login["on"] and switch.state() == 1
+    python = Path(sys.executable).resolve().name
+    assert str(ctrl.notice_title.stringValue()) == "Qualm opens at login" and ctrl.notice.isVisible()
+    assert f"it starts as {python}, not from your terminal" in str(ctrl.notice_text.stringValue())
+    switch.target().toggleLogin_(switch)
+    assert not login["on"] and switch.state() == 0
+
+
+def test_open_at_login_says_in_full_why_it_couldnt(world, monkeypatch):
+    def refuse(quiet=False):
+        raise RuntimeError(autostart.MOVE_FIRST)
+
+    monkeypatch.setattr(autostart, "install", refuse)
+    ctrl = controller()
+    switch = item(ctrl.status_item.menu, "Open at login")
+    switch.target().toggleLogin_(switch)
+    assert str(ctrl.notice_text.stringValue()) == autostart.MOVE_FIRST  # not cut to a menu line
+    monkeypatch.setattr(autostart, "install", lambda quiet=False: sys.exit("Your rules and data are still here"))
+    switch.target().toggleLogin_(switch)  # install's own refusals exit: the app mustn't
+    assert "still here" in str(ctrl.notice_text.stringValue())

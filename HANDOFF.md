@@ -412,7 +412,8 @@ terminals, everything relative to the checkout, "16 GB" as the bar.
   `[settings] backend`, judges the current screen again, and stops a server
   the app started when going hosted (one from `qualm serve` is left alone).
   *Watch for* turns each rule on or off (read from rules.toml, so rules that
-  are off stay listed). *Open at login* only in Qualm.app. The watcher's
+  are off stay listed). *Open at login* (from Qualm.app only until late
+  2026-09-24; from a checkout too since). The watcher's
   answer cache is keyed by backend too, so a switch really asks the other
   model. Tested by building the real menu in a throwaway home and clicking
   through (hosted, a rule off, back, on).
@@ -970,8 +971,7 @@ has the details):
   to ~12 s (its second look).
 - App: no rule editor by design (rules change through an agent; "Edit
   rules file…" stays); the SDK still retries a refused key; the menu
-  doesn't say when the dashboard couldn't start; "Open at login" from a
-  disk-image copy shows its move-first message cut to 80 characters; an
+  doesn't say when the dashboard couldn't start; an
   older copy on a custom home whose environment `ps` can't show is taken
   for the default home's; a custom QUALM_HOME's app still logs to
   ~/Library/Logs/Qualm, so its Model menu offers the main home's model log
@@ -1084,6 +1084,24 @@ never said where the logs were.
   sent to /dev/null by macOS, so only a login-item start ever wrote a log: now it goes to
   `com.qualm.app.log` too, a line at a time (`watcher.log_to_file`), and rolls over as the login
   item's does.
+
+- **Open at login** (asked right after: "you don't even have a start at login"): the menu showed it
+  from Qualm.app only, since a checkout's login item runs outside the terminal whose Accessibility
+  it has. Now it's there from a checkout too; ticking it there says in a notice that macOS asks for
+  Accessibility for the Python it starts as (the menu's first line then fixes it in one click). A
+  checkout's login item runs `.venv/bin/python3 -m qualm app` directly, not `uv run`: launchd's
+  process is the one macOS asks permissions for, so through uv they'd have been uv's, not the
+  Python's that `qualm install` names (uv's folder stays on its PATH, for the model's runtime).
+  Qualm.app's plist is unchanged, so installed login items stay current. **Fixed**: unticking *Open
+  at login* in a Qualm the login item started ran `launchctl bootout` on its own job, which killed
+  that Qualm before the plist was removed, so it quit and still opened at the next login. A copy
+  started at login (`XPC_SERVICE_NAME` is the job's label) now only writes or removes the plist
+  (`autostart.started_at_login`). A refusal (a disk-image copy, a checkout's rules not copied home)
+  shows in a notice in full, not cut in the status line, and `install`'s `sys.exit` no longer
+  escapes a menu action. Verified under real launchd with test labels, in the background: the
+  checkout's command started, found the running app and exited 0 once (no restart loop);
+  `XPC_SERVICE_NAME` is the label; a job that unticks itself was killed without the guard (plist
+  left) and ran on with it (plist gone). The notice was rendered off-screen.
 
 Verified: the tests (the skill written, kept current, removed, someone else's left alone,
 QUALM_HOME refused; setup the first time only; uninstall; `qualm logs` on a pretend log folder;
@@ -1242,7 +1260,7 @@ for System Events alone in Firefox and the other browsers driven by keys.
 | `.claude/skills/qualm/SKILL.md` | How Claude Code should drive the CLI for a user: the guide with the skill's description (agent.py installs the same for Qualm.app users) |
 | `docs/MODELS.md` | On this Mac vs hosted: speed, memory, disk, Jev's usage and cost, from measurements |
 | `docs/POLICY.md` | What to block on a desktop and what not, and how it generalizes and personalizes |
-| `tests/` | 441 tests, no model and no screen: the policy with made-up readings (`test_policy.py`), the menu bar and setup window built off-screen (`test_app.py`), the CLI's JSON contract and the guide's commands (`test_cli.py`), and the rest by module |
+| `tests/` | 445 tests, no model and no screen: the policy with made-up readings (`test_policy.py`), the menu bar and setup window built off-screen (`test_app.py`), the CLI's JSON contract and the guide's commands (`test_cli.py`), and the rest by module |
 | `experiments/` | `demo_data.py` (made-up weeks for screenshots, with the exceptions their answers make); trial tooling: `collect.py` + `manifest.py` (scripted pages, captured from a background Safari window via `bg.py`), `analyze.py` (per-rule threshold sweep and AUC over `eval --dump`), `state_tokens.py`, `relabel.py`, `simulate.py` and `scenario.py` (see Measured) |
 
 `rules.toml` and `data/` are git-ignored: they contain what you read on screen.

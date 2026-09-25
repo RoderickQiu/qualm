@@ -11,8 +11,10 @@ to 0.85, so it's not offered. HANDOFF.md, Measured; localmodel.py.
 
 launchd restarts the app if it crashes. Logs go to ~/Library/Logs/Qualm/.
 Run from Qualm.app, the agent starts the app itself, so macOS asks for
-Accessibility for "Qualm"; from a checkout, it runs `uv run qualm app`, and
-macOS asks for the Python binary instead.
+Accessibility for "Qualm"; from a checkout, it runs the checkout's Python
+(`python -m qualm app`, no uv in between), and macOS asks for that Python
+instead: started at login, Qualm isn't your terminal, whose permission it
+has when you run it there.
 """
 
 from __future__ import annotations
@@ -67,22 +69,30 @@ def serve(kev_dir: Path | None = None, model: str = localmodel.MODEL, port: int 
 
 
 def app_command() -> tuple[list[str], Path]:
-    """How launchd starts the app: Qualm.app's own executable, else this checkout through uv."""
+    """How launchd starts the app: Qualm.app's own executable, else the Python
+    running this (the checkout's environment, packages and all). Not through
+    uv: macOS gives the permissions to the process launchd starts, so they'd
+    be uv's, not the Python's that `qualm install` names."""
     if b := paths.bundle():
         return [str(b / "Contents" / "MacOS" / "Qualm")], paths.home()
-    uv = paths.uv()
-    if not uv:
-        sys.exit("uv not found on PATH: https://docs.astral.sh/uv/")
-    repo = Path(__file__).resolve().parents[2]
-    return [uv, "run", "--project", str(repo), "qualm", "app"], paths.home()
+    return [sys.executable, "-m", "qualm", "app"], paths.home()
+
+
+def started_at_login() -> bool:
+    """This process is the one the login item started (launchd names its job in
+    XPC_SERVICE_NAME): unloading the job would stop this very copy."""
+    return os.environ.get("XPC_SERVICE_NAME") == APP_LABEL
 
 
 def _plist(args: list[str], cwd: Path) -> dict:
+    found = [str(Path(args[0]).parent)]
+    if not paths.bundle() and (uv := paths.uv()) and str(Path(uv).parent) not in found:
+        found.append(str(Path(uv).parent))  # a checkout installs the local model's runtime with it
     return {
         "Label": APP_LABEL,
         "ProgramArguments": args,
         "WorkingDirectory": str(cwd),
-        "EnvironmentVariables": {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin:" + str(Path(args[0]).parent),
+        "EnvironmentVariables": {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin:" + ":".join(found),
                                  "PYTHONUNBUFFERED": "1",
                                  # Asked for from a QUALM_HOME: the app it starts uses that folder too.
                                  **({"QUALM_HOME": str(paths.home())} if paths.custom_home() else {})},
@@ -145,11 +155,15 @@ def install(quiet: bool = False) -> None:
             _bootout(old)
             old.unlink()
     path = AGENTS / f"{APP_LABEL}.plist"
-    _bootout(path)
-    path.write_bytes(plistlib.dumps(_plist(argv, cwd)))
-    r = subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"launchctl couldn't load {path}: {r.stderr.strip()}")
+    if started_at_login():  # its job is loaded still, and it's this copy: the file is all the next login needs
+        path.write_bytes(plistlib.dumps(_plist(argv, cwd)))
+    else:
+        _bootout(path)
+        path.write_bytes(plistlib.dumps(_plist(argv, cwd)))
+        r = subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)], capture_output=True,
+                           text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"launchctl couldn't load {path}: {r.stderr.strip()}")
     if quiet:
         return
     print(f"loaded: {path}\nlogs: {paths.LOGS}/")
@@ -160,10 +174,13 @@ def install(quiet: bool = False) -> None:
 
 
 def uninstall(quiet: bool = False) -> None:
+    """Remove the login item; unloading it stops the Qualm it started, unless
+    that's the copy asking (its menu): then the file goes, and it runs on."""
     for label in (APP_LABEL, *OLD_LABELS):
         path = AGENTS / f"{label}.plist"
         if path.exists():
-            _bootout(path)
+            if not (label == APP_LABEL and started_at_login()):
+                _bootout(path)
             path.unlink()
             quiet or print(f"removed: {path}")
         elif label == APP_LABEL and not quiet:
