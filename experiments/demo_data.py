@@ -14,7 +14,7 @@ import argparse
 import json
 import random
 import time
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from qualm.policy import fine_entry, host_of
@@ -49,14 +49,16 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--days", type=int, default=21)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--now", help="the moment the weeks end, e.g. 2026-09-24T18:00 (default: now): the same "
+                    "seed and --now make the same weeks")
     a = ap.parse_args()
     rnd = random.Random(a.seed)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     judgements, decisions, reviews, exceptions, history = [], [], [], [], {}
     never = set()  # sites you said "Never here" on: no rule pops up there again
-    today = date.today()
-    now = datetime.now()
+    now = datetime.fromisoformat(a.now) if a.now else datetime.now()
+    today = now.date()
 
     def jid():
         return "".join(rnd.choice("0123456789abcdef") for _ in range(8))

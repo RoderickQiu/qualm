@@ -407,9 +407,10 @@ def test_the_demo_weeks_keep_what_their_answers_saved(tmp_path):
     from qualm.policy import host_of
 
     demo = os.path.join(os.path.dirname(__file__), os.pardir, "experiments", "demo_data.py")
-    for seed in (7, 8):
+    for seed in (7, 8):  # at a fixed moment: the weeks end now, and some days give no "Never here" at all
         data = tmp_path / str(seed)
-        subprocess.run([sys.executable, demo, "--out", str(data), "--seed", str(seed)], check=True, capture_output=True)
+        subprocess.run([sys.executable, demo, "--out", str(data), "--seed", str(seed), "--now", "2026-09-24T18:00"],
+                       check=True, capture_output=True)
         events = [json.loads(line) for line in (data / "decisions.jsonl").open()]
         shown = {e["id"]: e for e in events if e["type"] == "intervention"}
         said = [(e, shown[e["id"]]) for e in events if e.get("response") in ("fine", "never")]
